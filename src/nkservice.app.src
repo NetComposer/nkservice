@@ -1,0 +1,19 @@
+{application, nkservice, [
+    {description, "NkCORE Service Framework"},
+    {vsn, "0.1.0"},
+    {modules, []},
+    {registered, []},
+    {mod, {nkservice_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        crypto,
+        sasl,
+        ssl,
+        lager,
+        nkpacket,
+        nkdocker
+    ]},
+    {env, [
+    ]}
+]}.
