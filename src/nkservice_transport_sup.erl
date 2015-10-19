@@ -40,11 +40,31 @@ get_pid(Id) ->
     {ok, pid()} | {error, term()}.
 
 add_transport(Id, Spec) ->
-    case supervisor:start_child(get_pid(Id), Spec) of
-        {ok, Pid} -> {ok, Pid};
-        {error, {Error, _}} -> {error, Error};
-        {error, Error} -> {error, Error}
+    SupPid = get_pid(Id),
+    {Conn, _Ref} = element(1, Spec),
+    case find_started(supervisor:which_children(SupPid), Conn) of
+        false ->
+            lager:warning("Starting ~p", [Conn]),
+            case supervisor:start_child(SupPid, Spec) of
+                {ok, Pid} -> {ok, Pid};
+                {error, {Error, _}} -> {error, Error};
+                {error, Error} -> {error, Error}
+            end;
+        {true, Pid} ->
+            lager:warning("Transport ~p was already started", [Conn]),
+            {ok, Pid}
     end.
+
+
+%% @private
+find_started([], _Conn) ->
+    false;
+
+find_started([{{Conn, _}, Pid, worker, _}|_], Conn) ->
+    {true, Pid};
+
+find_started([_|Rest], Conn) ->
+    find_started(Rest, Conn).
 
 
 %% @private Tries to start all the configured transports for a Server.
@@ -52,17 +72,36 @@ add_transport(Id, Spec) ->
     ok | {error, Error}
     when Error ::  {could_not_start, {udp|tcp|tls|sctp|ws|wss, term()}}.
 
-start_transports([{{Proto, Ip, Port}, Opts}|Rest], #{id:=Id}=Spec) ->
+start_transports([{Conns, Opts}|Rest], #{id:=Id}=Spec) ->
     Opts1 = maps:merge(Spec, Opts),
-    case nksip_transport:start_transport(Id, Proto, Ip, Port, Opts1) of
-        {ok, _} -> 
+    case start_transports(Id, Conns, Opts1) of
+        ok ->
             start_transports(Rest, Spec);
-        {error, Error} -> 
-            {error, {could_not_start, {Proto, Error}}}
+        {error, Error} ->
+            {error, Error}
     end;
 
 start_transports([], _Spec) ->
     ok.
+
+
+%% @private
+start_transports(Id, [{_Proto, Transp, _Ip, _Port}=Conn|Rest], Opts) ->
+    case nkpacket:get_listener(Conn, Opts) of
+        {ok, Child} ->
+            case add_transport(Id, Child) of
+                {ok, _} ->
+                    start_transports(Id, Rest, Opts);
+                {error, Error} ->
+                    {error, {could_not_start, {Transp, Error}}}
+            end;
+        {error, Error} ->
+            {error, {could_not_start, {Transp, Error}}}
+    end;
+
+start_transports(_Id, [], _Opts) ->
+    ok.
+
 
 
 %% @private
@@ -73,8 +112,7 @@ start_link(Id) ->
     ChildSpec = {{one_for_one, 10, 60}, []},
     {ok, Pid} = supervisor:start_link(?MODULE, {Id, ChildSpec}),
     Spec = nkservice_server:get_spec(Id),
-    Transports = maps:get(transports, Spec, #{}),
-    case start_transports(maps:to_list(Transports), Spec) of
+    case start_transports(maps:get(transports, Spec, []), Spec) of
         ok ->
             {ok, Pid};
         {error, Error} ->

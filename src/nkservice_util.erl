@@ -97,13 +97,6 @@ syntax() ->
         callback => atom,
         log_level => log_level,
         transports => fun parse_transports/3,
-        packet_udp_timeout => {integer, 5, none},
-        packet_tcp_timeout => {integer, 5, none},
-        packet_sctp_timeout => {integer, 5, none},
-        packet_ws_timeout => {integer, 5, none},
-        packet_max_connections => {integer, 1, 1000000},
-        packet_certfile => path,
-        packet_keyfile => path,
         packet_local_host => [{enum, [auto]}, host],
         packet_local_host6 => [{enum, [auto]}, host6]
     }.
@@ -112,72 +105,79 @@ syntax() ->
 defaults() ->
     #{
         log_level => notice,
-        packet_udp_timeout => 30,                  % (secs) 30 secs
-        packet_tcp_timeout => 180,                 % (secs) 3 min
-        packet_sctp_timeout => 180,                % (secs) 3 min
-        packet_ws_timeout => 180,                  % (secs) 3 min
-        packet_max_connections => 1024,            % Per transport and Service
         packet_local_host => auto,
         packet_local_host6 => auto
     }.
 
 
-%% @private
-parse_transports(_, Spec, _) when is_list(Spec); is_map(Spec) ->
-    try
-        do_parse_transports(nklib_util:to_list(Spec), #{})
-    catch
-        throw:Throw -> {error, Throw}
-    end;
-
-parse_transports(_, _List, _) ->
-    error.
-
 
 %% @private
-do_parse_transports([], Map) ->
-    {ok, Map};
+parse_transports(_, [{{_Protocol, _Transp, _Ip, _Port}, _Opts}|_], _) ->
+    ok;
 
-do_parse_transports([Transport|Rest], Map) ->
-    case Transport of
-        {{Proto, Ip, Port}, Opts}  when is_list(Opts); is_map(Opts) -> ok;
-        {Proto, Ip, Port, Opts} when is_list(Opts); is_map(Opts) -> ok;
-        {Proto, Ip, Port} -> Opts = #{};
-        {Proto, Ip} -> Port = any, Opts = #{};
-        Proto -> Ip = all, Port = any, Opts = #{}
-    end,
-    case 
-        (Proto==udp orelse Proto==tcp orelse 
-         Proto==tls orelse Proto==sctp orelse
-         Proto==ws  orelse Proto==wss)
-    of
-        true -> ok;
-        false -> throw({invalid_transport, Transport})
-    end,
-    Ip1 = case Ip of
-        all ->
-            {0,0,0,0};
-        all6 ->
-            {0,0,0,0,0,0,0,0};
-        _ when is_tuple(Ip) ->
-            case catch inet_parse:ntoa(Ip) of
-                {error, _} -> throw({invalid_transport, Transport});
-                {'EXIT', _} -> throw({invalid_transport, Transport});
-                _ -> Ip
-            end;
+parse_transports(_, Spec, _) ->
+    case nkpacket:multi_resolve(Spec) of
+        {ok, List} ->
+            {ok, List};
         _ ->
-            case catch nklib_util:to_ip(Ip) of
-                {ok, PIp} -> PIp;
-                _ -> throw({invalid_transport, Transport})
-            end
-    end,
-    Port1 = case Port of
-        any -> 0;
-        _ when is_integer(Port), Port >= 0 -> Port;
-        _ -> throw({invalid_transport, Transport})
-    end,
-    Opts1 = nklib_util:to_map(Opts),
-    do_parse_transports(Rest, maps:put({Proto, Ip1, Port1}, Opts1, Map)).
+            error
+    end.
+
+% parse_transports(_, Spec, _) when is_list(Spec); is_map(Spec) ->
+%     try
+%         do_parse_transports(nklib_util:to_list(Spec), #{})
+%     catch
+%         throw:Throw -> {error, Throw}
+%     end;
+
+% parse_transports(_, _List, _) ->
+%     error.
+
+
+% %% @private
+% do_parse_transports([], Map) ->
+%     {ok, Map};
+
+% do_parse_transports([Transport|Rest], Map) ->
+%     case Transport of
+%         {{Proto, Ip, Port}, Opts}  when is_list(Opts); is_map(Opts) -> ok;
+%         {Proto, Ip, Port, Opts} when is_list(Opts); is_map(Opts) -> ok;
+%         {Proto, Ip, Port} -> Opts = #{};
+%         {Proto, Ip} -> Port = any, Opts = #{};
+%         Proto -> Ip = all, Port = any, Opts = #{}
+%     end,
+%     case 
+%         (Proto==udp orelse Proto==tcp orelse 
+%          Proto==tls orelse Proto==sctp orelse
+%          Proto==ws  orelse Proto==wss)
+%     of
+%         true -> ok;
+%         false -> throw({invalid_transport, Transport})
+%     end,
+%     Ip1 = case Ip of
+%         all ->
+%             {0,0,0,0};
+%         all6 ->
+%             {0,0,0,0,0,0,0,0};
+%         _ when is_tuple(Ip) ->
+%             case catch inet_parse:ntoa(Ip) of
+%                 {error, _} -> throw({invalid_transport, Transport});
+%                 {'EXIT', _} -> throw({invalid_transport, Transport});
+%                 _ -> Ip
+%             end;
+%         _ ->
+%             case catch nklib_util:to_ip(Ip) of
+%                 {ok, PIp} -> PIp;
+%                 _ -> throw({invalid_transport, Transport})
+%             end
+%     end,
+%     Port1 = case Port of
+%         any -> 0;
+%         _ when is_integer(Port), Port >= 0 -> Port;
+%         _ -> throw({invalid_transport, Transport})
+%     end,
+%     Opts1 = nklib_util:to_map(Opts),
+%     do_parse_transports(Rest, maps:put({Proto, Ip1, Port1}, Opts1, Map)).
 
 
 
