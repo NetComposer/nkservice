@@ -44,7 +44,6 @@ add_transport(Id, Spec) ->
     {Conn, _Ref} = element(1, Spec),
     case find_started(supervisor:which_children(SupPid), Conn) of
         false ->
-            lager:warning("Starting ~p", [Conn]),
             case supervisor:start_child(SupPid, Spec) of
                 {ok, Pid} -> {ok, Pid};
                 {error, {Error, _}} -> {error, Error};
