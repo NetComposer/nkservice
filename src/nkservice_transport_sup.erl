@@ -25,6 +25,7 @@
 
 -export([get_pid/1, add_transport/2, start_transports/2, start_link/1, init/1]).
 
+-include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
 
 %% @private Gets the service's transport supervisor's pid()
@@ -45,9 +46,15 @@ add_transport(Id, Spec) ->
     case find_started(supervisor:which_children(SupPid), Conn) of
         false ->
             case supervisor:start_child(SupPid, Spec) of
-                {ok, Pid} -> {ok, Pid};
-                {error, {Error, _}} -> {error, Error};
-                {error, Error} -> {error, Error}
+                {ok, Pid} ->
+                    {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
+                    lager:info("Service ~p (~p) started listener on ~p:~p:~p (~p)", 
+                               [Id:name(), Id, Transp, Ip, Port, Proto]),
+                     {ok, Pid};
+                {error, {Error, _}} -> 
+                    {error, Error};
+                {error, Error} -> 
+                    {error, Error}
             end;
         {true, Pid} ->
             lager:warning("Transport ~p was already started", [Conn]),

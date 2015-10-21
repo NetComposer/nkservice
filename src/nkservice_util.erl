@@ -65,7 +65,6 @@ parse_syntax(Data, Syntax, Defaults) ->
     end.
 
 
-
 %% @private
 -spec safe_call(module(), atom(), list()) ->
     term() | not_exported | error.
@@ -87,7 +86,7 @@ safe_call(Module, Fun, Args) ->
     end.
 
 
-
+%% @private
 syntax() ->
     #{
         id => atom,
@@ -96,19 +95,15 @@ syntax() ->
         plugins => {list, atom},
         callback => atom,
         log_level => log_level,
-        transports => fun parse_transports/3,
-        packet_local_host => [{enum, [auto]}, host],
-        packet_local_host6 => [{enum, [auto]}, host6]
+        transports => fun parse_transports/3
     }.
 
 
+%% @private
 defaults() ->
     #{
-        log_level => notice,
-        packet_local_host => auto,
-        packet_local_host6 => auto
+        log_level => debug
     }.
-
 
 
 %% @private
@@ -116,137 +111,9 @@ parse_transports(_, [{{_Protocol, _Transp, _Ip, _Port}, _Opts}|_], _) ->
     ok;
 
 parse_transports(_, Spec, _) ->
-    case nkpacket:multi_resolve(Spec) of
+    case nkpacket:multi_resolve(Spec, #{resolve_type=>listen}) of
         {ok, List} ->
             {ok, List};
         _ ->
             error
     end.
-
-% parse_transports(_, Spec, _) when is_list(Spec); is_map(Spec) ->
-%     try
-%         do_parse_transports(nklib_util:to_list(Spec), #{})
-%     catch
-%         throw:Throw -> {error, Throw}
-%     end;
-
-% parse_transports(_, _List, _) ->
-%     error.
-
-
-% %% @private
-% do_parse_transports([], Map) ->
-%     {ok, Map};
-
-% do_parse_transports([Transport|Rest], Map) ->
-%     case Transport of
-%         {{Proto, Ip, Port}, Opts}  when is_list(Opts); is_map(Opts) -> ok;
-%         {Proto, Ip, Port, Opts} when is_list(Opts); is_map(Opts) -> ok;
-%         {Proto, Ip, Port} -> Opts = #{};
-%         {Proto, Ip} -> Port = any, Opts = #{};
-%         Proto -> Ip = all, Port = any, Opts = #{}
-%     end,
-%     case 
-%         (Proto==udp orelse Proto==tcp orelse 
-%          Proto==tls orelse Proto==sctp orelse
-%          Proto==ws  orelse Proto==wss)
-%     of
-%         true -> ok;
-%         false -> throw({invalid_transport, Transport})
-%     end,
-%     Ip1 = case Ip of
-%         all ->
-%             {0,0,0,0};
-%         all6 ->
-%             {0,0,0,0,0,0,0,0};
-%         _ when is_tuple(Ip) ->
-%             case catch inet_parse:ntoa(Ip) of
-%                 {error, _} -> throw({invalid_transport, Transport});
-%                 {'EXIT', _} -> throw({invalid_transport, Transport});
-%                 _ -> Ip
-%             end;
-%         _ ->
-%             case catch nklib_util:to_ip(Ip) of
-%                 {ok, PIp} -> PIp;
-%                 _ -> throw({invalid_transport, Transport})
-%             end
-%     end,
-%     Port1 = case Port of
-%         any -> 0;
-%         _ when is_integer(Port), Port >= 0 -> Port;
-%         _ -> throw({invalid_transport, Transport})
-%     end,
-%     Opts1 = nklib_util:to_map(Opts),
-%     do_parse_transports(Rest, maps:put({Proto, Ip1, Port1}, Opts1, Map)).
-
-
-
-
-
-
-% %% @private
-% -spec update_spec(#{spec=>map(), cache=>map(), transports=>map()},
-%                  nkservice:spec()) ->
-%     nkservice:spec().
-
-% update_spec(Update, ServiceSpec) when is_map(Update), is_map(ServiceSpec) ->
-%     OldCache = maps:get(cache, ServiceSpec, #{}),
-%     NewCache = case Update of
-%         #{cache:=Cache} when is_map(Cache) ->
-%             maps:merge(OldCache, Cache);
-%         _ ->
-%             OldCache
-%     end,
-%     OldTransports = maps:get(transports, ServiceSpec, #{}),
-%     NewTransports = case Update of
-%         #{transports:=Transports} when is_map(Transports) ->
-%             maps:merge(OldTransports, Transports);
-%         _ ->
-%             OldTransports
-%     end,
-%     ServiceSpec1 = case Update of
-%         #{spec:=Config} when is_map(Config) ->
-%             maps:merge(ServiceSpec, Config);
-%         _ ->
-%             ServiceSpec
-%     end,
-%     ServiceSpec1#{
-%         cache => NewCache, 
-%         transports => NewTransports
-%     }.
-
-    
-
-% %% @private
-% -spec remove_spec(#{spec=>[term()], cache=>[term()], transports=>[term()]},
-%                  nkservice:spec()) ->
-%     nkservice:spec().
-
-% remove_spec(Update, ServiceSpec) when is_map(Update), is_map(ServiceSpec) ->
-%     lager:warning("REM: ~p", [Update]),
-%     io:format("S: ~p\n", [ServiceSpec]),
-
-%     OldCache = maps:get(cache, ServiceSpec, #{}),
-%     NewCache = case Update of
-%         #{cache:=Cache} when is_list(Cache) ->
-%             maps:without(Cache, OldCache);
-%         _ ->
-%             OldCache
-%     end,
-%     OldTransports = maps:get(transports, ServiceSpec, #{}),
-%     NewTransports = case Update of
-%         #{transports:=Transports} when is_list(Transports) ->
-%             maps:without(Transports, OldTransports);
-%         _ ->
-%             OldTransports
-%     end,
-%     ServiceSpec1 = ServiceSpec#{
-%         cache => NewCache, 
-%         transports => NewTransports
-%     },
-%     case Update of
-%         #{spec:=Config} when is_list(Config) ->
-%             maps:without(Config, ServiceSpec1);
-%         _ ->
-%             ServiceSpec1
-%     end.

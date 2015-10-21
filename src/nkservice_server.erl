@@ -78,7 +78,7 @@ start(Name, Spec) ->
 
 %% @doc Stops a service
 -spec stop(service_select()) ->
-    ok | {error, not_found}.
+    ok | {error, service_not_found}.
 
 stop(Srv) ->
     case find(Srv) of
@@ -87,7 +87,7 @@ stop(Srv) ->
                 ok -> 
                     ok;
                 error -> 
-                    {error, not_found}
+                    {error, service_not_found}
             end;
         not_found ->
             {error, service_not_found}
@@ -452,6 +452,7 @@ do_start_plugins([], Spec) ->
 
 do_start_plugins([Plugin|Rest], Spec) ->
     lager:debug("Service ~p starting plugin ~p", [maps:get(id, Spec), Plugin]),
+    code:ensure_loaded(Plugin),
     case nkservice_util:safe_call(Plugin, plugin_start, [Spec]) of
         not_exported ->
             do_start_plugins(Rest, Spec);
