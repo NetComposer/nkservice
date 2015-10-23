@@ -22,7 +22,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, get/2, get/3, put/3, put_new/3, del/2, find/1, get_pid/1]).
+-export([start/2, stop/1, get/2, get/3, put/3, put_new/3, del/2]).
+-export([get_srv_id/1, get_pid/1]).
 -export([call/2, call/3, cast/2, get_spec/1, get_cache/2]).
 -export([start_link/1, update/2, send_stop/1, get_all/0, get_all/1]).
 -export([pending_msgs/0]).
@@ -47,7 +48,7 @@
 start(Name, Spec) ->
     Id = nkservice:make_id(Name),
     try
-        case find(Id) of
+        case get_srv_id(Id) of
             {ok, OldId} -> 
                 case is_pid(whereis(OldId)) of
                     true -> throw(already_started);
@@ -81,7 +82,7 @@ start(Name, Spec) ->
     ok | {error, service_not_found}.
 
 stop(Srv) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} ->
             case nkservice_service_sup:stop_service(Id) of
                 ok -> 
@@ -100,7 +101,7 @@ stop(Srv) ->
     ok | {error, term()}.
 
 update(Srv, Spec) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} ->
             call(Id, {nkservice_update, Spec}, 30000);
         not_found ->
@@ -110,10 +111,10 @@ update(Srv, Spec) ->
     
 
 %% @doc Gets the internal name of an existing service
--spec find(service_select()) ->
+-spec get_srv_id(service_select()) ->
     {ok, nkservice:id(), pid()} | not_found.
 
-find(Srv) ->
+get_srv_id(Srv) ->
     case is_atom(Srv) andalso erlang:function_exported(Srv, plugin_start, 1) of
         true ->
             {ok, Srv};
@@ -127,7 +128,7 @@ find(Srv) ->
     {ok, pid()} | not_running.
 
 get_pid(Srv) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, SrvId} ->
             case whereis(SrvId) of
                 Pid when is_pid(Pid) -> Pid;
@@ -150,7 +151,7 @@ get(Srv, Key) ->
     term().
 
 get(Srv, Key, Default) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} ->
             case catch ets:lookup(Id, Key) of
                 [{_, Value}] -> Value;
@@ -166,7 +167,7 @@ get(Srv, Key, Default) ->
     ok.
 
 put(Srv, Key, Value) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} ->
             case catch ets:insert(Id, {Key, Value}) of
                 true -> ok;
@@ -182,7 +183,7 @@ put(Srv, Key, Value) ->
     ok.
 
 del(Srv, Key) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} ->
             case catch ets:delete(Id, Key) of
                 true -> ok;
@@ -198,7 +199,7 @@ del(Srv, Key) ->
     true | false.
 
 put_new(Srv, Key, Value) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} ->
             case catch ets:insert_new(Id, {Key, Value}) of
                 true -> true;
@@ -223,7 +224,7 @@ call(Srv, Term) ->
     term().
 
 call(Srv, Term, Time) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} -> 
             gen_server:call(Id, Term, Time);
         not_found -> 
@@ -236,7 +237,7 @@ call(Srv, Term, Time) ->
     term().
 
 cast(Srv, Term) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} -> 
             gen_server:cast(Id, Term);
         not_found -> 
@@ -308,7 +309,7 @@ find_name(Name) ->
     term().
 
 get_cache(Srv, Field) ->
-    case find(Srv) of
+    case get_srv_id(Srv) of
         {ok, Id} -> 
             case Id:Field() of
                 {map, Bin} -> binary_to_term(Bin);
