@@ -22,9 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([parse_syntax/1, parse_syntax/2, parse_syntax/3]).
--export([defaults/0, syntax/0]).
 -export([safe_call/3]).
-
 
 
 
@@ -33,14 +31,12 @@
 %% ===================================================================
 
 
-
-
 %% @private
 -spec parse_syntax(map()|list()) ->
     {ok, map()} | {error, term()}.
 
 parse_syntax(Data) ->
-    parse_syntax(Data, syntax(), defaults()).
+    parse_syntax(Data, nkservice_syntax:syntax(), nkservice_syntax:defaults()).
 
 
 %% @private
@@ -86,34 +82,4 @@ safe_call(Module, Fun, Args) ->
     end.
 
 
-%% @private
-syntax() ->
-    #{
-        id => atom,
-        name => any,
-        class => atom,
-        plugins => {list, atom},
-        callback => atom,
-        log_level => log_level,
-        transports => fun parse_transports/3
-    }.
 
-
-%% @private
-defaults() ->
-    #{
-        log_level => debug
-    }.
-
-
-%% @private
-parse_transports(_, [{{_Protocol, _Transp, _Ip, _Port}, _Opts}|_], _) ->
-    ok;
-
-parse_transports(_, Spec, _) ->
-    case nkpacket:multi_resolve(Spec, #{resolve_type=>listen}) of
-        {ok, List} ->
-            {ok, List};
-        _ ->
-            error
-    end.

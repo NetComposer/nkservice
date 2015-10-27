@@ -29,6 +29,7 @@
 -include("nkservice.hrl").
 
 -define(APP, nkservice).
+-compile({no_auto_import, [get/1, put/2]}).
 
 %% ===================================================================
 %% Private
@@ -58,14 +59,11 @@ start(Type) ->
 
 %% @private OTP standard start callback
 start(_Type, _Args) ->
-    Syntax = #{
-        log_path => binary
-    },
-    Defaults = #{
-        log_path => <<"log">>
-    },
-    case nklib_config:load_env(?APP, ?APP, Syntax, Defaults) of
+    Syntax = nkservice_syntax:app_syntax(),
+    Defaults = nkservice_syntax:app_defaults(),
+    case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
+            file:make_dir(get(log_path)),
             {ok, Pid} = nkservice_sup:start_link(),
             {ok, Vsn} = application:get_key(nkservice, vsn),
             lager:notice("NkSERVICE v~s has started.", [Vsn]),

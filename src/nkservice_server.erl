@@ -61,7 +61,7 @@ start(Name, Spec) ->
             {ok, Parsed} -> Parsed;
             {error, ParseError} -> throw(ParseError)
         end,
-        CacheKeys = maps:keys(nkservice_util:defaults()),
+        CacheKeys = maps:keys(nkservice_syntax:defaults()),
         ConfigCache = maps:with(CacheKeys, Spec1),
         Spec2 = Spec1#{id=>Id, name=>Name, cache=>ConfigCache},
         % lager:warning("Parsed: ~p", [Parsed2]),

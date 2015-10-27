@@ -35,7 +35,9 @@
 -type spec() :: 
 	#{
 		class => class(),
-		plugins => [module()]
+		plugins => [module()],
+        callback => [module()],
+        transports => string() | binary() | [string() | binary()]
 	}.
 
 -type class() :: atom().

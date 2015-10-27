@@ -42,8 +42,8 @@ get_pid(Id) ->
 
 add_transport(Id, Spec) ->
     SupPid = get_pid(Id),
-    {Conn, _Ref} = element(1, Spec),
-    case find_started(supervisor:which_children(SupPid), Conn) of
+    {TranspId, _Ref} = element(1, Spec),
+    case find_started(supervisor:which_children(SupPid), TranspId) of
         false ->
             case supervisor:start_child(SupPid, Spec) of
                 {ok, Pid} ->
@@ -57,7 +57,7 @@ add_transport(Id, Spec) ->
                     {error, Error}
             end;
         {true, Pid} ->
-            lager:warning("Transport ~p was already started", [Conn]),
+            lager:info("Not starting again transport ~p", [TranspId]),
             {ok, Pid}
     end.
 
