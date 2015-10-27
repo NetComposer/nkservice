@@ -23,8 +23,9 @@
 
 -export([app_syntax/0, app_defaults/0, syntax/0, defaults/0]).
 
-
+-include_lib("nkpacket/include/nkpacket.hrl").
   
+
 %% @private
 app_syntax() ->
     #{
@@ -50,7 +51,14 @@ syntax() ->
         plugins => {list, atom},
         callback => atom,
         log_level => log_level,
-        transports => fun parse_transports/3
+        transports => fun parse_transports/3,
+
+        idle_timeout => pos_integer,
+        connect_timeout => nat_integer,
+        sctp_out_streams => nat_integer,
+        sctp_in_streams => nat_integer,
+        no_dns_cache => boolean,
+        ?TLS_SYNTAX
     }.
 
 
