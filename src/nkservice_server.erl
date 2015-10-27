@@ -484,7 +484,7 @@ do_stop_plugins([Plugin|Rest], Spec) ->
 do_update(#{id:=Id}=Spec) ->
     try
         OldSpec = get_spec(Id),
-        Syntax = nkservice_util:syntax(),
+        Syntax = nkservice_syntax:syntax(),
         % We don't use OldSpec as a default, since values not in syntax()
         % would be taken from OldSpec insted than from Spec
         Spec1 = case nkservice_util:parse_syntax(Spec, Syntax) of
@@ -507,7 +507,7 @@ do_update(#{id:=Id}=Spec) ->
         ToStop = lists:reverse(OldPlugins--ToStart),
         lager:info("Server ~p plugins to stop: ~p, start: ~p", 
                    [Id, ToStop, ToStart]),
-        CacheKeys = maps:keys(nkservice_util:defaults()),
+        CacheKeys = maps:keys(nkservice_syntax:defaults()),
         Spec3 = Spec2#{
             plugins => ToStart,
             cache => maps:with(CacheKeys, Spec2)
