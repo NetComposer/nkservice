@@ -11,8 +11,8 @@
         sasl,
         ssl,
         lager,
-        nkpacket,
-        nkdocker
+        nkpacket
+        % nkdocker
     ]},
     {env, [
     ]}
