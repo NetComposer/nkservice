@@ -72,8 +72,12 @@ defaults() ->
 
 
 %% @private
-parse_transports(_, [{{_Protocol, _Transp, _Ip, _Port}, _Opts}|_], _) ->
-    ok;
+parse_transports(_, [{_, _, _, _, _}|_]=List, _) ->
+   List1 = [
+        {[{Protocol, Transp, Ip, Port}], Opts}
+        || {Protocol, Transp, Ip, Port, Opts} <- List
+    ],
+    {ok, List1};
 
 parse_transports(_, Spec, _) ->
     case nkpacket:multi_resolve(Spec, #{resolve_type=>listen}) of

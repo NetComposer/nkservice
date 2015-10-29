@@ -515,6 +515,19 @@ do_update(#{id:=Id}=Spec) ->
         {ok, Spec4} = do_stop_plugins(ToStop, Spec3),
         case do_start_plugins(ToStart, Spec4) of
             {ok, Spec5} ->
+                case Spec5 of
+                    #{transports:=Transports} ->
+                        case 
+                            nkservice_transport_sup:start_transports(Transports, Spec5) 
+                        of
+                            ok -> 
+                                ok;
+                            {error, Error} ->
+                                throw(Error)
+                        end;
+                    _ ->
+                        ok
+                end,
                 {Added, Removed} = get_diffs(Spec5, OldSpec),
                 lager:info("Added config: ~p", [Added]),
                 lager:info("Removed config: ~p", [Removed]),
