@@ -1,6 +1,6 @@
 {application, nkservice, [
     {description, "NkCORE Service Framework"},
-    {vsn, "0.1.0"},
+    {vsn, "master"},
     {modules, []},
     {registered, []},
     {mod, {nkservice_app, []}},
