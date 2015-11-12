@@ -24,6 +24,38 @@
 -export_type([id/0, name/0, spec/0, class/0, info/0]).
 -export([make_id/1]).
 
+
+
+%% ===================================================================
+%% Callbacks
+%% ===================================================================
+
+%% Plugins and services must implement this behaviour.
+
+%% @doc Called to get the list of plugins this service/plugin depend on.
+-callback deps() ->
+    [module()].
+
+%% @doc Called when the plugin or service is about to start or it is re-configured
+%% It receives the full configuration, and must:
+%% - parse its specific configuration options, and replace the values in the
+%%   config with the parsed ones.
+%% - add or updated the values of the 'cache' key. They will be expanded as
+%%   functions cache_... at the compiled run-time module
+%% - add or updated the values of the 'transport' key. They will be expanded as
+%%   functions cache_... at the compiled run-time module
+-callback plugin_start(spec()) ->
+    {ok, spec()} | {stop, term()}.
+
+
+%% @doc Called when the plugin or service is about to stop
+%% It receives the full configuration, and must:
+%% - remove any specific configuration options from the config
+%% - remove specific configuration options from cache and transports
+-callback terminate(nkservice:id(), nkservice:spec()) ->
+    {ok, spec()} | {stop, term()}.
+
+
 %% ===================================================================
 %% Types
 %% ===================================================================
