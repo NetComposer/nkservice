@@ -71,17 +71,17 @@
 -type id() :: atom().
 
 %% Service's class
--type class() :: atom().
+-type class() :: term().
 
 %% Service specification
-%% - class
+%% - class: only used to find services
 %% - plugins: list of dependant plugins
 %% - callback: if present, will be the top-level plugin
 %% - transports to start
 %%
 -type spec() :: 
 	#{
-		class => class(),
+		class => term(),
 		plugins => [module()],
         callback => module(),
         transports => string() | binary() | [string() | binary()],

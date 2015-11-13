@@ -47,7 +47,7 @@ syntax() ->
     #{
         id => atom,
         name => any,
-        class => atom,
+        class => any,
         plugins => {list, atom},
         callback => atom,
         log_level => log_level,
