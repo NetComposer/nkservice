@@ -4,7 +4,7 @@
 
 version() -> "1.5".
 
-deps() -> [].
+plugin_deps() -> [].
 
 
 init(_SrvId, #{env:=Env}=Spec) ->

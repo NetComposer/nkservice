@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 %% @private
--module(nkservice_transport_sup).
+-module(nkservice_transp_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
@@ -33,7 +33,7 @@
     pid() | undefined.
 
 get_pid(Id) ->
-    nklib_proc:whereis_name({nkservice_transport_sup, Id}).
+    nklib_proc:whereis_name({nkservice_transp_sup, Id}).
 
 
 %% @private Starts a new transport control process under this supervisor
@@ -117,7 +117,7 @@ start_transports(_Id, [], _Opts) ->
 start_link(Id) ->
     ChildSpec = {{one_for_one, 10, 60}, []},
     {ok, Pid} = supervisor:start_link(?MODULE, {Id, ChildSpec}),
-    Spec = nkservice_server:get_spec(Id),
+    Spec = nkservice:get_spec(Id),
     case start_transports(maps:get(transports, Spec, []), Spec) of
         ok ->
             {ok, Pid};

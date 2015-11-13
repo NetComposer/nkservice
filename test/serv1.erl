@@ -4,7 +4,7 @@
 
 version() -> "1".
 
-deps() -> nklib_util:randomize([plug1, plug3]).
+plugin_deps() -> nklib_util:randomize([plug1, plug3]).
 
 init(_SrvId, #{env:=Env}=Spec) ->
 	lager:notice("Plugin ~p starting/updating", [?MODULE]),

@@ -4,7 +4,7 @@
 
 version() -> "1".
 
-deps() -> [plug2].
+plugin_deps() -> [plug2].
 
 init(_SrvId, #{env:=Env}=Spec) ->
 	lager:notice("Plugin ~p starting", [?MODULE]),

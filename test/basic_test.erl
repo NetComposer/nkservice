@@ -47,7 +47,7 @@
 
 basic() ->
 	SrvId = 'serv1@root',
-	nkservice_server:stop(SrvId),
+	nkservice:stop(SrvId),
 	timer:sleep(100),
 	SrvSpec = #{
 		class => class1,
@@ -81,21 +81,21 @@ basic() ->
 	lager:error("Next error about an unexpected call is expected"),
 	{noreply, {ok, st1}} = SrvId:nks_handle_call(any, any, st1),
 
-	ok = nkservice_server:update(SrvId, #{data1=>value2}),
+	ok = nkservice:update((SrvId, #{data1=>value2}),
 	#{class:=class1, data1:=value2} = nkservice_server:get_cache(SrvId, spec),
 
 	ok = meck:expect(serv1, deps, fun() -> [{plug1, ".*"}] end),
-	ok = nkservice_server:update(SrvId, #{data1=>value3}),
+	ok = nkservice:update((SrvId, #{data1=>value3}),
 	#{plug1:=ok, plug2:=ok, serv1:=ok} = nkservice_server:get_cache(SrvId, env),
 	ok = meck:expect(plug1, deps, fun() -> [] end),
-	ok = nkservice_server:update(SrvId, #{data1=>value4}),
+	ok = nkservice:update((SrvId, #{data1=>value4}),
 	#{plug1:=ok, serv1:=ok} = nkservice_server:get_cache(SrvId, env),
 
 	meck:unload(serv1),
 	meck:unload(plug1),
 	code:load_file(serv1),
 	code:load_file(plug1),
-	nkservice_server:stop(SrvId),
+	nkservice:stop(SrvId),
 	ok.
 
 

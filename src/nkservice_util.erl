@@ -21,7 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([parse_syntax/1, parse_syntax/2, parse_syntax/3]).
+-export([make_id/1, parse_syntax/1, parse_syntax/2, parse_syntax/3]).
 -export([safe_call/3]).
 
 
@@ -29,6 +29,19 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc Generates the service id from any name
+-spec make_id(nkservice:name()) ->
+    nkservice:id().
+
+make_id(Name) ->
+    list_to_atom(
+        string:to_lower(
+            case binary_to_list(nklib_util:hash36(Name)) of
+                [F|Rest] when F>=$0, F=<$9 -> [$A+F-$0|Rest];
+                Other -> Other
+            end)).
 
 
 %% @private

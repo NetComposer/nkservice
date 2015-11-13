@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_service_sup).
+-module(nkservice_srv_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
@@ -35,13 +35,13 @@
 start_service(#{id:=Id}=Spec) ->
     SupSpec = {
         Id,
-            {nkservice_service_sup, start_link, [Spec]},
+            {nkservice_srv_sup, start_link, [Spec]},
             permanent,
             infinity,
             supervisor,
-            [nkservice_service_sup]
+            [nkservice_srv_sup]
     },
-    case supervisor:start_child(nkservice_all_services_sup, SupSpec) of
+    case supervisor:start_child(nkservice_all_srvs_sup, SupSpec) of
         {ok, _SupPid} -> 
             ok;
         {error, {{shutdown, {failed_to_start_child,server, Error}}, _Desc}} ->
@@ -56,9 +56,9 @@ start_service(#{id:=Id}=Spec) ->
     ok | error.
 
 stop_service(Id) ->
-    case supervisor:terminate_child(nkservice_all_services_sup, Id) of
+    case supervisor:terminate_child(nkservice_all_srvs_sup, Id) of
         ok -> 
-            ok = supervisor:delete_child(nkservice_all_services_sup, Id);
+            ok = supervisor:delete_child(nkservice_all_srvs_sup, Id);
         {error, _} -> 
             error
     end.
@@ -86,11 +86,11 @@ start_link(#{id:=Id}=Spec) ->
             [nkservice_server]
         },
         {transports,
-            {nkservice_transport_sup, start_link, [Id]},
+            {nkservice_transp_sup, start_link, [Id]},
             permanent,
             infinity,
             supervisor,
-            [nkservice_transport_sup]
+            [nkservice_transp_sup]
         }
     ],
     ChildSpec = {Id, {{one_for_one, 10, 60}, Childs}},

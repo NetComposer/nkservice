@@ -22,10 +22,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, get/2, get/3, put/3, put_new/3, del/2]).
--export([get_srv_id/1, get_pid/1]).
--export([call/2, call/3, cast/2, get_spec/1, get_cache/2]).
--export([start_link/1, update/2, send_stop/1, get_all/0, get_all/1]).
+-export([find_name/1, get_pid/1, get_srv_id/1, get_cache/2]).
+-export([start_link/1, stop/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
@@ -33,6 +31,7 @@
 -include("nkservice.hrl").
 
 -type service_select() :: nkservice:id() | nkservice:name().
+
 -type user() :: map().
 
 
@@ -40,86 +39,14 @@
 %% Public
 %% ===================================================================
 
+%% @private Finds a service's id from its name
+-spec find_name(nkservice:name()) ->
+    {ok, nkservice:id()} | not_found.
 
-%% @doc Starts a new service.
--spec start(nkservice:name(), nkservice:spec()) ->
-    ok | {error, term()}.
-
-start(Name, Spec) ->
-    Id = nkservice:make_id(Name),
-    try
-        case get_srv_id(Id) of
-            {ok, OldId} -> 
-                case is_pid(whereis(OldId)) of
-                    true -> throw(already_started);
-                    false -> ok
-                end;
-            not_found -> 
-                ok
-        end,
-        Spec1 = case nkservice_util:parse_syntax(Spec) of
-            {ok, Parsed} -> Parsed;
-            {error, ParseError} -> throw(ParseError)
-        end,
-        CacheKeys = maps:keys(nkservice_syntax:defaults()),
-        ConfigCache = maps:with(CacheKeys, Spec1),
-        Spec2 = Spec1#{id=>Id, name=>Name, cache=>ConfigCache},
-        % lager:warning("Parsed: ~p", [Parsed2]),
-        case nkservice_service_sup:start_service(Spec2) of
-            ok ->
-                {ok, Id};
-            {error, Error} -> 
-                {error, Error}
-        end
-    catch
-        throw:Throw -> {error, Throw}
-    end.
-
-
-
-%% @doc Stops a service
--spec stop(service_select()) ->
-    ok | {error, service_not_found}.
-
-stop(Srv) ->
-    case get_srv_id(Srv) of
-        {ok, Id} ->
-            case nkservice_service_sup:stop_service(Id) of
-                ok -> 
-                    ok;
-                error -> 
-                    {error, service_not_found}
-            end;
-        not_found ->
-            {error, service_not_found}
-    end.
-
-
-
-%% @private
--spec update(service_select(), nkservice:spec()) ->
-    ok | {error, term()}.
-
-update(Srv, Spec) ->
-    case get_srv_id(Srv) of
-        {ok, Id} ->
-            call(Id, {nkservice_update, Spec}, 30000);
-        not_found ->
-            {error, service_not_found}
-    end.
-
-    
-
-%% @doc Gets the internal name of an existing service
--spec get_srv_id(service_select()) ->
-    {ok, nkservice:id(), pid()} | not_found.
-
-get_srv_id(Srv) ->
-    case is_atom(Srv) andalso erlang:function_exported(Srv, plugin_start, 1) of
-        true ->
-            {ok, Srv};
-        false ->
-            find_name(Srv)
+find_name(Name) ->
+    case nklib_proc:values({?MODULE, Name}) of
+        [] -> not_found;
+        [{Id, _Pid}|_] -> {ok, Id}
     end.
 
 
@@ -139,168 +66,16 @@ get_pid(Srv) ->
     end.
 
 
-%% @doc Gets a value from service's store
--spec get(service_select(), term()) ->
-    term().
+%% @doc Gets the internal name of an existing service
+-spec get_srv_id(service_select()) ->
+    {ok, nkservice:id(), pid()} | not_found.
 
-get(Srv, Key) ->
-    get(Srv, Key, undefined).
-
-%% @doc Gets a value from service's store
--spec get(service_select(), term(), term()) ->
-    term().
-
-get(Srv, Key, Default) ->
-    case get_srv_id(Srv) of
-        {ok, Id} ->
-            case catch ets:lookup(Id, Key) of
-                [{_, Value}] -> Value;
-                [] -> Default;
-                _ -> error(service_not_found)
-            end;
-        not_found ->
-            error(service_not_found)
-    end.
-
-%% @doc Inserts a value in service's store
--spec put(service_select(), term(), term()) ->
-    ok.
-
-put(Srv, Key, Value) ->
-    case get_srv_id(Srv) of
-        {ok, Id} ->
-            case catch ets:insert(Id, {Key, Value}) of
-                true -> ok;
-                _ -> error(service_not_found)
-            end;
-        not_found ->
-            error(service_not_found)
-    end.
-
-
-%% @doc Deletes a value from service's store
--spec del(service_select(), term()) ->
-    ok.
-
-del(Srv, Key) ->
-    case get_srv_id(Srv) of
-        {ok, Id} ->
-            case catch ets:delete(Id, Key) of
-                true -> ok;
-                _ -> error(service_not_found)
-            end;
-        not_found ->
-            error(service_not_found)
-    end.
-
-
-%% @doc Inserts a value in service's store
--spec put_new(service_select(), term(), term()) ->
-    true | false.
-
-put_new(Srv, Key, Value) ->
-    case get_srv_id(Srv) of
-        {ok, Id} ->
-            case catch ets:insert_new(Id, {Key, Value}) of
-                true -> true;
-                false -> false;
-                _ -> error(service_not_found)
-            end;
-        not_found ->
-            error(service_not_found)
-    end.
-
-
-%% @doc Synchronous call to the service's gen_server process
--spec call(service_select(), term()) ->
-    term().
-
-call(Srv, Term) ->
-    call(Srv, Term, 5000).
-
-
-%% @doc Synchronous call to the service's gen_server process with a timeout
--spec call(service_select(), term(), pos_integer()|infinity|default) ->
-    term().
-
-call(Srv, Term, Time) ->
-    case get_srv_id(Srv) of
-        {ok, Id} -> 
-            gen_server:call(Id, Term, Time);
-        not_found -> 
-            error(service_not_found)
-    end.
-
-
-%% @doc Asynchronous call to the service's gen_server process
--spec cast(service_select(), term()) ->
-    term().
-
-cast(Srv, Term) ->
-    case get_srv_id(Srv) of
-        {ok, Id} -> 
-            gen_server:cast(Id, Term);
-        not_found -> 
-            error(service_not_found)
-    end.
-
-
-%% @doc Gets current service configuration
--spec get_spec(service_select()) ->
-    nkservice:spec().
-
-get_spec(Srv) ->
-    get_cache(Srv, spec).
-
-
-%% ===================================================================
-%% Private
-%% ===================================================================
-
-
-%% @private
--spec start_link(nkservice:spec()) ->
-    {ok, pid()} | {error, term()}.
-
-start_link(#{id:=Id}=Spec) ->
-    gen_server:start_link({local, Id}, ?MODULE, Spec, []).
-
-
-
-%% @private
--spec send_stop(pid()) ->
-    ok.
-
-send_stop(Pid) ->
-    gen_server:cast(Pid, '$nkservice_stop').
-
-
-%% @doc Gets all started services
--spec get_all() ->
-    [{nkservice:id(), nkservice:name(), nkservice:class(), pid()}].
-
-get_all() ->
-    [{Id, Id:name(), Class, Pid} || 
-     {{Id, Class}, Pid}<- nklib_proc:values(?MODULE)].
-
-
-%% @doc Gets all started services
--spec get_all(nkservice:class()) ->
-    [{nkservice:id(), nkservice:name(), pid()}].
-
-get_all(Class) ->
-    [{Id, Name, Pid} || {Id, Name, C, Pid} <- get_all(), C==Class].
-
-
-%% @private
--spec find_name(nkservice:name()) ->
-
-    {ok, nkservice:id()} | not_found.
-
-find_name(Name) ->
-    case nklib_proc:values({?MODULE, Name}) of
-        [] -> not_found;
-        [{Id, _Pid}|_] -> {ok, Id}
+get_srv_id(Srv) ->
+    case is_atom(Srv) andalso erlang:function_exported(Srv, plugin_start, 1) of
+        true ->
+            {ok, Srv};
+        false ->
+            find_name(Srv)
     end.
 
 
@@ -320,6 +95,30 @@ get_cache(Srv, Field) ->
     end.
 
 
+
+
+%% ===================================================================
+%% Private
+%% ===================================================================
+
+
+%% @private
+-spec start_link(nkservice:spec()) ->
+    {ok, pid()} | {error, term()}.
+
+start_link(#{id:=Id}=Spec) ->
+    gen_server:start_link({local, Id}, ?MODULE, Spec, []).
+
+
+
+%% @private
+-spec stop(pid()) ->
+    ok.
+
+stop(Pid) ->
+    gen_server:cast(Pid, '$nkservice_stop').
+
+
 %% @private
 pending_msgs() ->
     lists:map(
@@ -327,7 +126,7 @@ pending_msgs() ->
             {_, Len} = erlang:process_info(Pid, message_queue_len),
             {Name, Len}
         end,
-        get_all()).
+        nkservice:get_all()).
 
 
 
@@ -411,7 +210,7 @@ code_change(OldVsn, State, Extra) ->
 terminate(Reason, #state{id=Id}=State) ->  
 	Plugins = lists:reverse(Id:plugins()),
     lager:debug("Service terminated (~p): ~p", [Reason, Plugins]),
-    do_stop_plugins(Plugins, get_spec(Id)),
+    do_stop_plugins(Plugins, nkservice:get_spec(Id)),
     catch nklib_gen_server:terminate(Reason, State, ?P1, ?P2).
     
 
@@ -483,7 +282,7 @@ do_stop_plugins([Plugin|Rest], Spec) ->
 %% @private
 do_update(#{id:=Id}=Spec) ->
     try
-        OldSpec = get_spec(Id),
+        OldSpec = nkservice:get_spec(Id),
         Syntax = nkservice_syntax:syntax(),
         % We don't use OldSpec as a default, since values not in syntax()
         % would be taken from OldSpec insted than from Spec
@@ -518,7 +317,7 @@ do_update(#{id:=Id}=Spec) ->
                 case Spec5 of
                     #{transports:=Transports} ->
                         case 
-                            nkservice_transport_sup:start_transports(Transports, Spec5) 
+                            nkservice_transp_sup:start_transports(Transports, Spec5) 
                         of
                             ok -> 
                                 ok;

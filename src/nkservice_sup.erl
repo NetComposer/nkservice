@@ -31,7 +31,7 @@
 %% @private
 start_link() ->
     ChildsSpec = [
-        {nkservice_all_services_sup,
+        {nkservice_all_srvs_sup,
             {?MODULE, start_services_sup, []},
             permanent,
             infinity,
@@ -44,7 +44,7 @@ start_link() ->
 
 %% @private
 start_services_sup() ->
-    supervisor:start_link({local, nkservice_all_services_sup}, 
+    supervisor:start_link({local, nkservice_all_srvs_sup}, 
                             ?MODULE, {{one_for_one, 10, 60}, []}).
 
 

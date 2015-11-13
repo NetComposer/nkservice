@@ -67,7 +67,7 @@ get_plugin_deps(Name, BaseDeps) ->
         {module, Name} -> ok;
         _ -> throw({invalid_plugin, Name})
     end,
-    case nkservice_util:safe_call(Name, deps, []) of
+    case nkservice_util:safe_call(Name, plugin_deps, []) of
         not_exported ->
             lists:usort(BaseDeps) -- [Name];
         Deps when is_list(Deps) ->
