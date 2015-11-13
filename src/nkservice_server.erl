@@ -32,8 +32,6 @@
 
 -type service_select() :: nkservice:id() | nkservice:name().
 
--type user() :: map().
-
 
 %% ===================================================================
 %% Public
@@ -71,7 +69,9 @@ get_pid(Srv) ->
     {ok, nkservice:id(), pid()} | not_found.
 
 get_srv_id(Srv) ->
-    case is_atom(Srv) andalso erlang:function_exported(Srv, plugin_start, 1) of
+    case 
+        is_atom(Srv) andalso erlang:function_exported(Srv, service_init, 2) 
+    of
         true ->
             {ok, Srv};
         false ->
@@ -91,7 +91,7 @@ get_cache(Srv, Field) ->
                 Other -> Other
             end;
         not_found ->
-            error(service_not_found)
+            error({service_not_found, Srv})
     end.
 
 
@@ -116,7 +116,7 @@ start_link(#{id:=Id}=Spec) ->
     ok.
 
 stop(Pid) ->
-    gen_server:cast(Pid, '$nkservice_stop').
+    gen_server:cast(Pid, nkservice_stop).
 
 
 %% @private
@@ -137,7 +137,7 @@ pending_msgs() ->
 
 -record(state, {
     id :: nkservice:id(),
-    user = #{} :: user()
+    user = #{}
 }).
 
 -define(P1, #state.id).
@@ -152,10 +152,13 @@ init(#{id:=Id, name:=Name}=Spec) ->
     nklib_proc:put({?MODULE, Name}, Id),   
     case do_start(Spec) of
         {ok, Spec2} ->
-            case Id:init(Spec2, #{id=>Id}) of
-                {ok, User} -> {ok, #state{id=Id, user=User}};
-                {ok, User, Timeout} -> {ok, #state{id=Id, user=User}, Timeout};
-                {stop, Reason} -> {stop, Reason}
+            case Id:service_init(Spec2, #{id=>Id}) of
+                {ok, User} -> 
+                    {ok, #state{id=Id, user=User}};
+                {ok, User, Timeout} -> 
+                    {ok, #state{id=Id, user=User}, Timeout};
+                {stop, Reason} -> 
+                    {stop, Reason}
             end;
         {error, Error} ->
             {stop, Error}
@@ -169,22 +172,22 @@ init(#{id:=Id, name:=Name}=Spec) ->
 handle_call({nkservice_update, Spec}, _From, #state{id=Id}=State) ->
     {reply, do_update(Spec#{id=>Id}), State};
 
-handle_call(state, _From, State) ->
+handle_call(nkservice_state, _From, State) ->
     {reply, State, State};
 
 handle_call(Msg, From, State) ->
-    nklib_gen_server:handle_call(Msg, From, State, ?P1, ?P2).
+    nklib_gen_server:handle_call(service_handle_call, Msg, From, State, ?P1, ?P2).
 
 
 %% @private
 -spec handle_cast(term(), #state{}) ->
     nklib_util:gen_server_cast(#state{}).
 
-handle_cast('$nkservice_stop', State) ->
+handle_cast(nkservice_stop, State)->
     {stop, normal, State};
 
 handle_cast(Msg, State) ->
-    nklib_gen_server:handle_cast(Msg, State, ?P1, ?P2).
+    nklib_gen_server:handle_cast(service_handle_cast, Msg, State, ?P1, ?P2).
 
 
 %% @private
@@ -192,7 +195,7 @@ handle_cast(Msg, State) ->
     nklib_util:gen_server_info(#state{}).
 
 handle_info(Msg, State) ->
-    nklib_gen_server:handle_info(Msg, State, ?P1, ?P2).
+    nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2).
     
 
 %% @private
@@ -200,7 +203,7 @@ handle_info(Msg, State) ->
     {ok, #state{}} | {error, term()}.
 
 code_change(OldVsn, State, Extra) ->
-    nklib_gen_server:code_change(OldVsn, State, Extra, ?P1, ?P2).
+    nklib_gen_server:code_change(service_code_change, OldVsn, State, Extra, ?P1, ?P2).
 
 
 %% @private
@@ -211,7 +214,7 @@ terminate(Reason, #state{id=Id}=State) ->
 	Plugins = lists:reverse(Id:plugins()),
     lager:debug("Service terminated (~p): ~p", [Reason, Plugins]),
     do_stop_plugins(Plugins, nkservice:get_spec(Id)),
-    catch nklib_gen_server:terminate(Reason, State, ?P1, ?P2).
+    catch nklib_gen_server:terminate(service_terminate, Reason, State, ?P1, ?P2).
     
 
 

@@ -160,7 +160,8 @@ plugin_callbacks_syntax([], Map) ->
         Map).
 
 
-plugin_callbacks_syntax([{Fun, 2}|Rest], Mod, Map) when Fun==init; Fun==terminate ->
+plugin_callbacks_syntax([{Fun, 2}|Rest], Mod, Map) 
+        when Fun==service_init; Fun==service_terminate ->
     case maps:find({Fun, 2}, Map) of
         error ->
             Pos = 1,
