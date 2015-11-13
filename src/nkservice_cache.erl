@@ -37,22 +37,16 @@
 
 get_plugins(ModuleList) ->
     try
-        ModuleList2 = lists:map(
+        List2 = lists:map(
             fun(Term) ->
                 case Term of
-                    {Name, all} ->
-                        Keys = nklib_util:keys(ModuleList),
-                        {Name, get_plugin_deps(Name, Keys)};
-                    {Name, List} when is_atom(Name), is_list(List) ->
-                        {Name, get_plugin_deps(Name, List)};
-                    Name when is_atom(Name) ->
-                        {Name, get_plugin_deps(Name, [])};
-                    Other ->
-                        throw({invalid_plugin, Other})
+                    {Name, all} -> {Name, nklib_util:keys(ModuleList)};
+                    Other -> Other
                 end
             end,
             ModuleList),
-        case nklib_sort:top_sort(ModuleList2) of
+        List3 = get_plugins(List2, []),
+        case nklib_sort:top_sort(List3) of
             {ok, List} -> {ok, List};
             {error, Error} -> {error, Error}
         end
@@ -62,10 +56,32 @@ get_plugins(ModuleList) ->
 
 
 %% @private
+get_plugins([], Acc) ->
+    Acc;
+
+get_plugins([Name|Rest], Acc) when is_atom(Name) ->
+    get_plugins([{Name, []}|Rest], Acc);
+
+get_plugins([{Name, List}|Rest], Acc) when is_atom(Name), is_list(List) ->
+    case lists:keymember(Name, 1, Acc) of
+        true ->
+            get_plugins(Rest, Acc);
+        false ->
+            Deps = get_plugin_deps(Name, List),
+            get_plugins(Deps++Rest, [{Name, Deps}|Acc])
+    end;
+
+get_plugins([Other|_], _Acc) ->
+    throw({invalid_plugin, Other}).
+
+
+%% @private
 get_plugin_deps(Name, BaseDeps) ->
     case code:ensure_loaded(Name) of
-        {module, Name} -> ok;
-        _ -> throw({invalid_plugin, Name})
+        {module, Name} -> 
+            ok;
+        _ -> 
+            throw({invalid_plugin, Name})
     end,
     case nkservice_util:safe_call(Name, plugin_deps, []) of
         not_exported ->
