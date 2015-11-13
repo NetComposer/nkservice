@@ -2,15 +2,12 @@
 -compile([export_all]).
 
 
-version() -> "1.5".
-
 plugin_deps() -> [].
 
-
-init(_SrvId, #{env:=Env}=Spec) ->
+plugin_start(Spec) ->
 	lager:notice("Plugin ~p starting", [?MODULE]),
-	{ok, Spec#{env:=maps:put(?MODULE, ok, Env)}}.
+	{ok, maps:put(?MODULE, ok, Spec)}.
 
-terminate(_SrvId, #{env:=Env}=Spec) ->
+plugin_stop(Spec) ->
 	lager:notice("Plugin ~p terminate", [?MODULE]),
-	{ok, Spec#{env:=maps:remove(?MODULE, Env)}}.
+	{ok, maps:remove(?MODULE, Spec)}.

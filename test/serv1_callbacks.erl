@@ -1,11 +1,12 @@
 -module(serv1_callbacks).
 -compile([export_all]).
 
-nks_service_init(SrvId, _Spec) ->
-	{ok, {state, SrvId}}.
 
-nks_handle_call(Msg, From, State) ->
-	{continue, [Msg, From, {ok, State}]}.
+service_init(_Spec, State) ->
+	{ok, State#{serv1=>0}}.
+
+service_handle_call(Msg, From, #{serv1:=Counter}=State) ->
+	{continue, [Msg, From, State#{serv1:=Counter+1}]}.
 
 
 fun11(A) ->
