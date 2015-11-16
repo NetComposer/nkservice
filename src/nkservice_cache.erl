@@ -105,6 +105,7 @@ make_cache(#{id:=Id, name:=Name}=SrvSpec) ->
             plugins => Plugins,
             uuid => UUID,
             callback => maps:get(callback, SrvSpec, undefined),
+            timestamp => nklib_util:l_timestamp(),
             spec => maps:remove(cache, SrvSpec)
         },
         BaseSyntax = make_base_syntax(BaseSpec, maps:get(cache, SrvSpec, #{})),

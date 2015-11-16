@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([find_name/1, get_pid/1, get_srv_id/1, get_cache/2]).
+-export([find_name/1, get_srv_id/1, get_cache/2]).
 -export([start_link/1, stop/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
@@ -45,22 +45,6 @@ find_name(Name) ->
     case nklib_proc:values({?MODULE, Name}) of
         [] -> not_found;
         [{Id, _Pid}|_] -> {ok, Id}
-    end.
-
-
-%% @doc Gets the internal name of an existing service
--spec get_pid(service_select()) ->
-    {ok, pid()} | not_running.
-
-get_pid(Srv) ->
-    case get_srv_id(Srv) of
-        {ok, SrvId} ->
-            case whereis(SrvId) of
-                Pid when is_pid(Pid) -> Pid;
-                _ -> not_running
-            end;
-        not_found ->
-            not_running
     end.
 
 

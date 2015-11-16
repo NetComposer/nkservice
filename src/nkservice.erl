@@ -24,9 +24,9 @@
 -export_type([id/0, name/0, spec/0, class/0]).
 -export([start/2, stop/1, update/2, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
--export([call/2, call/3, cast/2, get_spec/1]).
+-export([call/2, call/3, cast/2, get_spec/1, get_pid/1, get_timestmap/1]).
 
--type service_select() :: nkservice:id() | nkservice:name().
+-type service_select() :: id() | name().
 
 
 %% ===================================================================
@@ -306,3 +306,32 @@ get_spec(Srv) ->
     nkservice_server:get_cache(Srv, spec).
 
 
+%% @doc Gets current service timestmap
+-spec get_timestmap(service_select()) ->
+    nklib_util:l_timestamp().
+
+get_timestmap(Srv) ->
+    case nkservice_server:get_srv_id(Srv) of
+        {ok, Id} -> Id:timestamp();
+        not_found -> error(service_not_found)
+    end.
+
+
+%% @doc Gets the internal name of an existing service
+-spec get_pid(service_select()) ->
+    {ok, pid()} | not_running.
+
+get_pid(Srv) ->
+    case nkservice_server:get_srv_id(Srv) of
+        {ok, SrvId} ->
+            case whereis(SrvId) of
+                Pid when is_pid(Pid) -> Pid;
+                _ -> not_running
+            end;
+        not_found ->
+            not_running
+    end.
+
+
+
+    
