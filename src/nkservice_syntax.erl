@@ -52,6 +52,7 @@ syntax() ->
         callback => atom,
         log_level => log_level,
         transports => fun parse_transports/3,
+        vsn => any,                     % Not used in nkservice
 
         idle_timeout => pos_integer,
         connect_timeout => nat_integer,
