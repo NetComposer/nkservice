@@ -319,17 +319,17 @@ get_timestmap(Srv) ->
 
 %% @doc Gets the internal name of an existing service
 -spec get_pid(service_select()) ->
-    {ok, pid()} | not_running.
+    pid() | undefined.
 
 get_pid(Srv) ->
     case nkservice_server:get_srv_id(Srv) of
         {ok, SrvId} ->
             case whereis(SrvId) of
                 Pid when is_pid(Pid) -> Pid;
-                _ -> not_running
+                _ -> undefined
             end;
         not_found ->
-            not_running
+            undefined
     end.
 
 
