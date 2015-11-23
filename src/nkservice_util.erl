@@ -22,8 +22,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([make_id/1, parse_syntax/1, parse_syntax/2, parse_syntax/3]).
--export([safe_call/3]).
-
 
 
 %% ===================================================================
@@ -71,27 +69,6 @@ parse_syntax(Data, Syntax, Defaults) ->
             {ok, maps:merge(Other, Parsed)};
         {error, Error} ->
             {error, Error}
-    end.
-
-
-%% @private
--spec safe_call(module(), atom(), list()) ->
-    term() | not_exported | error.
-
-safe_call(Module, Fun, Args) ->
-    try
-        case erlang:function_exported(Module, Fun, length(Args)) of
-            false ->
-                not_exported;
-            true ->
-                apply(Module, Fun, Args)
-        end
-    catch
-        C:E ->
-            Trace = erlang:get_stacktrace(),
-            lager:warning("Exception calling ~p:~p: ~p:~p\n~p",
-                          [Module, Fun, C, E, Trace]),
-            error
     end.
 
 
