@@ -59,6 +59,15 @@
     {ok, spec()} | {stop, term()}.
 
 
+%% Optional callbacks
+%%
+%% - callback plugin_syntax() ->
+%%      {ok, map()}.
+%% 
+%% - callback plugin_defaults() ->
+%%      {ok, map()}.
+%% 
+
 
 %% ===================================================================
 %% Types
