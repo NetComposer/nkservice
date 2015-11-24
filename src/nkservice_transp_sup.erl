@@ -79,7 +79,9 @@ find_started([_|Rest], Conn) ->
     when Error ::  {could_not_start, {udp|tcp|tls|sctp|ws|wss, term()}}.
 
 start_transports([{Conns, Opts}|Rest], #{id:=Id}=Spec) ->
-    Opts1 = maps:merge(Spec, Opts),
+    % Options that can be configured globally
+    Base = maps:with(nkpacket_util:tls_keys(), Spec),
+    Opts1 = maps:merge(Base, Opts),
     case start_transports(Id, Conns, Opts1) of
         ok ->
             start_transports(Rest, Spec);

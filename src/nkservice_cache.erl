@@ -72,7 +72,7 @@ get_plugins([{Name, List}|Rest], Acc) when is_atom(Name), is_list(List) ->
     end;
 
 get_plugins([Other|_], _Acc) ->
-    throw({invalid_plugin, Other}).
+    throw({invalid_plugin_name, Other}).
 
 
 %% @private
@@ -81,7 +81,7 @@ get_plugin_deps(Name, BaseDeps) ->
         {module, Name} -> 
             ok;
         _ -> 
-            throw({invalid_plugin, Name})
+            throw({invalid_plugin_module, Name})
     end,
     case nklib_util:apply(Name, plugin_deps, []) of
         not_exported ->
@@ -90,7 +90,7 @@ get_plugin_deps(Name, BaseDeps) ->
             lists:usort(BaseDeps ++ Deps) -- [Name];
         Other ->
             lager:warning("Plugin ~p invalid deps(): ~p", [Name, Other]),
-            throw({invalid_plugin, Name})
+            throw({invalid_plugin_deps, Name})
     end.
 
 

@@ -252,7 +252,8 @@ do_start_plugins([Plugin|Rest], Spec) ->
             do_start_plugins(Rest, Spec1);
         {stop, Reason} ->
             {error, {could_not_start_plugin, {Plugin, Reason}}};
-        _ ->
+        Other ->
+            lager:error("Invalid response from plugin_start: ~p", [Other]),
             {error, {could_not_start_plugin, Plugin}}
     end.
 
@@ -337,18 +338,18 @@ do_update(#{id:=Id}=Spec) ->
 
 %% @private
 do_syntax([], Spec) ->
-    Spec;
+    {ok, Spec};
 
 do_syntax([Plugin|Rest], Spec) ->
     try
         Spec1 = case nklib_util:apply(Plugin, plugin_syntax, []) of
             not_exported -> 
                 Spec;
-            {ok, Syntax} when is_map(Syntax) ->
+            Syntax when is_map(Syntax) ->
                 Defaults =  case nklib_util:apply(Plugin, plugin_defaults, []) of
                     not_exported -> #{};
-                    {ok, Defs} when is_map(Defs) -> Defs;
-                    Other -> throw({invalid_plugin, {defaults, Plugin}})
+                    Defs when is_map(Defs) -> Defs;
+                    Other -> throw({invalid_plugin_defaults, Plugin})
                 end,
                 Opts = #{return=>map, defaults=>Defaults},
                 case nklib_config:parse_config(Spec, Syntax, Opts) of

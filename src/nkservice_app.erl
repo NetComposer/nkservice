@@ -74,7 +74,6 @@ start(_Type, _Args) ->
     end.
 
 
-
 %% @private OTP standard stop callback
 stop(_) ->
     ok.
