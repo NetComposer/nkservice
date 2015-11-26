@@ -228,6 +228,7 @@ do_start(Spec) ->
                                     {error, Error}
                             end;
                         {error, Error} ->
+                            do_stop_plugins(lists:reverse(Plugins3), Spec2),
                             {error, Error}
                     end;
                 {error, Error} ->
@@ -329,6 +330,7 @@ do_update(#{id:=Id}=Spec) ->
                 lager:info("Removed config: ~p", [Removed]),
                 nkservice_cache:make_cache(Spec6);
             {error, StartError} ->
+                do_stop_plugins(lists:reverse(ToStart), Spec5),
                 {error, StartError}
         end
     catch
