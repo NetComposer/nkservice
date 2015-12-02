@@ -209,59 +209,74 @@ terminate(Reason, #state{id=Id}=State) ->
 
 %% @private
 do_start(Spec) ->
-    Plugins1 = maps:get(plugins, Spec, []),
-    Plugins2 = case Spec of
-        #{callback:=CallBack} -> [{CallBack, all}|Plugins1];
-        _ -> Plugins1
-    end,
-    case nkservice_cache:get_plugins(Plugins2) of
-        {ok, Plugins3} ->
-            Spec1 = Spec#{plugins=>Plugins3},
-            case do_syntax(Plugins3, Spec1) of
-                {ok, Spec2} ->
-                    case do_start_plugins(Plugins3, Spec2) of
-                        {ok, Spec3} ->
-                            case nkservice_cache:make_cache(Spec3) of
-                                ok -> 
-                                    {ok, Spec3};
-                                {error, Error} -> 
-                                    {error, Error}
-                            end;
-                        {error, Error} ->
-                            do_stop_plugins(lists:reverse(Plugins3), Spec2),
-                            {error, Error}
-                    end;
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
+    try
+        Plugins1 = maps:get(plugins, Spec, []),
+        Plugins2 = case Spec of
+            #{callback:=CallBack} -> [{CallBack, all}|Plugins1];
+            _ -> Plugins1
+        end,
+        Plugins3 = case nkservice_cache:get_plugins(Plugins2) of
+            {ok, AllPlugins} -> AllPlugins;
+            {error, PlugError} -> throw(PlugError)
+        end,
+        ok = do_init_plugins(lists:reverse(Plugins3)),
+        Spec1 = Spec#{plugins=>Plugins3},
+        Spec2 = do_syntax(Plugins3, Spec1),
+        Spec3 = do_start_plugins(Plugins3, Spec2, []),
+        case nkservice_cache:make_cache(Spec3) of
+            ok -> 
+                {ok, Spec3};
+            {error, Error} -> 
+                throw(Error)
+        end
+    catch
+        throw:Throw -> {error, Throw}
     end.
 
       
 %% @private
-do_start_plugins([], Spec) ->
-    {ok, Spec};
+do_init_plugins([]) ->
+    ok;
 
-do_start_plugins([Plugin|Rest], Spec) ->
+do_init_plugins([Plugin|Rest]) ->
+    case nklib_util:apply(Plugin, plugin_init, []) of
+        not_exported ->
+            do_init_plugins(Rest);
+        ok ->
+            do_init_plugins(Rest);
+        {error, Error} ->
+            throw({plugin_init_error, {Plugin, Error}});
+        Other ->
+            lager:warning("Invalid response from ~p:plugin_init/1: ~p", [Plugin, Other]),
+            throw({invalid_plugin, {Plugin, invalid_init}})
+    end.
+
+
+%% @private
+do_start_plugins([], Spec, _Started) ->
+    Spec;
+
+do_start_plugins([Plugin|Rest], Spec, Started) ->
     lager:debug("Service ~p starting plugin ~p", [maps:get(id, Spec), Plugin]),
     code:ensure_loaded(Plugin),
     case nklib_util:apply(Plugin, plugin_start, [Spec]) of
         not_exported ->
-            do_start_plugins(Rest, Spec);
+            do_start_plugins(Rest, Spec, [Plugin|Started]);
         {ok, Spec1} ->
-            do_start_plugins(Rest, Spec1);
+            do_start_plugins(Rest, Spec1, [Plugin|Started]);
         {stop, Reason} ->
-            {error, {could_not_start_plugin, {Plugin, Reason}}};
+            _Spec2 = do_stop_plugins(Started, Spec),
+            throw({could_not_start_plugin, {Plugin, Reason}});
         Other ->
+            _Spec2 = do_stop_plugins(Started, Spec),
             lager:error("Invalid response from plugin_start: ~p", [Other]),
-            {error, {could_not_start_plugin, Plugin}}
+            throw({could_not_start_plugin, Plugin})
     end.
 
 
 %% @private
 do_stop_plugins([], Spec) ->
-    {ok, Spec};
+    Spec;
 
 do_stop_plugins([Plugin|Rest], Spec) ->
     lager:debug("Service ~p stopping plugin ~p", [maps:get(id, Spec), Plugin]),
@@ -305,34 +320,26 @@ do_update(#{id:=Id}=Spec) ->
             plugins => ToStart,
             cache => maps:with(CacheKeys, Spec2)
         },
-        {ok, Spec4} = do_stop_plugins(ToStop, Spec3),
-        case do_syntax(ToStart, Spec4) of
-            {ok, Spec5} -> ok;
-            {error, SyntaxError} -> Spec5 = throw(SyntaxError)
+        Spec4 = do_stop_plugins(ToStop, Spec3),
+        Spec5 = do_syntax(ToStart, Spec4),
+        Spec6 = do_start_plugins(ToStart, Spec5, []),
+        case Spec6 of
+            #{transports:=Transports} ->
+                case 
+                    nkservice_transp_sup:start_transports(Transports, Spec6) 
+                of
+                    ok -> 
+                        ok;
+                    {error, Error} ->
+                        throw(Error)
+                end;
+            _ ->
+                ok
         end,
-        case do_start_plugins(ToStart, Spec5) of
-            {ok, Spec6} ->
-                case Spec6 of
-                    #{transports:=Transports} ->
-                        case 
-                            nkservice_transp_sup:start_transports(Transports, Spec6) 
-                        of
-                            ok -> 
-                                ok;
-                            {error, Error} ->
-                                throw(Error)
-                        end;
-                    _ ->
-                        ok
-                end,
-                {Added, Removed} = get_diffs(Spec6, OldSpec),
-                lager:info("Added config: ~p", [Added]),
-                lager:info("Removed config: ~p", [Removed]),
-                nkservice_cache:make_cache(Spec6);
-            {error, StartError} ->
-                do_stop_plugins(lists:reverse(ToStart), Spec5),
-                {error, StartError}
-        end
+        {Added, Removed} = get_diffs(Spec6, OldSpec),
+        lager:info("Added config: ~p", [Added]),
+        lager:info("Removed config: ~p", [Removed]),
+        nkservice_cache:make_cache(Spec6)
     catch
         throw:Throw -> {error, Throw}
     end.
@@ -340,35 +347,29 @@ do_update(#{id:=Id}=Spec) ->
 
 %% @private
 do_syntax([], Spec) ->
-    {ok, Spec};
+    Spec;
 
 do_syntax([Plugin|Rest], Spec) ->
-    try
-        Spec1 = case nklib_util:apply(Plugin, plugin_syntax, []) of
-            not_exported -> 
-                Spec;
-            Syntax when is_map(Syntax) ->
-                Defaults =  case nklib_util:apply(Plugin, plugin_defaults, []) of
-                    not_exported -> #{};
-                    Defs when is_map(Defs) -> Defs;
-                    Other -> throw({invalid_plugin_defaults, Plugin})
-                end,
-                Opts = #{return=>map, defaults=>Defaults},
-                case nklib_config:parse_config(Spec, Syntax, Opts) of
-                    {ok, Parsed, _} ->
-                        maps:merge(Spec, Parsed);
-                    {error, Error} ->
-                        throw({syntax_error, {Plugin, Error}})
-                end;
-            {error, Error} ->
-                throw({invalid_plugin, {syntax, Error}})
-        end,
-        do_syntax(Rest, Spec1)
-    catch
-        throw:Throw -> {error, Throw}
-    end.
-
-
+    Spec1 = case nklib_util:apply(Plugin, plugin_syntax, []) of
+        not_exported -> 
+            Spec;
+        Syntax when is_map(Syntax) ->
+            Defaults = case nklib_util:apply(Plugin, plugin_defaults, []) of
+                not_exported -> #{};
+                Defs when is_map(Defs) -> Defs;
+                Other -> throw({invalid_plugin_defaults, {Plugin, Other}})
+            end,
+            Opts = #{return=>map, defaults=>Defaults},
+            case nklib_config:parse_config(Spec, Syntax, Opts) of
+                {ok, Parsed, _} ->
+                    maps:merge(Spec, Parsed);
+                {error, Error} ->
+                    throw({syntax_error, {Plugin, Error}})
+            end;
+        {error, Error} ->
+            throw({invalid_plugin, {syntax, Error}})
+    end,
+    do_syntax(Rest, Spec1).
 
 
 %% private
