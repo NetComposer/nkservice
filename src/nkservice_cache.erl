@@ -197,11 +197,42 @@ plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
             Pos = 1,
             Value = nklib_code:call_expr(Mod, Fun, Arity, Pos);
         {ok, {Syntax, Pos0}} ->
+            Case = case Arity==2 andalso lists:reverse(atom_to_list(Fun)) of
+                "tini_"++_ -> case_expr_ok;         % Fun is ".._init"
+                "etanimret_"++_ -> case_expr_ok;    % Fun is ".._terminate"
+                _ -> case_expr
+            end,
             Pos = Pos0+1,
-            Value = nklib_code:case_expr(Mod, Fun, Arity, Pos, [Syntax])
+            Value = nklib_code:Case(Mod, Fun, Arity, Pos, [Syntax])
     end,
     Map1 = maps:put({Fun, Arity}, {Value, Pos}, Map),
     plugin_callbacks_syntax(Rest, Mod, Map1);
+
+% plugin_callbacks_syntax([{Fun, 2}|Rest], Mod, Map) 
+%         when Fun==service_init; Fun==service_terminate ->
+%     case maps:find({Fun, 2}, Map) of
+%         error ->
+%             Pos = 1,
+%             Value = nklib_code:call_expr(Mod, Fun, 2, Pos);
+%         {ok, {Syntax, Pos0}} ->
+%             Pos = Pos0+1,
+%             Value = nklib_code:case_expr_ok(Mod, Fun, Pos, [Syntax])
+%     end,
+%     Map1 = maps:put({Fun, 2}, {Value, Pos}, Map),
+%     plugin_callbacks_syntax(Rest, Mod, Map1);
+
+% %% @private
+% plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
+%     case maps:find({Fun, Arity}, Map) of
+%         error ->
+%             Pos = 1,
+%             Value = nklib_code:call_expr(Mod, Fun, Arity, Pos);
+%         {ok, {Syntax, Pos0}} ->
+%             Pos = Pos0+1,
+%             Value = nklib_code:case_expr(Mod, Fun, Arity, Pos, [Syntax])
+%     end,
+%     Map1 = maps:put({Fun, Arity}, {Value, Pos}, Map),
+%     plugin_callbacks_syntax(Rest, Mod, Map1);
 
 plugin_callbacks_syntax([], _, Map) ->
     Map.
