@@ -33,7 +33,7 @@
 
 %% @doc Called when a new service starts
 -spec service_init(nkservice:spec(), state()) ->
-	{ok, state()} | {stop, term()} | continue().
+	{ok, state()} | {stop, term()}.
 
 service_init(_SrvSpec, State) ->
 	{ok, State}.
@@ -75,7 +75,7 @@ service_code_change(OldVsn, State, Extra) ->
 
 %% @doc Called when a service is stopped
 -spec service_terminate(term(), state()) ->
-	{ok, state()} | continue().
+	{ok, state()}.
 
 service_terminate(_Reason, State) ->
 	{ok, State}.

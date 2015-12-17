@@ -269,7 +269,7 @@ do_start_plugins([Plugin|Rest], Spec, Started) ->
             throw({could_not_start_plugin, {Plugin, Reason}});
         Other ->
             _Spec2 = do_stop_plugins(Started, Spec),
-            lager:error("Invalid response from plugin_start: ~p", [Other]),
+            lager:error("Invalid response from plugin_start (~p): ~p", [Plugin, Other]),
             throw({could_not_start_plugin, Plugin})
     end.
 
