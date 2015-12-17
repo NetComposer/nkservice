@@ -177,19 +177,6 @@ plugin_callbacks_syntax([], Map) ->
         Map).
 
 
-plugin_callbacks_syntax([{Fun, 2}|Rest], Mod, Map) 
-        when Fun==service_init; Fun==service_terminate ->
-    case maps:find({Fun, 2}, Map) of
-        error ->
-            Pos = 1,
-            Value = nklib_code:call_expr(Mod, Fun, 2, Pos);
-        {ok, {Syntax, Pos0}} ->
-            Pos = Pos0+1,
-            Value = nklib_code:case_expr_ok(Mod, Fun, Pos, [Syntax])
-    end,
-    Map1 = maps:put({Fun, 2}, {Value, Pos}, Map),
-    plugin_callbacks_syntax(Rest, Mod, Map1);
-
 %% @private
 plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
     case maps:find({Fun, Arity}, Map) of
