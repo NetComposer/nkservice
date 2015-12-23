@@ -82,3 +82,29 @@ service_terminate(_Reason, State) ->
 
 
 
+%% This function, if implemented, is called after the syntax processing, and
+%% high level plugins have the opportunity to modify the specification for lower
+%% levels plugins
+
+plugin_spec(UserSpec) ->
+	{ok, Spec}.
+
+
+
+%% Called before the service has started
+%% UserSpec has parsed specifications, and Service must be updated
+%% - add or updated the values of the 'cache' key. They will be expanded as
+%%   functions cache_... at the compiled run-time module
+%% - add or updated the values of the 'transport' key. They will be started as
+%%   transports
+%% - add a plugin-specific key for its configuration
+plugin_init(_UserSpec, Service) ->
+	{ok, Service}.
+
+plugin_cache(UserSpec) ->
+	{ok, #{}}.
+
+plugin_transports()
+
+
+

@@ -21,9 +21,10 @@
 -module(nkservice_cache).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_plugins/1, make_cache/1]).
+-export([get_plugins/2, make_cache/1]).
 
 -include("nkservice.hrl").
+-include_lib("nkpacket/include/nkpacket.hrl").
 
 
 %% ===================================================================
@@ -32,20 +33,16 @@
 
 
 %% @private
--spec get_plugins([module()|{module(), [module()]}]) ->
+-spec get_plugins([module()], module()|none) ->
     {ok, [module()]} | {error, term()}.
 
-get_plugins(ModuleList) ->
+get_plugins(ModuleList, CallBack) ->
     try
-        List2 = lists:map(
-            fun(Term) ->
-                case Term of
-                    {Name, all} -> {Name, nklib_util:keys(ModuleList)};
-                    Other -> Other
-                end
-            end,
-            ModuleList),
-        List3 = get_plugins(List2, []),
+        List2 = case CallBack of
+            none -> ModuleList;
+            _ -> [{CallBack, ModuleList}|ModuleList]
+        end,
+        List3 = do_get_plugins(List2, []),
         case nklib_sort:top_sort(List3) of
             {ok, List} -> {ok, List};
             {error, Error} -> {error, Error}
@@ -56,60 +53,55 @@ get_plugins(ModuleList) ->
 
 
 %% @private
-get_plugins([], Acc) ->
+do_get_plugins([], Acc) ->
     Acc;
 
-get_plugins([Name|Rest], Acc) when is_atom(Name) ->
-    get_plugins([{Name, []}|Rest], Acc);
+do_get_plugins([Name|Rest], Acc) when is_atom(Name) ->
+    do_get_plugins([{Name, []}|Rest], Acc);
 
-get_plugins([{Name, List}|Rest], Acc) when is_atom(Name), is_list(List) ->
+do_get_plugins([{Name, List}|Rest], Acc) when is_atom(Name), is_list(List) ->
     case lists:keymember(Name, 1, Acc) of
         true ->
-            get_plugins(Rest, Acc);
+            do_get_plugins(Rest, Acc);
         false ->
             Deps = get_plugin_deps(Name, List),
-            get_plugins(Deps++Rest, [{Name, Deps}|Acc])
+            do_get_plugins(Deps++Rest, [{Name, Deps}|Acc])
     end;
 
-get_plugins([Other|_], _Acc) ->
+do_get_plugins([Other|_], _Acc) ->
     throw({invalid_plugin_name, Other}).
 
 
 %% @private
 get_plugin_deps(Name, BaseDeps) ->
-    case code:ensure_loaded(Name) of
-        {module, Name} -> 
-            ok;
-        _ -> 
-            throw({invalid_plugin_module, Name})
+    Deps = case nkservice_app:get({plugin, Name}) of
+        Spec when is_map(Spec) ->
+            maps:get(deps, Spec, []);
+        undefined ->
+            throw({unknown_plugin, Name})
     end,
-    case nklib_util:apply(Name, plugin_deps, []) of
-        not_exported ->
-            lists:usort(BaseDeps) -- [Name];
-        Deps when is_list(Deps) ->
-            lists:usort(BaseDeps ++ Deps) -- [Name];
-        Other ->
-            lager:warning("Plugin ~p invalid deps(): ~p", [Name, Other]),
-            throw({invalid_plugin_deps, Name})
-    end.
+    lists:usort(BaseDeps ++ Deps) -- [Name].
 
 
 %% @private
-make_cache(#{id:=Id, name:=Name}=SrvSpec) ->
+make_cache(#{id:=Id, name:=Name}=Service) ->
     try
         {ok, UUID} = update_uuid(Id, Name),
-        Plugins = maps:get(plugins, SrvSpec, []),
-        BaseSpec = #{
-            class => maps:get(class, SrvSpec, undefined),
-            name => Name,
-            plugins => Plugins,
+        Service2 = Service#{
             uuid => UUID,
-            callback => maps:get(callback, SrvSpec, undefined),
-            timestamp => nklib_util:l_timestamp(),
-            spec => maps:remove(cache, SrvSpec)
+            timestamp => nklib_util:l_timestamp()
         },
-        BaseSyntax = make_base_syntax(BaseSpec, maps:get(cache, SrvSpec, #{})),
-        % Gather all fun specs from all _callbacks modules on all plugins
+        Remove = #{
+            cache => none,
+            ?TLS_SYNTAX,
+            ?SERVICE_SYNTAX
+        },
+        RemoveKeys = maps:keys(Remove),
+        Service3 = maps:without(RemoveKeys, Service2),
+        Cache = maps:get(cache, Service, #{}),
+        BaseSyntax = make_base_syntax(Service, Cache),
+        % Gather all fun specs from all callbacks modules on all plugins
+        Plugins = maps:get(plugins, Service),
         PluginSyntax = plugin_callbacks_syntax([nkservice|Plugins]),
         FullSyntax = PluginSyntax ++ BaseSyntax,
         {ok, Tree} = nklib_code:compile(Id, FullSyntax),

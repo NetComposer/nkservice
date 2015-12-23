@@ -18,12 +18,12 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_server).
+-module(nkservice_srv).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([find_name/1, get_srv_id/1, get_cache/2]).
--export([start_link/1, stop/1]).
+-export([find_name/1, get_srv_id/1, get_from_mod/2]).
+-export([start_link/2, stop/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
@@ -64,10 +64,10 @@ get_srv_id(Srv) ->
 
 
 %% @doc Gets current service configuration
--spec get_cache(service_select(), atom()) ->
+-spec get_from_mod(service_select(), atom()) ->
     term().
 
-get_cache(Srv, Field) ->
+get_from_mod(Srv, Field) ->
     case get_srv_id(Srv) of
         {ok, Id} -> 
             case Id:Field() of
@@ -87,11 +87,11 @@ get_cache(Srv, Field) ->
 
 
 %% @private
--spec start_link(nkservice:spec()) ->
+-spec start_link(nkservice:user_spec(), nkservice:service()) ->
     {ok, pid()} | {error, term()}.
 
-start_link(#{id:=Id}=Spec) ->
-    gen_server:start_link({local, Id}, ?MODULE, Spec, []).
+start_link(UserSpec, #{id:=Id}=Service) ->
+    gen_server:start_link({local, Id}, ?MODULE, {UserSpec, Service}, []).
 
 
 
@@ -119,86 +119,70 @@ pending_msgs() ->
 %% ===================================================================
 
 
--record(state, {
-    id :: nkservice:id(),
-    user = #{}
-}).
-
--define(P1, #state.id).
--define(P2, #state.user).
-
-
 %% @private
-init(#{id:=Id, name:=Name}=Spec) ->
+init({UserSpec, #{id:=Id, name:=Name}=Service}) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
-    Class = maps:get(class, Spec, undefined),
-    nklib_proc:put(?MODULE, {Id, Class}),   
-    nklib_proc:put({?MODULE, Name}, Id),   
-    case do_start(Spec) of
-        {ok, Spec2} ->
-            case Id:service_init(Spec2, #{id=>Id}) of
-                {ok, User} -> 
-                    {ok, #state{id=Id, user=User}};
-                {ok, User, Timeout} -> 
-                    {ok, #state{id=Id, user=User}, Timeout};
-                {stop, Reason} -> 
-                    {stop, Reason}
-            end;
+    case do_start(UserSpec, Service) of
+        {ok, Service2} ->
+            Class = maps:get(class, Service2, undefined),
+            nklib_proc:put(?MODULE, {Id, Class}),   
+            nklib_proc:put({?MODULE, Name}, Id),   
+            lager:notice("Service ~s (~p) has started (~p)", [Name, Id, self()]),
+            {ok, Service2};
         {error, Error} ->
             {stop, Error}
     end.
 
 
 %% @private
--spec handle_call(term(), nklib_util:gen_server_from(), #state{}) ->
-    nklib_util:gen_server_call(#state{}).
+-spec handle_call(term(), {pid(), term()}, nkservice:service()) ->
+    term().
 
-handle_call({nkservice_update, Spec}, _From, #state{id=Id}=State) ->
-    {reply, do_update(Spec#{id=>Id}), State};
+handle_call({nkservice_update, UserSpec}, _From, Service) ->
+    {reply, do_update(UserSpec, Service)};
 
-handle_call(nkservice_state, _From, State) ->
-    {reply, State, State};
+handle_call(nkservice_state, _From, Service) ->
+    {reply, Service, Service};
 
-handle_call(Msg, From, State) ->
-    nklib_gen_server:handle_call(service_handle_call, Msg, From, State, ?P1, ?P2).
+handle_call(Msg, From, #{id:=Id}=Service) ->
+    Id:service_handle_call(Msg, From, Service).
 
 
 %% @private
--spec handle_cast(term(), #state{}) ->
-    nklib_util:gen_server_cast(#state{}).
+-spec handle_cast(term(), nkservice:service()) ->
+    term().
 
 handle_cast(nkservice_stop, State)->
     {stop, normal, State};
 
-handle_cast(Msg, State) ->
-    nklib_gen_server:handle_cast(service_handle_cast, Msg, State, ?P1, ?P2).
+handle_cast(Msg, #{id:=Id}=Service) ->
+    Id:service_handle_cast(Msg, Service).
 
 
 %% @private
--spec handle_info(term(), #state{}) ->
-    nklib_util:gen_server_info(#state{}).
+-spec handle_info(term(), nkservice:service()) ->
+    nklib_util:gen_server_info(nkservice:service()).
 
-handle_info(Msg, State) ->
-    nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2).
+handle_info(Msg, #{id:=Id}=Service) ->
+    Id:service_handle_info(Msg, Service).
     
 
 %% @private
--spec code_change(term(), #state{}, term()) ->
-    {ok, #state{}} | {error, term()}.
+-spec code_change(term(), nkservice:service(), term()) ->
+    {ok, nkservice:service()} | {error, term()}.
 
-code_change(OldVsn, State, Extra) ->
-    nklib_gen_server:code_change(service_code_change, OldVsn, State, Extra, ?P1, ?P2).
+code_change(OldVsn, #{id:=Id}=Service, Extra) ->
+    Id:service_code_change(OldVsn, Service, Extra).
 
 
 %% @private
--spec terminate(term(), #state{}) ->
+-spec terminate(term(), nkservice:service()) ->
     nklib_util:gen_server_terminate().
 
-terminate(Reason, #state{id=Id}=State) ->  
+terminate(Reason, #{id:=Id, name:=Name}=Service) ->  
 	Plugins = lists:reverse(Id:plugins()),
-    lager:debug("Service terminated (~p): ~p", [Reason, Plugins]),
-    do_stop_plugins(Plugins, nkservice:get_spec(Id)),
-    catch nklib_gen_server:terminate(service_terminate, Reason, State, ?P1, ?P2).
+    do_stop_plugins(Plugins, Service),
+    lager:debug("Service ~s (~p) has terminated (~p)", [Name, Id, Reason]).
     
 
 
@@ -208,24 +192,21 @@ terminate(Reason, #state{id=Id}=State) ->
 
 
 %% @private
-do_start(Spec) ->
+do_start(UserSpec, Service) ->
     try
-        Plugins1 = maps:get(plugins, Spec, []),
-        Plugins2 = case Spec of
-            #{callback:=CallBack} -> [{CallBack, all}|Plugins1];
-            _ -> Plugins1
+        Plugins1 = maps:get(plugins, Service),
+        CallBack = maps:get(callback, Service, none),
+        Plugins3 = case nkservice_cache:get_plugins(Plugins1, CallBack) of
+            {ok, AllPlugins} -> 
+                AllPlugins;
+            {error, PlugError} -> 
+                throw(PlugError)
         end,
-        Plugins3 = case nkservice_cache:get_plugins(Plugins2) of
-            {ok, AllPlugins} -> AllPlugins;
-            {error, PlugError} -> throw(PlugError)
-        end,
-        ok = do_init_plugins(lists:reverse(Plugins3)),
-        Spec1 = Spec#{plugins=>Plugins3},
-        Spec2 = do_syntax(Plugins3, Spec1),
-        Spec3 = do_start_plugins(Plugins3, Spec2, []),
-        case nkservice_cache:make_cache(Spec3) of
+        % ok = do_init_plugins(lists:reverse(Plugins3)),
+        Service2 = do_start_plugins(Plugins3, UserSpec, Service, []),
+        case nkservice_cache:make_cache(Service2) of
             ok -> 
-                {ok, Spec3};
+                {ok, Service2};
             {error, Error} -> 
                 throw(Error)
         end
@@ -234,62 +215,62 @@ do_start(Spec) ->
     end.
 
       
+% %% @private
+% do_init_plugins([]) ->
+%     ok;
+
+% do_init_plugins([Plugin|Rest]) ->
+%     case nklib_util:apply(Plugin, plugin_init, []) of
+%         not_exported ->
+%             do_init_plugins(Rest);
+%         ok ->
+%             do_init_plugins(Rest);
+%         {error, Error} ->
+%             throw({plugin_init_error, {Plugin, Error}});
+%         Other ->
+%             lager:warning("Invalid response from ~p:plugin_init/1: ~p", [Plugin, Other]),
+%             throw({invalid_plugin, {Plugin, invalid_init}})
+%     end.
+
+
 %% @private
-do_init_plugins([]) ->
-    ok;
+%% Plugins should update only 'cache', 'transports' and they own key
+do_start_plugins([], _UserSpec, Service, _Started) ->
+    Service;
 
-do_init_plugins([Plugin|Rest]) ->
-    case nklib_util:apply(Plugin, plugin_init, []) of
+do_start_plugins([Plugin|Rest], UserSpec, Service, Started) ->
+    #{id:=Id, name:=Name} = Service,
+    lager:debug("Service ~s (~p) starting plugin ~p", [Name, Id, Plugin]),
+    Data = nkservice_app:get({plugin, Plugin}),
+    Callback = maps:get(callback, Data, Plugin),
+    code:ensure_loaded(Callback),
+    case nklib_util:apply(Plugin, plugin_init, [UserSpec, Service]) of
         not_exported ->
-            do_init_plugins(Rest);
-        ok ->
-            do_init_plugins(Rest);
-        {error, Error} ->
-            throw({plugin_init_error, {Plugin, Error}});
-        Other ->
-            lager:warning("Invalid response from ~p:plugin_init/1: ~p", [Plugin, Other]),
-            throw({invalid_plugin, {Plugin, invalid_init}})
-    end.
-
-
-%% @private
-do_start_plugins([], Spec, _Started) ->
-    Spec;
-
-do_start_plugins([Plugin|Rest], Spec, Started) ->
-    lager:debug("Service ~p starting plugin ~p", [maps:get(id, Spec), Plugin]),
-    code:ensure_loaded(Plugin),
-    case nklib_util:apply(Plugin, plugin_start, [Spec]) of
-        not_exported ->
-            do_start_plugins(Rest, Spec, [Plugin|Started]);
-        {ok, Spec1} ->
-            do_start_plugins(Rest, Spec1, [Plugin|Started]);
+            do_start_plugins(Rest, UserSpec, Service, [Plugin|Started]);
+        {ok, Service2} ->
+            do_start_plugins(Rest, UserSpec, Service2, [Plugin|Started]);
         {stop, Reason} ->
-            _Spec2 = do_stop_plugins(Started, Spec),
-            throw({could_not_start_plugin, {Plugin, Reason}});
-        Other ->
-            _Spec2 = do_stop_plugins(Started, Spec),
-            lager:error("Invalid response from plugin_start (~p): ~p", [Plugin, Other]),
-            throw({could_not_start_plugin, Plugin})
+            _Spec2 = do_stop_plugins(Started, Service),
+            throw({could_not_start_plugin, {Plugin, Reason}})
     end.
 
 
 %% @private
-do_stop_plugins([], Spec) ->
-    Spec;
+do_stop_plugins([], Service) ->
+    Service;
 
-do_stop_plugins([Plugin|Rest], Spec) ->
-    lager:debug("Service ~p stopping plugin ~p", [maps:get(id, Spec), Plugin]),
-    case nklib_util:apply(Plugin, plugin_stop, [Spec]) of
-    	{ok, Spec1} ->
-    		do_stop_plugins(Rest, Spec1);
+do_stop_plugins([Plugin|Rest], #{id:=Id, name:=Name}=Service) ->
+    lager:debug("Service ~s (~p) stopping plugin ~p", [Name, Id, Plugin]),
+    case nklib_util:apply(Plugin, plugin_stop, [Service]) of
+    	{ok, Service2} ->
+    		do_stop_plugins(Rest, Service2);
     	_ ->
-    		do_stop_plugins(Rest, Spec)
+    		do_stop_plugins(Rest, Service)
     end.
 
 
 %% @private
-do_update(#{id:=Id}=Spec) ->
+do_update(UserSpec, #{id:=Id}=Spec) ->
     try
         OldSpec = nkservice:get_spec(Id),
         Syntax = nkservice_syntax:syntax(),
@@ -344,32 +325,6 @@ do_update(#{id:=Id}=Spec) ->
         throw:Throw -> {error, Throw}
     end.
 
-
-%% @private
-do_syntax([], Spec) ->
-    Spec;
-
-do_syntax([Plugin|Rest], Spec) ->
-    Spec1 = case nklib_util:apply(Plugin, plugin_syntax, []) of
-        not_exported -> 
-            Spec;
-        Syntax when is_map(Syntax) ->
-            Defaults = case nklib_util:apply(Plugin, plugin_defaults, []) of
-                not_exported -> #{};
-                Defs when is_map(Defs) -> Defs;
-                Other -> throw({invalid_plugin_defaults, {Plugin, Other}})
-            end,
-            Opts = #{return=>map, defaults=>Defaults},
-            case nklib_config:parse_config(Spec, Syntax, Opts) of
-                {ok, Parsed, _} ->
-                    maps:merge(Spec, Parsed);
-                {error, Error} ->
-                    throw({syntax_error, {Plugin, Error}})
-            end;
-        {error, Error} ->
-            throw({invalid_plugin, {syntax, Error}})
-    end,
-    do_syntax(Rest, Spec1).
 
 
 %% private

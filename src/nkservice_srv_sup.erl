@@ -22,20 +22,20 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_service/1, stop_service/1]).
--export([get_pid/1, init/1, start_link/1]).
+-export([start_service/2, stop_service/1]).
+-export([get_pid/1, init/1, start_link/2]).
 
 -include("nkservice.hrl").
 
 
 %% @private Starts a new service supervisor
--spec start_service(nkservice:spec()) ->
+-spec start_service(nkservice:user_spec(), nkservice:service()) ->
     ok | {error, term()}.
 
-start_service(#{id:=Id}=Spec) ->
+start_service(UserSpec, #{id:=Id}=Service) ->
     SupSpec = {
         Id,
-            {nkservice_srv_sup, start_link, [Spec]},
+            {nkservice_srv_sup, start_link, [UserSpec, Service]},
             permanent,
             infinity,
             supervisor,
@@ -73,17 +73,17 @@ get_pid(Id) ->
 
 
 %% @private
--spec start_link(nkservice:spec()) ->
+-spec start_link(nkservice:user_spec(), nkservice:service()) ->
     {ok, pid()}.
 
-start_link(#{id:=Id}=Spec) ->
+start_link(UserSpec, #{id:=Id}=Service) ->
     Childs = [     
         {server,
-            {nkservice_server, start_link, [Spec]},
+            {nkservice_srv, start_link, [UserSpec, Service]},
             permanent,
             30000,
             worker,
-            [nkservice_server]
+            [nkservice_srv]
         },
         {transports,
             {nkservice_transp_sup, start_link, [Id]},
