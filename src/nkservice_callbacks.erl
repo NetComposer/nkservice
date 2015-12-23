@@ -21,7 +21,8 @@
 %% @doc Default callbacks
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
-
+-export([plugin_deps/0, plugin_parse/1, plugin_cache/1, plugin_transports/1]).
+-export([plugin_init/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export_type([continue/0]).
@@ -29,6 +30,65 @@
 
 -type state() :: map().
 -type continue() :: continue | {continue, list()}.
+
+
+%% ===================================================================
+%% Plugin Callbacks
+%% ===================================================================
+
+%% @doc Called to get the list of plugins this service/plugin depends on.
+-spec plugin_deps() ->
+    [module()].
+
+plugin_deps() ->
+	[].
+
+
+%% @doc This function, if implemented, is called to parse the plugin options.
+%% High level plugins have also the opportunity to modify the specification for lower
+%% levels plugins
+-spec plugin_parse(nkservice:user_spec()) ->
+	{ok, nkservice:user_spec()} | {error, term()}.
+
+plugin_parse(UserSpec) ->
+	{ok, UserSpec}.
+
+
+%% @doc This function, if implemented, allows to select some values to be added to 
+%% the module's cache
+-spec plugin_cache(nkservice:user_spec()) ->
+	{ok, map()}.
+
+plugin_cache(_UserSpec) ->
+	{ok, #{}}.
+
+
+%% @doc This function, if implemented, allows to add transports
+-spec plugin_transports(nkservice:user_spec()) ->
+	{ok, list()}.
+
+plugin_transports(_UserSpec) ->
+	{ok, []}.
+
+
+%% @doc Called just before the service has started
+%% The plugin must start and store any state in the service map, under
+%% its own key.
+
+plugin_init(_UserSpec, Service) ->
+	{ok, Service}.
+
+
+
+
+
+
+
+%% ===================================================================
+%% Service Callbacks
+%% ===================================================================
+
+
 
 
 %% @doc Called when a new service starts
@@ -79,32 +139,6 @@ service_code_change(OldVsn, State, Extra) ->
 
 service_terminate(_Reason, State) ->
 	{ok, State}.
-
-
-
-%% This function, if implemented, is called after the syntax processing, and
-%% high level plugins have the opportunity to modify the specification for lower
-%% levels plugins
-
-plugin_spec(UserSpec) ->
-	{ok, Spec}.
-
-
-
-%% Called before the service has started
-%% UserSpec has parsed specifications, and Service must be updated
-%% - add or updated the values of the 'cache' key. They will be expanded as
-%%   functions cache_... at the compiled run-time module
-%% - add or updated the values of the 'transport' key. They will be started as
-%%   transports
-%% - add a plugin-specific key for its configuration
-plugin_init(_UserSpec, Service) ->
-	{ok, Service}.
-
-plugin_cache(UserSpec) ->
-	{ok, #{}}.
-
-plugin_transports()
 
 
 

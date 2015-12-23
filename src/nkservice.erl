@@ -33,41 +33,6 @@
 
 
 %% ===================================================================
-%% Callbacks
-%% ===================================================================
-
-% %% Plugins and services must implement this behaviour.
-
-% %% @doc Called to get the list of plugins this service/plugin depend on.
-% -callback plugin_deps() ->
-%     [module()].
-
-% -callback plugin_start(spec()) ->
-%     {ok, spec()} | {stop, term()}.
-
-
-% %% @doc Called when the plugin or service is about to stop
-% %% It receives the full configuration, and must:
-% %% - remove any specific configuration options from the config
-% %% - remove specific configuration options from cache and transports
-% -callback plugin_stop(nkservice:id(), nkservice:spec()) ->
-%     {ok, spec()} | {stop, term()}.
-
-
-%% Optional callbacks
-%%
-%% - callback plugin_init() ->
-%%      ok | {error, term()}.
-%%
-%% - callback plugin_syntax() ->
-%%      Syntax::map().
-%% 
-%% - callback plugin_defaults() ->
-%%      Defaults::map().
-%% 
-
-
-%% ===================================================================
 %% Types
 %% ===================================================================
 
@@ -88,23 +53,13 @@
 %%
 -type user_spec() :: 
 	#{
-		class => term(),
+		class => term(),              % Only to find services
 		plugins => [module()],
-        callback => module(),
-        transports => string() | binary() | [string() | binary()],
+        callback => module(),         % If present, will be the top-level plugin
         ?SERVICE_TYPES,
         ?TLS_SYNTAX,
-        term() => term()            % Any user info
+        term() => term()              % Any user info
 	}.
-
-
--type plugin_spec() ::
-    #{
-        deps => [module()],
-        callback => module(),
-        syntax => map(),
-        defaults => map()
-    }.
 
 
 -type service() ::
