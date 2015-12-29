@@ -54,7 +54,11 @@
 		class => term(),              % Only to find services
 		plugins => [module()],
         callback => module(),         % If present, will be the top-level plugin
-        ?SERVICE_TYPES,
+        packet_idle_timeout => pos_integer(),
+        packet_connect_timeout => pos_integer(),
+        packet_sctp_out_streams => pos_integer(),
+        packet_sctp_in_streams => pos_integer(),
+        packet_no_dns_cache => boolean(),
         ?TLS_SYNTAX,
         term() => term()              % Any user info
 	}.
@@ -68,7 +72,7 @@
         plugins => [atom()],
         callback => module(),
         log_level => integer(),
-        transports => term(),
+        listen => #{term() => list()},
         cache => #{term() => term()},   % This will be first-level functions
         uuid => binary(),
         timestamp => nklib_util:l_timestamp(),

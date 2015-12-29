@@ -23,7 +23,7 @@
 -behaviour(gen_server).
 
 -export([find_name/1, get_srv_id/1, get_from_mod/2]).
--export([start_link/2, stop/1]).
+-export([start_link/1, stop/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
@@ -87,11 +87,11 @@ get_from_mod(Srv, Field) ->
 
 
 %% @private
--spec start_link(nkservice:user_spec(), nkservice:service()) ->
+-spec start_link(nkservice:service()) ->
     {ok, pid()} | {error, term()}.
 
-start_link(UserSpec, #{id:=Id}=Service) ->
-    gen_server:start_link({local, Id}, ?MODULE, {UserSpec, Service}, []).
+start_link(#{id:=Id}=Service) ->
+    gen_server:start_link({local, Id}, ?MODULE, Service, []).
 
 
 
@@ -120,18 +120,13 @@ pending_msgs() ->
 
 
 %% @private
-init({UserSpec, #{id:=Id, name:=Name, plugins:=Plugins}=Service}) ->
+init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
-    case do_start_plugins(Plugins, UserSpec, Service, []) of
-        {ok, Service2} ->
-            Class = maps:get(class, Service2, undefined),
-            nklib_proc:put(?MODULE, {Id, Class}),   
-            nklib_proc:put({?MODULE, Name}, Id),   
-            lager:notice("Service ~s (~p) has started (~p)", [Name, Id, self()]),
-            {ok, Service2};
-        {error, Error} ->
-            {stop, Error}
-    end.
+    Class = maps:get(class, Service, undefined),
+    nklib_proc:put(?MODULE, {Id, Class}),   
+    nklib_proc:put({?MODULE, Name}, Id),   
+    lager:notice("Service ~s (~p) has started (~p)", [Name, Id, self()]),
+    {ok, Service}.
 
 
 %% @private
@@ -190,23 +185,23 @@ terminate(Reason, #{id:=Id, name:=Name}=Service) ->
 %% Internal
 %% ===================================================================
 
-%% @private
-do_start_plugins([], _UserSpec, Service, _Started) ->
-    Service;
+% %% @private
+% do_start_plugins([], _UserSpec, Service, _Started) ->
+%     Service;
 
-do_start_plugins([Plugin|Rest], UserSpec, Service, Started) ->
-    #{id:=Id, name:=Name} = Service,
-    lager:debug("Service ~s (~p) starting plugin ~p", [Name, Id, Plugin]),
-    {ok, Mod} = nkservice_util:get_callback(Plugin),
-    case nklib_util:apply(Mod, plugin_start, [UserSpec, Service]) of
-        not_exported ->
-            do_start_plugins(Rest, UserSpec, Service, [Plugin|Started]);
-        {ok, Service2} ->
-            do_start_plugins(Rest, UserSpec, Service2, [Plugin|Started]);
-        {stop, Reason} ->
-            _Spec2 = do_stop_plugins(Started, Service),
-            {error, {could_not_start_plugin, {Plugin, Reason}}}
-    end.
+% do_start_plugins([Plugin|Rest], UserSpec, Service, Started) ->
+%     #{id:=Id, name:=Name} = Service,
+%     lager:debug("Service ~s (~p) starting plugin ~p", [Name, Id, Plugin]),
+%     {ok, Mod} = nkservice_util:get_callback(Plugin),
+%     case nklib_util:apply(Mod, plugin_start, [UserSpec, Service]) of
+%         not_exported ->
+%             do_start_plugins(Rest, UserSpec, Service, [Plugin|Started]);
+%         {ok, Service2} ->
+%             do_start_plugins(Rest, UserSpec, Service2, [Plugin|Started]);
+%         {stop, Reason} ->
+%             _Spec2 = do_stop_plugins(Started, Service),
+%             {error, {could_not_start_plugin, {Plugin, Reason}}}
+%     end.
 
 
 %% @private

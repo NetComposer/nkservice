@@ -22,6 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([app_syntax/0, app_defaults/0, syntax/0, defaults/0]).
+-export([packet_keys/0]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
   
@@ -49,8 +50,11 @@ syntax() ->
         plugins => {list, atom},
         callback => atom,
         log_level => log_level,
-        % transports => fun parse_transports/3,
-        ?SERVICE_SYNTAX,
+        packet_idle_timeout => pos_integer,
+        packet_connect_timeout => nat_integer,
+        packet_sctp_out_streams => nat_integer,
+        packet_sctp_in_streams => nat_integer,
+        packet_no_dns_cache => boolean,
         ?TLS_SYNTAX
     }.
 
@@ -64,21 +68,29 @@ defaults() ->
     }.
 
 
+packet_keys() ->
+    lists:filter(
+        fun(Key) ->
+            case atom_to_binary(Key, latin1) of 
+                <<"packet_", _/binary>> -> true;
+                <<"tls_", _/binary>> -> true;
+                _ -> false
+            end
+        end,
+        maps:keys(syntax())).
 
-% %% @private
-% parse_transports(_, [{_, _, _, _, _}|_]=List, _) ->
-%    List1 = [
-%         {[{Protocol, Transp, Ip, Port}], Opts}
-%         || {Protocol, Transp, Ip, Port, Opts} <- List
-%     ],
-%     {ok, List1};
 
-% parse_transports(_, Spec, _) ->
-%     case nkpacket:multi_resolve(Spec, #{resolve_type=>listen}) of
-%         {ok, List} ->
-%             {ok, List};
-%         _ ->
-%             error
-%     end.
+% packet_keys() ->
+%     lists:filtermap(
+%         fun(Key) ->
+%             case atom_to_binary(Key, latin1) of 
+%                 <<"packet_", Rest/binary>> -> {true, binary_to_atom(Rest, latin1)};
+%                 <<"tls_", _/binary>> -> true;
+%                 _ -> false
+%             end
+%         end,
+%         maps:keys(syntax())).
+
+
 
 

@@ -21,7 +21,7 @@
 %% @doc Default callbacks
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_parse/1, plugin_cache/1, plugin_transports/1]).
+-export([plugin_deps/0, plugin_parse/1, plugin_cache/1, plugin_listen/1]).
 -export([plugin_start/1, plugin_stop/1]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
@@ -31,6 +31,7 @@
 -type service() :: nkservice:service().
 -type continue() :: continue | {continue, list()}.
 
+-include_lib("nkpacket/include/nkpacket.hrl").
 
 %% ===================================================================
 %% Plugin Callbacks
@@ -51,7 +52,17 @@ plugin_deps() ->
 	{ok, service()} | {error, term()}.
 
 plugin_parse(UserSpec) ->
-	{ok, UserSpec}.
+	PacketKeys = nkservice_syntax:packet_keys(),
+	Packet1 = maps:with(PacketKeys, UserSpec),
+	Packet2 = lists:map(
+		fun({Key, Val}) ->
+			case atom_to_binary(Key, latin1) of 
+                <<"packet_", Rest/binary>> -> {binary_to_atom(Rest, latin1), Val};
+                _ -> {Key, Val}
+            end
+        end,
+        maps:to_list(Packet1)),
+	{ok, #{nkpacket_opts=>maps:from_list(Packet2)}}.
 
 
 %% @doc This function, if implemented, allows to select some values to be added to 
@@ -64,10 +75,10 @@ plugin_cache(_Service) ->
 
 
 %% @doc This function, if implemented, allows to add transports
--spec plugin_transports(service()) ->
+-spec plugin_listen(service()) ->
 	list().
 
-plugin_transports(_Service) ->
+plugin_listen(_Service) ->
 	[].
 
 
