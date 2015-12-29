@@ -276,26 +276,26 @@ do_stop_plugins([Plugin|Rest], #{id:=Id, name:=Name}=Service) ->
 
 
 
-%% private
-get_diffs(Map1, Map2) ->
-    Add = get_diffs(nklib_util:to_list(Map1), Map2, []),
-    Rem = get_diffs(nklib_util:to_list(Map2), Map1, []),
-    {maps:from_list(Add), maps:from_list(Rem)}.
+% %% private
+% get_diffs(Map1, Map2) ->
+%     Add = get_diffs(nklib_util:to_list(Map1), Map2, []),
+%     Rem = get_diffs(nklib_util:to_list(Map2), Map1, []),
+%     {maps:from_list(Add), maps:from_list(Rem)}.
 
 
-%% private
-get_diffs([], _, Acc) ->
-    Acc;
+% %% private
+% get_diffs([], _, Acc) ->
+%     Acc;
 
-get_diffs([{cache, _}|Rest], Map, Acc) ->
-    get_diffs(Rest, Map, Acc);
+% get_diffs([{cache, _}|Rest], Map, Acc) ->
+%     get_diffs(Rest, Map, Acc);
 
-get_diffs([{Key, Val}|Rest], Map, Acc) ->
-    Acc1 = case maps:find(Key, Map) of
-        {ok, Val} -> Acc;
-        _ -> [{Key, Val}|Acc]
-    end,
-    get_diffs(Rest, Map, Acc1).
+% get_diffs([{Key, Val}|Rest], Map, Acc) ->
+%     Acc1 = case maps:find(Key, Map) of
+%         {ok, Val} -> Acc;
+%         _ -> [{Key, Val}|Acc]
+%     end,
+%     get_diffs(Rest, Map, Acc1).
 
 
 

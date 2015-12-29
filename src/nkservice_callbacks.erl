@@ -21,8 +21,8 @@
 %% @doc Default callbacks
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_parse/1, plugin_cache/1, plugin_listen/1]).
--export([plugin_start/1, plugin_stop/1]).
+-export([plugin_deps/0, plugin_parse/2, plugin_cache/2, plugin_listen/2]).
+-export([plugin_start/2, plugin_stop/1]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export_type([continue/0]).
@@ -45,50 +45,42 @@ plugin_deps() ->
 	[].
 
 
-%% @doc This function, if implemented, is called to parse the plugin options.
+%% @doc This function, if implemented, is called to parse the relevant keys from
+%% global service user options. The function must return new values for specific
+%% keys or new keys.
 %% High level plugins have also the opportunity to modify the specification for lower
-%% levels plugins
--spec plugin_parse(user_spec()) ->
-	{ok, service()} | {error, term()}.
+%% levels plugins, since they will be called first
+-spec plugin_parse(user_spec(), service()) ->
+	{ok, user_spec()} | {error, term()}.
 
-plugin_parse(UserSpec) ->
-	PacketKeys = nkservice_syntax:packet_keys(),
-	Packet1 = maps:with(PacketKeys, UserSpec),
-	Packet2 = lists:map(
-		fun({Key, Val}) ->
-			case atom_to_binary(Key, latin1) of 
-                <<"packet_", Rest/binary>> -> {binary_to_atom(Rest, latin1), Val};
-                _ -> {Key, Val}
-            end
-        end,
-        maps:to_list(Packet1)),
-	{ok, #{nkpacket_opts=>maps:from_list(Packet2)}}.
+plugin_parse(_UserSpec, _Service) ->
+	{ok, #{}}.
 
 
 %% @doc This function, if implemented, allows to select some values to be added to 
-%% the module's cache. The plugin conf is stored under its key.
--spec plugin_cache(service()) ->
+%% the module's cache. 
+-spec plugin_cache(user_spec(), service()) ->
 	{ok, map()}.
 
-plugin_cache(_Service) ->
+plugin_cache(_UserSpec, _Service) ->
 	#{}.
 
 
-%% @doc This function, if implemented, allows to add transports
--spec plugin_listen(service()) ->
-	list().
+%% @doc This function, if implemented, allows to add listening transports.
+-spec plugin_listen(user_spec(), service()) ->
+	[{nkpacket:user_connection(), nkpacket:listener_opts()}].
 
-plugin_listen(_Service) ->
+plugin_listen(_UserSpec, _Service) ->
 	[].
 
 
 %% @doc Called during service's start
 %% The plugin must start and store any state in the service map, under
 %% its own key.
--spec plugin_start(service()) ->
+-spec plugin_start(user_spec(), service()) ->
 	{ok, service()} | {error, term()}.
 
-plugin_start(Service) ->
+plugin_start(_UserSpec, Service) ->
 	{ok, Service}.
 
 

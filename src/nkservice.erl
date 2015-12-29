@@ -76,6 +76,7 @@
         cache => #{term() => term()},   % This will be first-level functions
         uuid => binary(),
         timestamp => nklib_util:l_timestamp(),
+        net_opts => nkpacket:listen_opts() | nkpacket:send_opts(),
         term() => term()                % Per-plugin data, copied to service's state
     }.
 
@@ -108,19 +109,17 @@ start(Name, UserSpec) ->
         Service = #{
             id => Id,
             name => Name2,
-            uuid => nkservice_util:update_uuid(Id, Name2),
-            timestamp => nklib_util:l_timestamp()
+            uuid => nkservice_util:update_uuid(Id, Name2)
         },
-        case nkservice_util:update_service(UserSpec, Service) of
+        case nkservice_util:config_service(UserSpec, Service) of
             {ok, Service2} ->
                 nkservice_util:make_cache(Service2),
-                {ok, Service2};
-                % case nkservice_srv_sup:start_service(Service2) of
-                %     ok ->
-                %         {ok, Id};
-                %     {error, Error} -> 
-                %         {error, Error}
-                % end;
+                case nkservice_srv_sup:start_service(Service2) of
+                    ok ->
+                        {ok, Id};
+                    {error, Error} -> 
+                        {error, Error}
+                end;
             {error, Error} ->
                 throw(Error)
         end

@@ -23,7 +23,7 @@
 -behaviour(supervisor).
 
 -export([start_service/1, stop_service/1]).
--export([get_pid/1, init/1, start_link/2]).
+-export([get_pid/1, init/1, start_link/1]).
 
 -include("nkservice.hrl").
 
@@ -73,13 +73,13 @@ get_pid(Id) ->
 
 
 %% @private
--spec start_link(nkservice:user_spec(), nkservice:service()) ->
+-spec start_link(nkservice:service()) ->
     {ok, pid()}.
 
-start_link(UserSpec, #{id:=Id}=Service) ->
+start_link(#{id:=Id}=Service) ->
     Childs = [     
         {server,
-            {nkservice_srv, start_link, [UserSpec, Service]},
+            {nkservice_srv, start_link, [Service]},
             permanent,
             30000,
             worker,
