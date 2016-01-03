@@ -23,7 +23,7 @@
 -behaviour(gen_server).
 
 -export([find_name/1, get_srv_id/1, get_from_mod/2]).
--export([start_link/1, stop/1]).
+-export([start_link/1, stop_all/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
@@ -96,11 +96,11 @@ start_link(#{id:=Id}=Service) ->
 
 
 %% @private
--spec stop(pid()) ->
+-spec stop_all(pid()) ->
     ok.
 
-stop(Pid) ->
-    gen_server:cast(Pid, nkservice_stop).
+stop_all(Pid) ->
+    nklib_util:call(Pid, nkservice_stop_all, 30000).
 
 
 %% @private
@@ -122,19 +122,46 @@ pending_msgs() ->
 %% @private
 init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
-    Class = maps:get(class, Service, undefined),
-    nklib_proc:put(?MODULE, {Id, Class}),   
-    nklib_proc:put({?MODULE, Name}, Id),   
-    lager:notice("Service ~s (~p) has started (~p)", [Name, Id, self()]),
-    {ok, Service}.
+    case nkservice_srv_listen_sup:update_transports(Service) of
+        {ok, Listen} ->
+            Service2 = Service#{listen_ids=>Listen},
+            nkservice_util:make_cache(Service2),
+            Class = maps:get(class, Service, undefined),
+            nklib_proc:put(?MODULE, {Id, Class}),   
+            nklib_proc:put({?MODULE, Name}, Id),   
+            io:format("Service: ~p\n", [Service2]),
+            {ok, Service2};
+        {error, Error} ->
+            {stop, {transport_error, Error}}
+    end.
 
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, nkservice:service()) ->
     term().
 
-% handle_call({nkservice_update, UserSpec, NewService}, _From, Service) ->
-%     {reply, do_update(UserSpec, NewService, Service)};
+handle_call({nkservice_update, UserSpec}, _From, Service) ->
+    case nkservice_util:config_service(UserSpec, Service) of
+        {ok, Service2} ->
+            case nkservice_srv_listen_sup:update_transports(Service2) of
+                {ok, Listen} ->
+                    Service3 = Service2#{listen_ids=>Listen},
+                    nkservice_util:make_cache(Service3),
+                    {Added, Removed} = get_diffs(Service3, Service),
+                    lager:info("Added config: ~p", [Added]),
+                    lager:info("Removed config: ~p", [Removed]),
+                    {reply, ok, Service3};
+                {error, Error} ->
+                    {reply, {error, Error}, Service}
+            end;
+        {error, Error} ->
+            {reply, {error, Error}, Service}
+    end;
+
+handle_call(nkservice_stop_all, _From, Service) ->
+    #{plugins:=Plugins} = Service,
+    Service2 = nkservice_util:stop_plugins(Plugins, Service),
+    {reply, ok, Service2};
 
 handle_call(nkservice_state, _From, Service) ->
     {reply, Service, Service};
@@ -174,9 +201,8 @@ code_change(OldVsn, #{id:=Id}=Service, Extra) ->
 -spec terminate(term(), nkservice:service()) ->
     nklib_util:gen_server_terminate().
 
-terminate(Reason, #{id:=Id, name:=Name}=Service) ->  
-	Plugins = lists:reverse(Id:plugins()),
-    do_stop_plugins(Plugins, Service),
+terminate(Reason, #{id:=Id, name:=Name, plugins:=Plugins}=Service) ->  
+    _Service2 = nkservice_util:stop_plugins(Plugins, Service),
     lager:debug("Service ~s (~p) has terminated (~p)", [Name, Id, Reason]).
     
 
@@ -185,117 +211,27 @@ terminate(Reason, #{id:=Id, name:=Name}=Service) ->
 %% Internal
 %% ===================================================================
 
-% %% @private
-% do_start_plugins([], _UserSpec, Service, _Started) ->
-%     Service;
 
-% do_start_plugins([Plugin|Rest], UserSpec, Service, Started) ->
-%     #{id:=Id, name:=Name} = Service,
-%     lager:debug("Service ~s (~p) starting plugin ~p", [Name, Id, Plugin]),
-%     {ok, Mod} = nkservice_util:get_callback(Plugin),
-%     case nklib_util:apply(Mod, plugin_start, [UserSpec, Service]) of
-%         not_exported ->
-%             do_start_plugins(Rest, UserSpec, Service, [Plugin|Started]);
-%         {ok, Service2} ->
-%             do_start_plugins(Rest, UserSpec, Service2, [Plugin|Started]);
-%         {stop, Reason} ->
-%             _Spec2 = do_stop_plugins(Started, Service),
-%             {error, {could_not_start_plugin, {Plugin, Reason}}}
-%     end.
+%% private
+get_diffs(Map1, Map2) ->
+    Add = get_diffs(nklib_util:to_list(Map1), Map2, []),
+    Rem = get_diffs(nklib_util:to_list(Map2), Map1, []),
+    {maps:from_list(Add), maps:from_list(Rem)}.
 
 
-%% @private
-do_stop_plugins([], Service) ->
-    Service;
+%% private
+get_diffs([], _, Acc) ->
+    Acc;
 
-do_stop_plugins([Plugin|Rest], #{id:=Id, name:=Name}=Service) ->
-    lager:debug("Service ~s (~p) stopping plugin ~p", [Name, Id, Plugin]),
-    case nklib_util:apply(Plugin, plugin_stop, [Service]) of
-    	{ok, Service2} ->
-    		do_stop_plugins(Rest, Service2);
-    	_ ->
-    		do_stop_plugins(Rest, Service)
-    end.
+get_diffs([{cache, _}|Rest], Map, Acc) ->
+    get_diffs(Rest, Map, Acc);
 
-
-% %% @private
-% do_update(UserSpec, NewService, #{id:=Id}=Service) ->
-%     try
-%         OldSpec = nkservice:get_spec(Id),
-%         Syntax = nkservice_syntax:syntax(),
-%         % We don't use OldSpec as a default, since values not in syntax()
-%         % would be taken from OldSpec insted than from Spec
-%         Spec1 = case nkservice_util:parse_syntax(Spec, Syntax) of
-%             {ok, Parsed} -> Parsed;
-%             {error, ParseError} -> throw(ParseError)
-%         end,
-%         Spec2 = maps:merge(OldSpec, Spec1),
-%         OldPlugins = Id:plugins(),
-%         NewPlugins1 = maps:get(plugins, Spec2),
-%         NewPlugins2 = case Spec2 of
-%             #{callback:=CallBack} -> 
-%                 [{CallBack, all}|NewPlugins1];
-%             _ ->
-%                 NewPlugins1
-%         end,
-%         ToStart = case nkservice_cache:get_plugins(NewPlugins2) of
-%             {ok, AllPlugins} -> AllPlugins;
-%             {error, GetError} -> throw(GetError)
-%         end,
-%         ToStop = lists:reverse(OldPlugins--ToStart),
-%         lager:info("Server ~p plugins to stop: ~p, start: ~p", 
-%                    [Id, ToStop, ToStart]),
-%         CacheKeys = maps:keys(nkservice_syntax:defaults()),
-%         Spec3 = Spec2#{
-%             plugins => ToStart,
-%             cache => maps:with(CacheKeys, Spec2)
-%         },
-%         Spec4 = do_stop_plugins(ToStop, Spec3),
-%         Spec5 = do_syntax(ToStart, Spec4),
-%         Spec6 = do_start_plugins(ToStart, Spec5, []),
-%         case Spec6 of
-%             #{transports:=Transports} ->
-%                 case 
-%                     nkservice_transp_sup:start_transports(Transports, Spec6) 
-%                 of
-%                     ok -> 
-%                         ok;
-%                     {error, Error} ->
-%                         throw(Error)
-%                 end;
-%             _ ->
-%                 ok
-%         end,
-%         {Added, Removed} = get_diffs(Spec6, OldSpec),
-%         lager:info("Added config: ~p", [Added]),
-%         lager:info("Removed config: ~p", [Removed]),
-%         nkservice_cache:make_cache(Spec6)
-%     catch
-%         throw:Throw -> {error, Throw}
-%     end.
-
-
-
-% %% private
-% get_diffs(Map1, Map2) ->
-%     Add = get_diffs(nklib_util:to_list(Map1), Map2, []),
-%     Rem = get_diffs(nklib_util:to_list(Map2), Map1, []),
-%     {maps:from_list(Add), maps:from_list(Rem)}.
-
-
-% %% private
-% get_diffs([], _, Acc) ->
-%     Acc;
-
-% get_diffs([{cache, _}|Rest], Map, Acc) ->
-%     get_diffs(Rest, Map, Acc);
-
-% get_diffs([{Key, Val}|Rest], Map, Acc) ->
-%     Acc1 = case maps:find(Key, Map) of
-%         {ok, Val} -> Acc;
-%         _ -> [{Key, Val}|Acc]
-%     end,
-%     get_diffs(Rest, Map, Acc1).
+get_diffs([{Key, Val}|Rest], Map, Acc) ->
+    Acc1 = case maps:find(Key, Map) of
+        {ok, Val} -> Acc;
+        _ -> [{Key, Val}|Acc]
+    end,
+    get_diffs(Rest, Map, Acc1).
 
 
 

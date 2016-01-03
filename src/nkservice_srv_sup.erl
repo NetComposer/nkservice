@@ -78,19 +78,19 @@ get_pid(Id) ->
 
 start_link(#{id:=Id}=Service) ->
     Childs = [     
+        {transports,
+            {nkservice_srv_listen_sup, start_link, [Service]},
+            permanent,
+            infinity,
+            supervisor,
+            [nkservice_srv_listen_sup]
+        },
         {server,
             {nkservice_srv, start_link, [Service]},
             permanent,
             30000,
             worker,
             [nkservice_srv]
-        },
-        {transports,
-            {nkservice_srv_listen_sup, start_link, [Id]},
-            permanent,
-            infinity,
-            supervisor,
-            [nkservice_srv_listen_sup]
         }
     ],
     ChildSpec = {Id, {{one_for_one, 10, 60}, Childs}},

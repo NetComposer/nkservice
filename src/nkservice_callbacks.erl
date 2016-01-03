@@ -21,17 +21,18 @@
 %% @doc Default callbacks
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_parse/2, plugin_cache/2, plugin_listen/2]).
--export([plugin_start/2, plugin_stop/1]).
+-export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
+		 plugin_listen/2, plugin_start/1, plugin_update/1, plugin_stop/1]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export_type([continue/0]).
 
--type user_spec() :: nkservice:user_spec().
+-type config() :: nkservice:config().
 -type service() :: nkservice:service().
 -type continue() :: continue | {continue, list()}.
 
 -include_lib("nkpacket/include/nkpacket.hrl").
+-include("nkservice.hrl").
 
 %% ===================================================================
 %% Plugin Callbacks
@@ -45,42 +46,57 @@ plugin_deps() ->
 	[].
 
 
-%% @doc This function, if implemented, is called to parse the relevant keys from
-%% global service user options. The function must return new values for specific
-%% keys or new keys.
-%% High level plugins have also the opportunity to modify the specification for lower
-%% levels plugins, since they will be called first
--spec plugin_parse(user_spec(), service()) ->
-	{ok, user_spec()} | {error, term()}.
+%% @doc This function, if implemented, can offer a nklib_config:syntax()
+%% that will be checked againts service configuration. Entries passing will be
+%% updated on the configuration with their parsed values
+-spec plugin_syntax() ->
+	nklib_config:syntax().
 
-plugin_parse(_UserSpec, _Service) ->
-	{ok, #{}}.
-
-
-%% @doc This function, if implemented, allows to select some values to be added to 
-%% the module's cache. 
--spec plugin_cache(user_spec(), service()) ->
-	{ok, map()}.
-
-plugin_cache(_UserSpec, _Service) ->
+plugin_syntax() ->
 	#{}.
 
 
+%% @doc This function, if implemented, can offer a defaults specificaction
+%% for the syntax processing
+-spec plugin_defaults() ->
+	map().
+
+plugin_defaults() ->
+	#{}.
+
+
+%% @doc This function can modify the service configuration, and can also
+%% generate a specific plugin configuration, that will be 
+%% accesible in the generated module as config_(plugin_name).
+-spec plugin_config(config(), service()) ->
+	{ok, config()} | {ok, config(), term()} | {error, term()}.
+
+plugin_config(Config, _Service) ->
+	{ok, Config, nkservice_syntax:get_config(Config)}.
+
+
 %% @doc This function, if implemented, allows to add listening transports.
--spec plugin_listen(user_spec(), service()) ->
+-spec plugin_listen(config(), service()) ->
 	[{nkpacket:user_connection(), nkpacket:listener_opts()}].
 
-plugin_listen(_UserSpec, _Service) ->
+plugin_listen(_Config, _Service) ->
 	[].
 
 
 %% @doc Called during service's start
-%% The plugin must start and store any state in the service map, under
-%% its own key.
--spec plugin_start(user_spec(), service()) ->
+%% The plugin must start and can update the service's config
+-spec plugin_start(service()) ->
 	{ok, service()} | {error, term()}.
 
-plugin_start(_UserSpec, Service) ->
+plugin_start(Service) ->
+	{ok, Service}.
+
+
+%% @doc Called during service's update
+-spec plugin_update(service()) ->
+	{ok, service()} | {error, term()}.
+
+plugin_update(Service) ->
 	{ok, Service}.
 
 

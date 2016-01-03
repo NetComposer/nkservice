@@ -57,5 +57,11 @@
 %     end).
 
 
+-record(config, {
+	net_opts :: map()
+}).
+
+
+
 -endif.
 

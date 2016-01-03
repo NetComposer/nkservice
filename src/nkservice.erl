@@ -24,7 +24,8 @@
 -export([start/2, stop/1, update/2, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
--export_type([id/0, name/0, class/0, user_spec/0, service/0]).
+-export([get_listeners/1]).
+-export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
 
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -38,7 +39,7 @@
 -type id() :: atom().
 
 %% Service's name
--type name() :: binary().
+-type name() :: term().
 
 %% Service's class
 -type class() :: term().
@@ -49,39 +50,39 @@
 %% - callback: if present, will be the top-level plugin
 %% - transports to start
 %%
--type user_spec() :: 
+-type spec() :: 
 	#{
 		class => term(),              % Only to find services
 		plugins => [module()],
         callback => module(),         % If present, will be the top-level plugin
-        packet_idle_timeout => pos_integer(),
-        packet_connect_timeout => pos_integer(),
-        packet_sctp_out_streams => pos_integer(),
-        packet_sctp_in_streams => pos_integer(),
-        packet_no_dns_cache => boolean(),
+        net_idle_timeout => integer(),
+        net_connect_timeout => integer(),
+        net_sctp_out_streams => integer(),
+        net_sctp_in_streams => integer(),
+        net_no_dns_cache => boolean(),
         ?TLS_SYNTAX,
         term() => term()              % Any user info
 	}.
 
+-type config() :: map().
 
 -type service() ::
     #{
         id => atom(),
-        name => binary(),
+        name => term(),
         class => class(),
         plugins => [atom()],
         callback => module(),
         log_level => integer(),
         listen => #{term() => list()},
-        cache => #{term() => term()},   % This will be first-level functions
         uuid => binary(),
         timestamp => nklib_util:l_timestamp(),
         net_opts => nkpacket:listen_opts() | nkpacket:send_opts(),
-        term() => term()                % Per-plugin data, copied to service's state
+        config => config(),
+        term() => term()           % "config_(plugin)" values
     }.
 
 -type service_select() :: id() | name().
-
 
 
 %% ===================================================================
@@ -90,12 +91,11 @@
 
 
 %% @doc Starts a new service.
--spec start(name(), user_spec()) ->
+-spec start(name(), spec()) ->
     {ok, id()} | {error, term()}.
 
 start(Name, UserSpec) ->
-    Name2 = nklib_util:to_binary(Name),
-    Id = nkservice_util:make_id(Name2),
+    Id = nkservice_util:make_id(Name),
     try
         case nkservice_srv:get_srv_id(Id) of
             {ok, OldId} -> 
@@ -108,14 +108,14 @@ start(Name, UserSpec) ->
         end,
         Service = #{
             id => Id,
-            name => Name2,
-            uuid => nkservice_util:update_uuid(Id, Name2)
+            name => Name,
+            uuid => nkservice_util:update_uuid(Id, Name)
         },
         case nkservice_util:config_service(UserSpec, Service) of
             {ok, Service2} ->
-                nkservice_util:make_cache(Service2),
                 case nkservice_srv_sup:start_service(Service2) of
                     ok ->
+                        lager:notice("Service ~s (~p) has started", [Name, Id]),
                         {ok, Id};
                     {error, Error} -> 
                         {error, Error}
@@ -135,11 +135,12 @@ start(Name, UserSpec) ->
 stop(Service) ->
     case nkservice_srv:get_srv_id(Service) of
         {ok, Id} ->
+            % nkservice_srv:stop_all(Id),
             case nkservice_srv_sup:stop_service(Id) of
                 ok -> 
                     ok;
                 error -> 
-                    {error, not_running}
+                    {error, internal_error}
             end;
         not_found ->
             {error, not_running}
@@ -148,18 +149,13 @@ stop(Service) ->
 
 
 %% @private
--spec update(service_select(), user_spec()) ->
+-spec update(service_select(), spec()) ->
     ok | {error, term()}.
 
 update(ServiceId, UserSpec) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case nkservice_util:parse_plugins(UserSpec) of
-                {ok, UserSpec2, Service} ->
-                    call(Id, {nkservice_update, UserSpec2, Service}, 30000);
-                {error, Error} ->
-                    {error, Error}
-            end;
+            call(Id, {nkservice_update, UserSpec}, 30000);
         not_found ->
             {error, service_not_found}
     end.
@@ -316,8 +312,8 @@ get_timestamp(ServiceId) ->
 
 get_pid(ServiceId) ->
     case nkservice_srv:get_srv_id(ServiceId) of
-        {ok, ServiceId} ->
-            case whereis(ServiceId) of
+        {ok, Id} ->
+            case whereis(Id) of
                 Pid when is_pid(Pid) -> Pid;
                 _ -> undefined
             end;
@@ -326,6 +322,15 @@ get_pid(ServiceId) ->
     end.
 
 
+%% @doc Gets started listeners for each plugin
+-spec get_listeners(service_select()) ->
+    #{atom() => [atom()]}.
+
+get_listeners(ServiceId) ->
+    case nkservice_srv:get_srv_id(ServiceId) of
+        {ok, Id} -> nkservice_srv_listen_sup:get_started(Id);
+        not_found -> error(service_not_found)
+    end.    
 
 
 
