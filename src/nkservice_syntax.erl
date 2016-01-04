@@ -97,5 +97,5 @@ get_config(Spec) ->
             end
         end,
         maps:to_list(Net1)),
-    #config{net_opts=Net2}.
+    #{net_opts=>Net2}.
 

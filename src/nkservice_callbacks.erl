@@ -22,13 +22,14 @@
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
-		 plugin_listen/2, plugin_start/1, plugin_update/1, plugin_stop/1]).
+		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export_type([continue/0]).
 
 -type config() :: nkservice:config().
 -type service() :: nkservice:service().
+-type user_state() :: map().
 -type continue() :: continue | {continue, list()}.
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -66,7 +67,7 @@ plugin_defaults() ->
 
 
 %% @doc This function can modify the service configuration, and can also
-%% generate a specific plugin configuration, that will be 
+%% generate a specific plugin configuration (in the second return), that will be 
 %% accesible in the generated module as config_(plugin_name).
 -spec plugin_config(config(), service()) ->
 	{ok, config()} | {ok, config(), term()} | {error, term()}.
@@ -85,29 +86,28 @@ plugin_listen(_Config, _Service) ->
 
 %% @doc Called during service's start
 %% The plugin must start and can update the service's config
--spec plugin_start(service()) ->
+-spec plugin_start(config(), service()) ->
 	{ok, service()} | {error, term()}.
 
-plugin_start(Service) ->
-	{ok, Service}.
+plugin_start(Config, _Service) ->
+	{ok, Config}.
 
 
 %% @doc Called during service's update
--spec plugin_update(service()) ->
+-spec plugin_update(config(), service()) ->
 	{ok, service()} | {error, term()}.
 
-plugin_update(Service) ->
-	{ok, Service}.
+plugin_update(Config, _Service) ->
+	{ok, Config}.
 
 
 %% @doc Called during service's stop
 %% The plugin must remove any key from the service
--spec plugin_stop(service()) ->
+-spec plugin_stop(config(), service()) ->
 	{ok, service()}.
 
-plugin_stop(Service) ->
-	{ok, Service}.
-
+plugin_stop(Config, _Service) ->
+	{ok, Config}.
 
 
 
@@ -117,19 +117,17 @@ plugin_stop(Service) ->
 %% ===================================================================
 
 
-
-
 %% @doc Called when a new service starts
--spec service_init(nkservice:spec(), service()) ->
-	{ok, service()} | {stop, term()}.
+-spec service_init(service(), user_state()) ->
+	{ok, user_state()} | {stop, term()}.
 
-service_init(_SrvSpec, State) ->
+service_init(_Service, State) ->
 	{ok, State}.
 
 
 %% @doc Called when the service process receives a handle_call/3.
--spec service_handle_call(term(), {pid(), reference()}, service()) ->
-	{reply, term(), service()} | {noreply, service()} | continue().
+-spec service_handle_call(term(), {pid(), reference()}, user_state()) ->
+	{reply, term(), user_state()} | {noreply, user_state()} | continue().
 
 service_handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
@@ -137,8 +135,8 @@ service_handle_call(Msg, _From, State) ->
 
 
 %% @doc Called when the NkApp process receives a handle_cast/3.
--spec service_handle_cast(term(), service()) ->
-	{noreply, service()} | continue().
+-spec service_handle_cast(term(), user_state()) ->
+	{noreply, user_state()} | continue().
 
 service_handle_cast(Msg, State) ->
     lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
@@ -146,15 +144,15 @@ service_handle_cast(Msg, State) ->
 
 
 %% @doc Called when the NkApp process receives a handle_info/3.
--spec service_handle_info(term(), service()) ->
-	{noreply, service()} | continue().
+-spec service_handle_info(term(), user_state()) ->
+	{noreply, user_state()} | continue().
 
 service_handle_info(Msg, State) ->
     lager:notice("Module ~p received unexpected info ~p", [?MODULE, Msg]),
 	{noreply, State}.
 
 
--spec service_code_change(term()|{down, term()}, service(), term()) ->
+-spec service_code_change(term()|{down, term()}, user_state(), term()) ->
     ok | {ok, service()} | {error, term()} | continue().
 
 service_code_change(OldVsn, State, Extra) ->

@@ -79,11 +79,11 @@ get_callback(Plugin) ->
     case code:ensure_loaded(Mod) of
         {module, _} ->
             {ok, Mod};
-        error ->
+        {error, nofile} ->
             case code:ensure_loaded(Plugin) of
                 {module, _} ->
                     {ok, Plugin};
-                error ->
+                {error, nofile} ->
                     error
             end
     end.
@@ -111,16 +111,16 @@ config_service(Config, Service) ->
             {ok, Expanded} -> Expanded;
             {error, Error2} -> throw(Error2)
         end,
-        OldConfig = maps:get(config, Service, #{}),
+        OldPlugins = maps:get(plugins, Service, []),
+        ToStop = lists:reverse(OldPlugins -- DownToTop),
+        Service4 = stop_plugins(ToStop, Service3),
+        OldConfig = maps:get(config, Service4, #{}),
         UserConfig1 = maps:without(GlobalKeys, Config2),
         UserConfig2 = maps:merge(OldConfig, UserConfig1),
-        Service4 = Service3#{plugins=>DownToTop, config=>UserConfig2},
+        Service5 = Service4#{plugins=>DownToTop, config=>UserConfig2},
         TopToDown = lists:reverse(DownToTop),
-        Service5 = config_plugins(TopToDown, Service4),
-        OldPlugins = maps:get(plugins, Service, []),
-        Service6 = start_plugins(DownToTop, OldPlugins, Service5),
-        ToStop = lists:reverse(OldPlugins -- DownToTop),
-        Service7 = stop_plugins(ToStop, Service6),
+        Service6 = config_plugins(TopToDown, Service5),
+        Service7 = start_plugins(DownToTop, OldPlugins, Service6),
         Defaults = #{log_level=>notice, listen_ids=>#{}},
         Service8 = maps:merge(Defaults, Service7),
         {ok, Service8}
@@ -134,7 +134,7 @@ config_plugins([], Service) ->
     Service;
 
 config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
-    lager:warning("Config Plugin: ~p", [Plugin]),
+    % lager:warning("Config Plugin: ~p", [Plugin]),
     Mod = get_mod(Plugin),
     Config2 = case nklib_util:apply(Mod, plugin_syntax, []) of
         not_exported -> 
@@ -148,7 +148,7 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
             end,
             case parse_syntax(Config, Syntax, Defaults) of
                 {ok, Parsed1} -> Parsed1;
-                {error, Error1} -> throw({plugin_syntax_error, {Plugin, Error1}})
+                {error, Error1} -> throw({{Plugin, Error1}})
             end
     end,
     Service2 = Service#{config:=Config2},
@@ -161,7 +161,7 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
             Key = list_to_atom("config_"++atom_to_list(Plugin)),
             maps:put(Key, ApplyCache, Service2#{config=>ApplyConfig});
         {error, Error2} ->
-            throw({plugin_config_error, {Plugin, Error2}})
+            throw({{Plugin, Error2}})
     end,
     #{config:=Config3} = Service3,
     Service4 = case nklib_util:apply(Mod, plugin_listen, [Config3, Service3]) of
@@ -184,20 +184,20 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
 start_plugins([], _OldPlugins, Service) ->
     Service;
 
-start_plugins([Plugin|Rest], OldPlugins, Service) ->
+start_plugins([Plugin|Rest], OldPlugins, #{config:=Config}=Service) ->
     Mod = get_mod(Plugin),
     Service2 = case lists:member(Plugin, OldPlugins) of
         false ->
-            lager:warning("Start Plugin: ~p", [Plugin]),
-            case nklib_util:apply(Mod, plugin_start, [Service]) of
-                {ok, Apply} -> Apply;
+            % lager:warning("Start Plugin: ~p", [Plugin]),
+            case nklib_util:apply(Mod, plugin_start, [Config, Service]) of
+                {ok, Config2} -> Service#{config:=Config2};
                 {stop, Error} -> throw({plugin_stop, {Plugin, Error}});
                 not_exported -> Service
             end;
         true ->
-            lager:warning("Update Plugin: ~p", [Plugin]),
-            case nklib_util:apply(Mod, plugin_update, [Service]) of
-                {ok, Apply} -> Apply;
+            % lager:warning("Update Plugin: ~p", [Plugin]),
+            case nklib_util:apply(Mod, plugin_update, [Config, Service]) of
+                {ok, Config2} -> Service#{config:=Config2};
                 {stop, Error} -> throw({plugin_stop, {Plugin, Error}});
                 not_exported -> Service
             end
@@ -209,8 +209,8 @@ start_plugins([Plugin|Rest], OldPlugins, Service) ->
 stop_plugins([], Service) ->
     Service;
 
-stop_plugins([Plugin|Rest], #{listen_ids:=ListenIds}=Service) ->
-    lager:warning("Stop Plugin: ~p", [Plugin]),
+stop_plugins([Plugin|Rest], #{config:=Config, listen_ids:=ListenIds}=Service) ->
+    % lager:warning("Stop Plugin: ~p", [Plugin]),
     case maps:find(Plugin, ListenIds) of
         {ok, PluginIds} ->
             lists:foreach(
@@ -220,9 +220,9 @@ stop_plugins([Plugin|Rest], #{listen_ids:=ListenIds}=Service) ->
     end,
     ListenIds2 = maps:remove(Plugin, ListenIds),
     Mod = get_mod(Plugin),
-    Service2 = case nklib_util:apply(Mod, plugin_stop, [Service]) of
-        {ok, Apply} -> Apply;
-        _ -> Service
+    Service2 = case nklib_util:apply(Mod, plugin_stop, [Config, Service]) of
+        {ok, Config2} -> Service#{config:=Config2};
+        not_exported -> Service
     end,
     Key = list_to_atom("config_"++atom_to_list(Plugin)),
     Service3 = maps:remove(Key, Service2),
@@ -334,9 +334,8 @@ save_uuid(Path, Name, UUID) ->
 
 %% @doc Generates and compiles in-memory cache module
 make_cache(#{id:=Id}=Service) ->
-    Service2 = maps:remove(cache, Service),
-    Service3 = Service2#{timestamp => nklib_util:l_timestamp()},
-    BaseSyntax = make_base_syntax(Service3),
+    Service2 = Service#{timestamp => nklib_util:l_timestamp()},
+    BaseSyntax = make_base_syntax(Service2),
     % Gather all fun specs from all callbacks modules on all plugins
     Plugins = maps:get(plugins, Service),
     PluginSyntax = plugin_callbacks_syntax(Plugins),
@@ -349,13 +348,6 @@ make_cache(#{id:=Id}=Service) ->
 %% @private Generates a ready-to-compile config getter functions
 %% with a function for each member of the map, plus defauls and configs
 make_base_syntax(Service) ->
-    Cache = maps:get(cache, Service, #{}),
-    Base = maps:from_list(
-        [
-            {nklib_util:to_atom("cache_"++nklib_util:to_list(Key)), Value} ||
-            {Key, Value} <- maps:to_list(Cache)
-        ]),
-    Config = maps:merge(Service, Base),
     maps:fold(
         fun(Key, Value, Acc) -> 
             % Maps not yet suported in 17 (supported in 18)
@@ -366,7 +358,7 @@ make_base_syntax(Service) ->
             [nklib_code:getter(Key, Value1)|Acc] 
         end,
         [],
-        Config).
+        Service).
 
 
 

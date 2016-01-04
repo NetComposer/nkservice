@@ -64,7 +64,7 @@ basic() ->
 
 	[plug2, plug1, plug3, serv1] = SrvId:plugins(),
 
-	7 = SrvId:cache_log_level(),
+	7 = SrvId:log_level(),
 	#{
 		class := class1,
   		data1 := value1,

@@ -39,9 +39,8 @@ update_transports(Service) ->
         id := Id, 
         listen := Listen, 
         listen_ids := ListenIds, 
-        config_nkservice := Config
+        config_nkservice := #{net_opts:=Opts}
     } = Service,
-    #config{net_opts=Opts} = Config,
     start_transports1(Id, maps:to_list(Listen), maps:from_list(Opts), ListenIds).
 
 
@@ -102,8 +101,9 @@ start_transports3(Id, Plugin, [Conn|Rest], Opts, Started) ->
         {ok, Child} ->
             case add_transport(Id, Child) of
                 {ok, ListenId} ->
-                    ListenIds = maps:get(Plugin, Started, []),
-                    Started2 = maps:put(Plugin, [ListenId|ListenIds], Started),
+                    ListenIds1 = maps:get(Plugin, Started, []),
+                    ListenIds2 = nklib_util:store_value(ListenId, ListenIds1),
+                    Started2 = maps:put(Plugin, ListenIds2, Started),
                     start_transports3(Id, Plugin, Rest, Opts, Started2);
                 {error, Error} ->
                     {error, {could_not_start, {Transp, Error}}}
@@ -129,8 +129,8 @@ add_transport(SrvId, Spec) ->
                 {ok, Pid} ->
                     {registered_name, ListenId} = process_info(Pid, registered_name),
                     {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
-                    lager:info("Service ~s (~p) started listener on ~p:~p:~p (~p)", 
-                               [SrvId:name(), SrvId, Transp, Ip, Port, Proto]),
+                    lager:info("Service ~p started listener on ~p:~p:~p (~p)", 
+                               [SrvId, Transp, Ip, Port, Proto]),
                     {ok, ListenId};
                 {error, {Error, _}} -> 
                     {error, Error};
@@ -148,7 +148,7 @@ add_transport(SrvId, Spec) ->
 find_started([], _Conn) ->
     false;
 
-find_started([{{Conn, _}, Pid, worker, _}|_], Conn) ->
+find_started([{{Conn, _}, Pid, worker, _}|_], Conn) when is_pid(Pid) ->
     {true, Pid};
 
 find_started([_|Rest], Conn) ->

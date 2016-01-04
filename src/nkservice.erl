@@ -23,8 +23,8 @@
 
 -export([start/2, stop/1, update/2, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
+-export([get_listeners/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
--export([get_listeners/1]).
 -export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
 
 
@@ -64,7 +64,7 @@
         term() => term()              % Any user info
 	}.
 
--type config() :: map().
+-type config() :: #{term() => term()}.
 
 -type service() ::
     #{
@@ -74,11 +74,11 @@
         plugins => [atom()],
         callback => module(),
         log_level => integer(),
-        listen => #{term() => list()},
         uuid => binary(),
         timestamp => nklib_util:l_timestamp(),
-        net_opts => nkpacket:listen_opts() | nkpacket:send_opts(),
         config => config(),
+        listen => #{Plugin::atom() => list()},
+        listen_ids => #{Plugin::atom() => list()},
         term() => term()           % "config_(plugin)" values
     }.
 
@@ -148,7 +148,10 @@ stop(Service) ->
 
 
 
-%% @private
+%% @doc Updates a service configuration
+%% New transports can be added, but old transports will not be automatically
+%% stopped. Use get_listeners/2 to find transports and stop them manually.
+%% (the info on get_listeners/2 will not be updated).
 -spec update(service_select(), spec()) ->
     ok | {error, term()}.
 
@@ -252,7 +255,6 @@ del(ServiceId, Key) ->
     end.
 
 
-
 %% @doc Synchronous call to the service's gen_server process
 -spec call(service_select(), term()) ->
     term().
@@ -322,18 +324,12 @@ get_pid(ServiceId) ->
     end.
 
 
-%% @doc Gets started listeners for each plugin
--spec get_listeners(service_select()) ->
-    #{atom() => [atom()]}.
+%% @doc Get all current listeners for a plugin
+-spec get_listeners(service_select(), atom()) ->
+    [nkpacket:listen_id()].
 
-get_listeners(ServiceId) ->
-    case nkservice_srv:get_srv_id(ServiceId) of
-        {ok, Id} -> nkservice_srv_listen_sup:get_started(Id);
-        not_found -> error(service_not_found)
-    end.    
+get_listeners(SrvId, Plugin) ->
+    All = nkservice_srv:get_item(SrvId, listen_ids),
+    maps:get(Plugin, All, []).
 
 
-
-
-
-    
