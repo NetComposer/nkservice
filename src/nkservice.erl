@@ -48,18 +48,17 @@
 %% - class: only used to find services
 %% - plugins: list of dependant plugins
 %% - callback: if present, will be the top-level plugin
-%% - transports to start
 %%
 -type spec() :: 
 	#{
 		class => term(),              % Only to find services
 		plugins => [module()],
         callback => module(),         % If present, will be the top-level plugin
-        net_idle_timeout => integer(),
-        net_connect_timeout => integer(),
-        net_sctp_out_streams => integer(),
-        net_sctp_in_streams => integer(),
-        net_no_dns_cache => boolean(),
+        service_idle_timeout => integer(),
+        service_connect_timeout => integer(),
+        service_sctp_out_streams => integer(),
+        service_sctp_in_streams => integer(),
+        service_no_dns_cache => boolean(),
         ?TLS_SYNTAX,
         term() => term()              % Any user info
 	}.
