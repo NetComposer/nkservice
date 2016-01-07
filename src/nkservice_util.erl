@@ -105,7 +105,7 @@ config_service(Config, Service) ->
         GlobalKeys = [class, plugins, callback, log_level],
         Service2 = maps:with(GlobalKeys, Config2),
         Service3 = maps:merge(Service, Service2),
-        Plugins = maps:get(plugins, Service3),
+        Plugins = maps:get(plugins, Service3, []),
         CallBack = maps:get(callback, Service3, none),
         DownToTop = case expand_plugins([nkservice|Plugins], CallBack) of
             {ok, Expanded} -> Expanded;
