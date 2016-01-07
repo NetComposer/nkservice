@@ -209,8 +209,10 @@ start_plugins([Plugin|Rest], OldPlugins, #{config:=Config}=Service) ->
 stop_plugins([], Service) ->
     Service;
 
-stop_plugins([Plugin|Rest], #{config:=Config, listen_ids:=ListenIds}=Service) ->
+stop_plugins([Plugin|Rest], Service) ->
     % lager:warning("Stop Plugin: ~p", [Plugin]),
+    #{config:=Config, listen:=Listen, listen_ids:=ListenIds} = Service,
+    Listen2 = maps:remove(Plugin, Listen),
     case maps:find(Plugin, ListenIds) of
         {ok, PluginIds} ->
             lists:foreach(
@@ -226,7 +228,7 @@ stop_plugins([Plugin|Rest], #{config:=Config, listen_ids:=ListenIds}=Service) ->
     end,
     Key = list_to_atom("config_"++atom_to_list(Plugin)),
     Service3 = maps:remove(Key, Service2),
-    stop_plugins(Rest, Service3#{listen_ids=>ListenIds2}).
+    stop_plugins(Rest, Service3#{listen=>Listen2, listen_ids=>ListenIds2}).
 
 
 %% @private
