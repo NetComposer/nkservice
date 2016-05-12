@@ -8,3 +8,5 @@ ebin
 .eunit
 .DS_Store
 nimcache
+_build
+rebar.lock
