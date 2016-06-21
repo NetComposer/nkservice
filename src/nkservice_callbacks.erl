@@ -237,29 +237,29 @@ api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
 
 %% @doc Called when the xzservice process receives a handle_call/3.
 -spec api_server_handle_call(term(), {pid(), reference()}, state()) ->
-	{reply, term(), state()} | {noreply, state()} | continue().
+	{ok, state()} | continue().
 
 api_server_handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
-    {noreply, State}.
+    {ok, State}.
 
 
 %% @doc Called when the NkApp process receives a handle_cast/3.
 -spec api_server_handle_cast(term(), state()) ->
-	{noreply, state()} | continue().
+	{ok, state()} | continue().
 
 api_server_handle_cast(Msg, State) ->
     lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
-	{noreply, State}.
+	{ok, State}.
 
 
 %% @doc Called when the NkApp process receives a handle_info/3.
 -spec api_server_handle_info(term(), state()) ->
-	{noreply, state()} | continue().
+	{ok, state()} | continue().
 
 api_server_handle_info(Msg, State) ->
     lager:notice("Module ~p received unexpected info ~p", [?MODULE, Msg]),
-	{noreply, State}.
+	{ok, State}.
 
 
 -spec api_server_code_change(term()|{down, term()}, state(), term()) ->
