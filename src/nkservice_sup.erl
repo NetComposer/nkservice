@@ -18,6 +18,11 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Main supervisor
+%% This main supervisor starts a single supervisor, 
+%% registered as 'nkservice_all_srvs_sup'
+%% Each started service will be placed a supervisor here (see nkservice_srv_sup) 
+
 -module(nkservice_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).

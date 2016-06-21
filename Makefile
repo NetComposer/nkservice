@@ -1,5 +1,4 @@
 REPO ?= nkservice
-RELOADER ?= -s nkreloader
 
 .PHONY: deps release dev
 
@@ -29,7 +28,7 @@ eunit:
 	./rebar eunit skip_deps=true
 
 shell:
-	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkservice_app $(RELOADER)
+	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkservice_app -s nklib_reloader
 
 
 docs:
