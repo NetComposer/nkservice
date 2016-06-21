@@ -216,7 +216,7 @@ api_server_init(_NkPort, State) ->
 %% @doc Cmd "login" is received.
 %% You get the class and data fields, along with a server-generated session id
 %% You can accept the request setting an 'user' for this connection
-%% and, optionally, changing the session id (for example for session recoverty)
+%% and, optionally, changing the session id (for example for session recovery)
 -spec api_server_login(class(), data(), SessId::binary(), state()) ->
 	{true, User::binary(), state()} | 
 	{true, User::binary(), SessId::binary(), state()} | 

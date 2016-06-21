@@ -91,6 +91,13 @@ start_link(#{id:=Id}=Service) ->
             supervisor,
             [nkservice_srv_listen_sup]
         },
+        {luerl,
+            {nkservice_srv_luerl_sup, start_link, [Service]},
+            permanent,
+            infinity,
+            supervisor,
+            [nkservice_srv_luerl_sup]
+        },
         {server,
             {nkservice_srv, start_link, [Service]},
             permanent,

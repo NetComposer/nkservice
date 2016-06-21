@@ -10,6 +10,7 @@
 -pa deps/nklib/ebin
 -pa deps/nkpacket/ebin
 -pa deps/ranch/ebin
+-pa deps/luerl/ebin
 -pa ../nkservice/ebin
 
 ## Name of the node

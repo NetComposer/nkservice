@@ -57,6 +57,9 @@ syntax() ->
         api_server_timeout => {integer, 5, none},
         web_server => fun parse_web_server/3,
 
+        lua_script => path,
+        lua_instances => {integer, 1, 100},
+
         service_idle_timeout => pos_integer,
         service_connect_timeout => nat_integer,
         service_sctp_out_streams => nat_integer,

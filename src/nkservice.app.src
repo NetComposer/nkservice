@@ -10,6 +10,7 @@
         crypto,
         sasl,
         ssl,
+        luerl,
         lager,
         nkpacket,
         nkdocker

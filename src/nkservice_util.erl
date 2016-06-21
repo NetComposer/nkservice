@@ -32,6 +32,8 @@
 -define(API_TIMEOUT, 30).
 
 
+
+
 %% ===================================================================
 %% Public
 %% ===================================================================
@@ -125,7 +127,9 @@ config_service(Config, Service) ->
             {error, Error1} -> throw(Error1)
         end,
         GlobalKeys = [class, plugins, callback, log_level],
+        % Extract global key values from Config, if present
         Service2 = maps:with(GlobalKeys, Config2),
+        % Global keys are first-level keys on Service map
         Service3 = maps:merge(Service, Service2),
         Plugins = maps:get(plugins, Service3, []),
         CallBack = maps:get(callback, Service3, none),
@@ -135,17 +139,20 @@ config_service(Config, Service) ->
         end,
         OldPlugins = maps:get(plugins, Service, []),
         ToStop = lists:reverse(OldPlugins -- DownToTop),
+        % Stop old services no longer present
         Service4 = stop_plugins(ToStop, Service3),
         OldConfig = maps:get(config, Service4, #{}),
         UserConfig1 = maps:without(GlobalKeys, Config2),
         UserConfig2 = maps:merge(OldConfig, UserConfig1),
+        % Options not in global keys go to 'config' key
         Service5 = Service4#{plugins=>DownToTop, config=>UserConfig2},
         TopToDown = lists:reverse(DownToTop),
         Service6 = config_plugins(TopToDown, Service5),
         Service7 = start_plugins(DownToTop, OldPlugins, Service6),
         Defaults = #{log_level=>notice, listen_ids=>#{}},
         Service8 = maps:merge(Defaults, Service7),
-        {ok, Service8}
+        Service9 = set_luerl(Service8),
+        {ok, Service9}
     catch
         throw:Throw -> {error, Throw}
     end.
@@ -354,6 +361,62 @@ save_uuid(Path, Name, UUID) ->
             lager:warning("Could not write file ~s: ~p", [Path, Error]),
             ok
     end.
+
+
+%% @private
+set_luerl(#{config:=Config}=Service) ->
+    case Config of
+        #{lua_script:=Script} ->
+            Instances = maps:get(lua_instances, Config, 1),
+            case file:read_file(Script) of
+                {ok, Bin} ->
+                    set_luerl_start(Bin, Instances, Service);
+                {error, _} ->
+                    Script2 = case Script of
+                        <<"/", R/binary>> -> R;
+                        _ -> Script
+                    end,
+                    Base = code:priv_dir(nkservice) ++ "/scripts",
+                    Script3 = filename:join(Base, Script2),
+                    case file:read_file(Script3) of
+                        {ok, Bin} ->
+                            set_luerl_start(Bin, Instances, Service);
+                        {error, Error} ->
+                            lager:warning("Could not read file ~s", [Script3]),
+                            throw({script_read_error, Error, Script3})
+                    end
+            end;
+        _ ->
+            Service
+    end.
+
+% -record(luerl, {ttab,tfree,tnext,       %Table table, free, next
+%         ftab,ffree,fnext,       %Frame table, free, next
+%         g,              %Global table
+%         %%
+%         stk=[],             %Current stack
+%         %%
+%         meta=[],            %Data type metatables
+%         tag             %Unique tag
+%            }).
+
+%% @private
+set_luerl_start(Script, _Instances, Service) ->
+    State1 = luerl:init(),
+    try luerl:do(Script, State1) of
+        {R, State2} ->
+            lager:warning("R1: ~p", [R]),
+            % io:format("R2A: ~p\n", [State2#luerl.g]),
+            % io:format("R2: ~p\n", [luerl_emul:get_table_keys({tref, 4}, State2)]),
+            % io:format("R2: ~p\n", [luerl:get_table1([<<"package">>], State2)]),
+            % io:format("R2: ~p\n", [lager:pr(State2, ?MODULE)]),
+            % lager:warning("R3: ~p", [luerl:decode_list(R, State2)]),
+            Service
+    catch 
+        error:{lua_error, Reason, _} ->
+            throw({lua_error, Reason})
+    end.
+
 
 
 %% @doc Generates and compiles in-memory cache module
