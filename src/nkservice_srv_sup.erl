@@ -18,6 +18,12 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Service main supervisor
+%% Each service starts a supervisor named after the service, under
+%% 'nkservice_all_srvs_sup'
+%% Inside this supervisor, a supervisor for transports and a
+%% gen_server (nkservice_srv) is started
+%% Also, an ets table is started with the name of the service
 -module(nkservice_srv_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
@@ -35,11 +41,11 @@
 start_service(#{id:=Id}=Service) ->
     SupSpec = {
         Id,
-            {nkservice_srv_sup, start_link, [Service]},
-            permanent,
-            infinity,
-            supervisor,
-            [nkservice_srv_sup]
+        {?MODULE, start_link, [Service]},
+        permanent,
+        infinity,
+        supervisor,
+        [?MODULE]
     },
     case supervisor:start_child(nkservice_all_srvs_sup, SupSpec) of
         {ok, _SupPid} -> 

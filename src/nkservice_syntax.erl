@@ -24,6 +24,7 @@
 -export([app_syntax/0, app_defaults/0, syntax/0]).
 -export([parse_fun_listen/3, get_config/1]).
 
+-include_lib("nklib/include/nklib.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
   
@@ -52,6 +53,10 @@ syntax() ->
         callback => atom,
         log_level => log_level,
 
+        api_server => fun parse_api_server/3,
+        api_server_timeout => {integer, 5, none},
+        web_server => fun parse_web_server/3,
+
         service_idle_timeout => pos_integer,
         service_connect_timeout => nat_integer,
         service_sctp_out_streams => nat_integer,
@@ -64,6 +69,7 @@ syntax() ->
 
 
 %% @private Useful for nklib_config:parse_config/2
+%% @TODO: anybody is using this?
 parse_fun_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
     {ok, Multi};
 
@@ -74,6 +80,53 @@ parse_fun_listen(_Key, Multi, _Ctx) ->
         _ ->
             error
     end.
+
+
+
+parse_web_server(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
+    {ok, Multi};
+
+parse_web_server(web_server, Url, _Ctx) ->
+    Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
+    case nkpacket:multi_resolve(Url, Opts) of
+        {ok, List} -> {ok, List};
+        _ -> error
+    end.
+
+
+
+    %% @private
+parse_api_server(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
+    {ok, Multi};
+
+parse_api_server(_Key, Url, _Ctx) ->
+    case nklib_parse:uris(Url) of
+        error ->
+            error;
+        List ->
+            case make_api_listen(List, []) of
+                error ->
+                    error;
+                List2 ->
+                    case nkpacket:multi_resolve(List2, #{}) of
+                        {ok, List3} -> {ok, List3};
+                        _ -> error
+                    end
+            end
+    end.
+
+
+%% @private
+make_api_listen([], Acc) ->
+    lists:reverse(Acc);
+
+make_api_listen([#uri{scheme=nkapi}=Uri|Rest], Acc) ->
+    make_api_listen(Rest, [Uri|Acc]);
+
+make_api_listen([#uri{scheme=Sc, ext_opts=Opts}=Uri|Rest], Acc)
+        when Sc==tcp; Sc==tls; Sc==ws; Sc==wss ->
+    Uri2 = Uri#uri{scheme=nkapi, opts=[{<<"transport">>, Sc}|Opts]},
+    make_api_listen(Rest, [Uri2|Acc]).
 
 
 
