@@ -24,7 +24,7 @@
 
 -export([cmd/4, cmd_async/4, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([stop/1, start_ping/2, stop_ping/1]).
--export([find_user/1, find_sess_id/1]).
+-export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
@@ -113,10 +113,10 @@ find_user(User) ->
     nklib_proc:values({?MODULE, user, User2}).
 
 
--spec find_sess_id(binary()) ->
+-spec find_session(binary()) ->
     {ok, User::binary(), pid()} | not_found.
 
-find_sess_id(SessId) ->
+find_session(SessId) ->
     case nklib_proc:values({?MODULE, session, SessId}) of
         [{User, Pid}] -> {ok, User, Pid};
         [] -> not_found
@@ -291,7 +291,6 @@ conn_handle_cast({reply_ack, TId}, NkPort, State) ->
             ?LLOG(warning, "received reply response for unknown req", [], State), 
             {ok, State}
     end;
-
 
 conn_handle_cast(nkservice_stop, _NkPort, State) ->
     {stop, normal, State};

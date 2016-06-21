@@ -56,7 +56,7 @@
 
 %% @doc Starts a new verto session to FS
 -spec start(binary(), atom(), binary(), binary()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, SessId::binary(), pid()} | {error, term()}.
 
 start(Url, Class, User, Pass) ->
     ConnOpts = #{
@@ -71,8 +71,8 @@ start(Url, Class, User, Pass) ->
                 pass => nklib_util:to_binary(Pass)
             },
             case cmd(Pid, Class, login, Data) of
-                {ok, Res} ->
-                    {ok, Res, Pid};
+                {ok, #{<<"session_id">>:=SessId}} ->
+                    {ok, SessId, Pid};
                 {error, Error} ->
                     {error, Error}
             end;
