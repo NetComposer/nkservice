@@ -192,6 +192,8 @@ service_terminate(_Reason, State) ->
 error_code(not_implemented) 	-> {1000, <<"Not Implemented">>};
 error_code(unauthorized) 		-> {1001, <<"Unauthorized">>};
 error_code(not_authenticated)	-> {1002, <<"Not Authenticated">>};
+error_code(internal_error)		-> {1003, <<"Internal Error">>};
+error_code({syntax_error, Msg})	-> {1004, <<"Syntax Error: ", Msg/binary>>};
 error_code(_) 					-> {9999, <<"Unknown Error">>}.
 
 
