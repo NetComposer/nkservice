@@ -27,7 +27,7 @@
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
-		 api_server_login/4, api_server_cmd/5,
+		 api_server_login/3, api_server_cmd/5,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
 
@@ -189,9 +189,10 @@ service_terminate(_Reason, State) ->
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(not_implemented) -> {1000, <<"Not Implemented">>};
-error_code(unauthorized) 	-> {1001, <<"Unauthorized">>};
-error_code(_) 				-> {9999, <<"Unknown Error">>}.
+error_code(not_implemented) 	-> {1000, <<"Not Implemented">>};
+error_code(unauthorized) 		-> {1001, <<"Unauthorized">>};
+error_code(not_authenticated)	-> {1002, <<"Not Authenticated">>};
+error_code(_) 					-> {9999, <<"Unknown Error">>}.
 
 
 
@@ -213,16 +214,16 @@ api_server_init(_NkPort, State) ->
 	{ok, State}.
 
 
-%% @doc Cmd "login" is received.
+%% @doc Cmd "login" is received (class "core")
 %% You get the class and data fields, along with a server-generated session id
 %% You can accept the request setting an 'user' for this connection
 %% and, optionally, changing the session id (for example for session recoverty)
--spec api_server_login(class(), data(), SessId::binary(), state()) ->
+-spec api_server_login(data(), SessId::binary(), state()) ->
 	{true, User::binary(), state()} | 
 	{true, User::binary(), SessId::binary(), state()} | 
 	{false, error_code(), state()} | continue.
 
-api_server_login(_Class, _Data, _SessId, State) ->
+api_server_login(_Data, _SessId, State) ->
 	{false, unauthorized, State}.
 
 
