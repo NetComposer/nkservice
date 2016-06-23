@@ -78,7 +78,7 @@ get_item(Srv, Field) ->
             error({service_not_found, Srv})
     end.
 
-    
+
 
 
 %% ===================================================================
@@ -131,13 +131,14 @@ pending_msgs() ->
 %% @private
 init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
+    % io:format("SRV: ~p", [Service]),
     case nkservice_srv_listen_sup:update_transports(Service) of
         {ok, Listen} ->
             Service2 = Service#{listen_ids=>Listen},
             Class = maps:get(class, Service, undefined),
             nklib_proc:put(?MODULE, {Id, Class}),   
             nklib_proc:put({?MODULE, Name}, Id),   
-            nkservice_util:make_cache(Service2),
+            nkservice_config:make_cache(Service2),
             case Id:service_init(Service, #{id=>Id}) of
                 {ok, User} ->
                     % io:format("Started Service: ~p\n", [Service2]),
@@ -155,15 +156,23 @@ init(#{id:=Id, name:=Name}=Service) ->
     term().
 
 handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) ->
-    case nkservice_util:config_service(UserSpec, Service) of
+    case nkservice_config:config_service(UserSpec, Service) of
         {ok, Service2} ->
             case nkservice_srv_listen_sup:update_transports(Service2) of
                 {ok, Listen} ->
                     Service3 = Service2#{listen_ids=>Listen},
-                    nkservice_util:make_cache(Service3),
+                    nkservice_config:make_cache(Service3),
                     {Added, Removed} = get_diffs(Service3, Service),
-                    lager:info("Added config: ~p", [Added]),
-                    lager:info("Removed config: ~p", [Removed]),
+                    Added2 = case maps:is_key(lua_state, Added) of
+                        true -> Added#{lua_state:=<<"...">>};
+                        false -> Added
+                    end,
+                    Removed2 = case maps:is_key(lua_state, Removed) of
+                        true -> Removed#{lua_state:=<<"...">>};
+                        false -> Removed
+                    end,
+                    lager:info("Added config: ~p", [Added2]),
+                    lager:info("Removed config: ~p", [Removed2]),
                     % io:format("Updated Service: ~p\n", [Service3]),
                     {reply, ok, State#state{service=Service3}};
                 {error, Error} ->
@@ -175,7 +184,7 @@ handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) 
 
 handle_call(nkservice_stop_all, _From, #state{service=Service}=State) ->
     #{plugins:=Plugins} = Service,
-    Service2 = nkservice_util:stop_plugins(Plugins, Service),
+    Service2 = nkservice_config:stop_plugins(Plugins, Service),
     {reply, ok, State#state{service=Service2}};
 
 handle_call(nkservice_state, _From, State) ->
@@ -218,7 +227,7 @@ code_change(OldVsn, State, Extra) ->
 terminate(Reason, #state{id=Id, service=Service}=State) ->  
     catch nklib_gen_server:terminate(nkservice_terminate, Reason, State, ?P1, ?P2),
     #{name:=Name, plugins:=Plugins} = Service,  
-    _Service2 = nkservice_util:stop_plugins(Plugins, Service),
+    _Service2 = nkservice_config:stop_plugins(Plugins, Service),
     lager:debug("Service ~s (~p) has terminated (~p)", [Name, Id, Reason]).
     
 

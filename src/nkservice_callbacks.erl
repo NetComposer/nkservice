@@ -22,7 +22,8 @@
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
-		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
+		 plugin_listen/2, plugin_lua_modules/2, 
+		 plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([error_code/1]).
@@ -94,6 +95,20 @@ plugin_listen(Config, #{id:=SrvId}) ->
 	nkservice_util:get_core_listeners(SrvId, Config).
 
 
+%% @doc This function, if implemented, allows to set modules offering APIs 
+%% for the Lua Scripting Environment
+-spec plugin_lua_modules(config(), service()) ->
+	[{atom(), module()}].
+
+plugin_lua_modules(_Config, _Service) ->
+	[
+		{log, nkservice_luerl_lager},
+		{kv, nkservice_luerl_kv}
+	].
+
+
+
+
 %% @doc Called during service's start
 %% The plugin must start and can update the service's config
 -spec plugin_start(config(), service()) ->
@@ -101,6 +116,7 @@ plugin_listen(Config, #{id:=SrvId}) ->
 
 plugin_start(Config, _Service) ->
 	{ok, Config}.
+
 
 
 %% @doc Called during service's update
@@ -178,6 +194,13 @@ service_code_change(OldVsn, State, Extra) ->
 
 service_terminate(_Reason, State) ->
 	{ok, State}.
+
+
+
+%% ===================================================================
+%% External Server Callbacks
+%% ===================================================================
+
 
 
 
@@ -275,3 +298,5 @@ api_server_code_change(OldVsn, State, Extra) ->
 
 api_server_terminate(_Reason, State) ->
 	{ok, State}.
+
+

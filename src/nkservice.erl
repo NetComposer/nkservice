@@ -110,7 +110,7 @@ start(Name, UserSpec) ->
             name => Name,
             uuid => nkservice_util:update_uuid(Id, Name)
         },
-        case nkservice_util:config_service(UserSpec, Service) of
+        case nkservice_config:config_service(UserSpec, Service) of
             {ok, Service2} ->
                 case nkservice_srv_sup:start_service(Service2) of
                     ok ->
