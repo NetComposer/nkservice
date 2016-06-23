@@ -375,7 +375,7 @@ process_client_req(core, login, Data, TId, NkPort, State) ->
     end;
 
 process_client_req(_Class, _Cmd, _Data, TId, NkPort, #state{session_id = <<>>}=State) ->
-    send_reply_ok(not_authenticated, TId, NkPort, State);
+    send_reply_error(not_authenticated, TId, NkPort, State);
 
 process_client_req(Class, Cmd, Data, TId, NkPort, State) ->
     case handle(api_server_cmd, [Class, Cmd, Data, TId], State) of
