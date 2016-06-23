@@ -22,8 +22,7 @@
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
-		 plugin_listen/2, plugin_lua_modules/2, 
-		 plugin_start/2, plugin_update/2, plugin_stop/2]).
+		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([error_code/1]).
@@ -212,9 +211,12 @@ service_terminate(_Reason, State) ->
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(not_implemented) -> {1000, <<"Not Implemented">>};
-error_code(unauthorized) 	-> {1001, <<"Unauthorized">>};
-error_code(_) 				-> {9999, <<"Unknown Error">>}.
+error_code(not_implemented) 	-> {1000, <<"Not Implemented">>};
+error_code(unauthorized) 		-> {1001, <<"Unauthorized">>};
+error_code(not_authenticated)	-> {1002, <<"Not Authenticated">>};
+error_code(internal_error)		-> {1003, <<"Internal Error">>};
+error_code({syntax_error, Msg})	-> {1004, <<"Syntax Error: ", Msg/binary>>};
+error_code(_) 					-> {9999, <<"Unknown Error">>}.
 
 
 
