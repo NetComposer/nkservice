@@ -139,6 +139,7 @@ find_session(SessId) ->
 -record(state, {
     srv_id :: nkservice:id(),
     user = <<>> :: binary(),
+    session_id = <<>> :: binary(),
     trans :: #{tid() => #trans{}},
     tid :: integer(),
     ping :: integer() | undefined,
@@ -348,10 +349,10 @@ conn_stop(Reason, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-process_client_req(Class, login, Data, TId, NkPort, State) ->
+process_client_req(core, login, Data, TId, NkPort, State) ->
     _ = send_ack(TId, NkPort, State),
     SessId = nklib_util:uuid_4122(),
-    case handle(api_server_login, [Class, Data, SessId], State) of
+    case handle(api_server_login, [Data, SessId], State) of
         {true, User, State2} ->
             SessId2 = SessId;
         {true, User, SessId2, State2} ->
@@ -366,12 +367,15 @@ process_client_req(Class, login, Data, TId, NkPort, State) ->
         _ ->
             #state{user_state=UserState2} = State2,
             UserState3 = UserState2#{user=>User, session_id=>SessId2},
-            State3 = State2#state{user_state=UserState3, user=User},
+            State3 = State2#state{user_state=UserState3, user=User, session_id=SessId2},
             nklib_proc:put(?MODULE, {User, SessId2}),
             nklib_proc:put({?MODULE, user, User}, SessId2),
             true = nklib_proc:reg({?MODULE, session, SessId2}, User),
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
     end;
+
+process_client_req(_Class, _Cmd, _Data, TId, NkPort, #state{session_id = <<>>}=State) ->
+    send_reply_ok(not_authenticated, TId, NkPort, State);
 
 process_client_req(Class, Cmd, Data, TId, NkPort, State) ->
     case handle(api_server_cmd, [Class, Cmd, Data, TId], State) of
