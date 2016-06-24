@@ -30,7 +30,7 @@
 		 api_server_login/3, api_server_cmd/5, api_server_event/6,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_cmd/6, api_cmd_syntax/3, api_cmd_defaults/3, api_cmd_mandatory/3]).
+-export([api_cmd/5, api_cmd_syntax/3, api_cmd_defaults/3, api_cmd_mandatory/3]).
 
 -export_type([continue/0]).
 
@@ -197,7 +197,8 @@ error_code(internal_error)		-> {1003, <<"Internal Error">>};
 error_code(unknown_cmd)			-> {1003, <<"Unknown Command">>};
 error_code(unknown_class)		-> {1003, <<"Unknown Class">>};
 error_code(no_event_listener)	-> {1003, <<"No Event Listener">>};
-error_code({syntax_error, Msg})	-> {1004, <<"Syntax Error: ", Msg/binary>>};
+error_code({syntax_error, Txt})	-> {1004, <<"Syntax Error: ", Txt/binary>>};
+error_code({missing_field, Txt})-> {1004, <<"Missing Field: ", Txt/binary>>};
 error_code(_) 					-> {9999, <<"Unknown Error">>}.
 
 
@@ -238,8 +239,12 @@ api_server_login(_Data, _SessId, State) ->
 	{ok, data(), state()} | {ack, state()} | 
 	{error, error_code(), state()} | continue().
 
-api_server_cmd(core, Cmd, Data, _Tid, #{srv_id:=SrvId}=State) ->
-	nkservice_api:cmd(SrvId, Cmd, Data, State);
+api_server_cmd(core, Cmd, Data, TId, #{srv_id:=SrvId}=State) ->
+	case nkservice_api:launch(SrvId, core, Cmd, Data, TId) of
+		{ok, Reply} -> {ok, Reply, State};
+		ack -> {ack, State};
+		{error, Error} -> {error, Error, State}
+	end;
 	
 api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
     {error, not_implemented, State}.
@@ -276,6 +281,10 @@ api_server_handle_cast(Msg, State) ->
 -spec api_server_handle_info(term(), state()) ->
 	{ok, state()} | continue().
 
+api_server_handle_info({nkservice_event, Class, Type, Sub, ObjId, Body}, State) ->
+	nkservice_api_server:event(self(), Class, Type, Sub, ObjId, Body),
+	{ok, State};
+
 api_server_handle_info(Msg, State) ->
     lager:notice("Module ~p received unexpected info ~p", [?MODULE, Msg]),
 	{ok, State}.
@@ -304,11 +313,14 @@ api_server_terminate(_Reason, State) ->
 %% @doc Called when a new API command has arrived and called nkservice_api:launch/6
 %% The request is parsed, and if ok, will call this callback
 -spec api_cmd(nkservice:id(), nkservice_api:class(), nkservice_api:cmd(),
-			  map(), term(), term()) ->
-	{ok, map(), State::term()} | {error, nkservice:error_code(), State::term()}.
+			  map(), term()) ->
+	{ok, map()} | ack | {error, nkservice:error_code()}.
 
-api_cmd(SrvId, Class, Cmd, Parsed, TId, State) ->
-	nkservice_api:cmd(SrvId, Class, Cmd, Parsed, TId, State).
+api_cmd(SrvId, core, Cmd, Parsed, _TId) ->
+	nkservice_api:cmd(SrvId, Cmd, Parsed);
+
+api_cmd(_SrvId, _Class, _Cmd, _Parsed, _TId) ->
+	{error, not_implemented}.
 
 
 %% @doc Called to get the syntax for an external API command
@@ -316,7 +328,7 @@ api_cmd(SrvId, Class, Cmd, Parsed, TId, State) ->
 	{ok, map()}.
 
 api_cmd_syntax(core, Cmd, _Data) ->
-	nkservice_api:syntax(Cmd);
+	{ok, nkservice_api:syntax(Cmd)};
 	
 api_cmd_syntax(_Class, _Cmd, _Data) ->
 	{ok, #{}}.
@@ -327,7 +339,7 @@ api_cmd_syntax(_Class, _Cmd, _Data) ->
 	{ok, map()}.
 
 api_cmd_defaults(core, Cmd, _Data) ->
-	nkservice_api:defaults(Cmd);
+	{ok, nkservice_api:defaults(Cmd)};
 	
 api_cmd_defaults(_Class, _Cmd, _Data) ->
 	{ok, #{}}.
@@ -338,7 +350,7 @@ api_cmd_defaults(_Class, _Cmd, _Data) ->
 	{ok, [atom()]}.
 
 api_cmd_mandatory(core, Cmd, _Data) ->
-	nkservice_api:defaults(Cmd);
+	{ok, nkservice_api:mandatory(Cmd)};
 	
 api_cmd_mandatory(_Class, _Cmd, _Data) ->
 	{ok, []}.

@@ -28,6 +28,7 @@
          handle_cast/2, handle_info/2]).
 % -export([atest/0]).
 
+-compile([export_all]).
 
 %% ===================================================================
 %% Types
@@ -60,11 +61,15 @@ send_single(Class, Type, Sub, Id) ->
 
 send_single(Class, Type, Sub, Id, Body) ->
     % In each search, we search for Id and Id=='*'
-    case do_send_single(Class, Type, Sub, Id, Body) of
+    Id2 = case Id of
+        '*' -> '*';
+        _ -> nklib_util:to_binary(Id)
+    end,
+    case do_send_single(Class, Type, Sub, Id2, Body) of
         not_found ->
-            case do_send_single(Class, Type, '*', Id, Body) of
+            case do_send_single(Class, Type, '*', Id2, Body) of
                 not_found ->
-                    do_send_single(Class, '*', '*', Id, Body);
+                    do_send_single(Class, '*', '*', Id2, Body);
                 ok ->
                     ok
             end;
@@ -86,9 +91,13 @@ send_all(Class, Type, Sub, Id) ->
     ok.
 
 send_all(Class, Type, Sub, Id, Body) ->
-    do_send_all(Class, Type, Sub, Id, Body),
-    do_send_all(Class, Type, '*', Id, Body),
-    do_send_all(Class, '*', '*', Id, Body).
+    Id2 = case Id of
+        '*' -> '*';
+        _ -> nklib_util:to_binary(Id)
+    end,
+    do_send_all(Class, Type, Sub, Id2, Body),
+    do_send_all(Class, Type, '*', Id2, Body),
+    do_send_all(Class, '*', '*', Id2, Body).
 
 %% @doc
 -spec reg(class(), type(), sub(), obj_id(), body()) ->
@@ -165,14 +174,15 @@ init([Class, Type, Sub]) ->
 
 handle_call({send_single, Type, Sub, Id, Body}, _From, State) ->
     #state{class=Class, regs=Regs} = State,
-    % lager:error("Event single: ~p:~p:~p:~p (~p:~p)", 
-    %             [Class, Type, Sub, Id, State#state.type, State#state.sub]),
     PidTerms = case maps:get(Id, Regs, []) of
         [] ->
             maps:get('*', Regs, []);
         List ->
             List
     end,
+    lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
+                [Class, Type, Sub, Id, State#state.type, State#state.sub,
+                 PidTerms]),
     case PidTerms of
         [] ->
             {reply, not_found, State};
@@ -274,6 +284,7 @@ terminate(_Reason, _State) ->
 do_send_single(Class, Type, Sub, Id, Body) ->
     case find_server(Class, Type, Sub) of
         {ok, Server} -> 
+            lager:error("S: ~p", [Server]),
             gen_server:call(Server, {send_single, Type, Sub, Id, Body});
         not_found -> 
             not_found
@@ -390,7 +401,7 @@ send_event(Class, Type, Sub, Id, Body, Pid, RegBody) ->
 %% ===================================================================
 
 
--define(TEST, 1).
+% -define(TEST, 1).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
