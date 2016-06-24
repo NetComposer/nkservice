@@ -60,11 +60,16 @@ parse_transports(Spec) ->
 %% @private
 get_core_listeners(SrvId, Config) ->
     Web1 = maps:get(web_server, Config, []),
-    WebPath1 = list_to_binary(code:priv_dir(nkservice)),
-    WebPath2 = <<WebPath1/binary, "/www">>,
+    WebPath = case Config of
+        #{web_server_path:=UserPath} -> 
+            UserPath;
+        _ ->
+            Priv = list_to_binary(code:priv_dir(nkservice)),
+            <<Priv/binary, "/www">>
+    end,
     WebOpts2 = #{
         class => {nkservice_web_server, SrvId},
-        http_proto => {static, #{path=>WebPath2, index_file=><<"index.html">>}}
+        http_proto => {static, #{path=>WebPath, index_file=><<"index.html">>}}
     },
     Web2 = [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- Web1],
     Api1 = maps:get(api_server, Config, []),

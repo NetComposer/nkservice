@@ -56,6 +56,7 @@ syntax() ->
         api_server => fun parse_api_server/3,
         api_server_timeout => {integer, 5, none},
         web_server => fun parse_web_server/3,
+        web_server_path => path,
 
         lua_script => path,
         lua_instances => {integer, 1, 100},
