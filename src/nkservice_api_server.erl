@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([cmd/4, cmd_async/4, reply_ok/3, reply_error/3, reply_ack/2]).
--export([stop/1, start_ping/2, stop_ping/1]).
+-export([event/6, stop/1, start_ping/2, stop_ping/1]).
 -export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -32,7 +32,8 @@
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Admin Server (~s) "++Txt, [State#state.user | Args])).
+    lager:Type("NkMEDIA Admin Server (~s, ~s) "++Txt, 
+               [State#state.user, State#state.session_id | Args])).
 
 -define(PRINT(Txt, Args, State), 
         print(Txt, Args, State),    % Uncomment this for detailed logs
@@ -58,43 +59,87 @@
 %% Public
 %% ===================================================================
 
-%% @doc
+%% @doc Send a command and wait a response
+-spec cmd(pid(), nkservice_api:class(), nkservice_api:cmd(), map()) ->
+    {ok, map()} | {error, term()}.
+
 cmd(Pid, Class, Cmd, Data) ->
     do_call(Pid, {nkservice_cmd, Class, Cmd, Data}).
 
-%% @doc
+
+%% @doc Send a command and don't wait for a response
+-spec cmd_async(pid(), nkservice_api:class(), nkservice_api:cmd(), map()) ->
+    ok.
+
 cmd_async(Pid, Class, Cmd, Data) ->
     gen_server:cast(Pid, {nkservice_cmd, Class, Cmd, Data}).
 
 
-%% @doc
+%% @doc Sends an ok reply to a command (when you reply 'ack' in callbacks)
+-spec reply_ok(pid(), term(), map()) ->
+    ok.
+
 reply_ok(Pid, TId, Data) ->
     gen_server:cast(Pid, {reply_ok, TId, Data}).
 
 
-%% @doc
+%% @doc Sends an error reply to a command (when you reply 'ack' in callbacks)
+-spec reply_error(pid(), term(), nkservice:error_code()) ->
+    ok.
+
 reply_error(Pid, TId, Code) ->
     gen_server:cast(Pid, {reply_error, TId, Code}).
 
+
+%% @doc Sends another ACK to a command (when you reply 'ack' in callbacks)
+%% to extend timeout
+-spec reply_ack(pid(), term()) ->
+    ok.
 
 %% @doc Send to extend the timeout for the transaction 
 reply_ack(Pid, TId) ->
     gen_server:cast(Pid, {reply_ack, TId}).
 
 
-%% @doc Stops the server
-stop(Pid) ->
-    gen_server:cast(Pid, nkservice_stop).
+%% @doc Sends an event asynchronously
+-spec event(pid(), nkservice_api:class(), nkservice_event:type(), 
+            nkservice_event:sub(), nkservice_event:oibj_id(), 
+            nkservice_event:body()) ->
+    ok.
+
+event(Pid, Class, Type, Sub, ObjId, Body) when is_map(Body) ->
+    Data1 = #{
+        type => Type,
+        sub => Sub,
+        obj_id => ObjId
+    },
+    Data2 = case map_size(Body) of
+        0 -> Data1;
+        _ -> Data1#{body=>Body}
+    end,
+    cmd_async(Pid, Class, event, Data2).
 
 
-%% @doc 
-start_ping(Pid, Time) ->
-    gen_server:cast(Pid, {nkservice_start_ping, Time}).
+%% @doc Start sending pings
+-spec start_ping(pid(), integer()) ->
+    ok.
 
+start_ping(Pid, Secs) ->
+    gen_server:cast(Pid, {nkservice_start_ping, Secs}).
+
+
+%% @doc Stop sending pings
+-spec stop_ping(pid()) ->
+    ok.
 
 %% @doc 
 stop_ping(Pid) ->
     gen_server:cast(Pid, nkservice_stop_ping).
+
+
+%% @doc Stops the server
+stop(Pid) ->
+    gen_server:cast(Pid, nkservice_stop).
 
 
 %% @private
@@ -372,6 +417,19 @@ process_client_req(core, login, Data, TId, NkPort, State) ->
             nklib_proc:put({?MODULE, user, User}, SessId2),
             true = nklib_proc:reg({?MODULE, session, SessId2}, User),
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
+    end;
+
+process_client_req(Class, event, #{<<"type">>:=Type, <<"sub">>:=Sub}=Data, 
+                   TId, NkPort, State) ->
+    ObjId = maps:get(<<"obj_id">>, Data, <<>>),
+    Body = maps:get(<<"body">>, Data, #{}),
+    case send_reply_ok(#{}, TId, NkPort, State) of
+        {ok, State2} ->
+            Event = [Class, Type, Sub, ObjId, Body],
+            {ok, State3} = handle(api_server_event, Event, State2),
+            {ok, State3};
+        Other ->
+            Other
     end;
 
 process_client_req(_Class, _Cmd, _Data, TId, NkPort, #state{session_id = <<>>}=State) ->

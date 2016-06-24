@@ -22,7 +22,7 @@
 -module(nkservice_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
--export([event_single/4, event_all/4, reg/5, unreg/4]).
+-export([send_single/4, send_single/5, send_all/4, send_all/5, reg/5, unreg/4]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, 
          handle_cast/2, handle_info/2]).
@@ -36,7 +36,7 @@
 -type class() :: atom().
 -type type() :: atom() | '*'.
 -type sub() :: atom() | '*'.
--type id() :: term() | '*'.
+-type obj_id() :: term().
 -type body() :: term().
 
 
@@ -47,16 +47,24 @@
 
 
 %% @doc
--spec event_single(class(), type(), sub(), id()) ->
+-spec send_single(class(), type(), sub(), obj_id()) ->
     ok | not_found.
 
-event_single(Class, Type, Sub, Id) ->
+send_single(Class, Type, Sub, Id) ->
+    send_single(Class, Type, Sub, Id, #{}).
+
+
+%% @doc
+-spec send_single(class(), type(), sub(), obj_id(), body()) ->
+    ok | not_found.
+
+send_single(Class, Type, Sub, Id, Body) ->
     % In each search, we search for Id and Id=='*'
-    case do_event_single(Class, Type, Sub, Id) of
+    case do_send_single(Class, Type, Sub, Id, Body) of
         not_found ->
-            case do_event_single(Class, Type, '*', Id) of
+            case do_send_single(Class, Type, '*', Id, Body) of
                 not_found ->
-                    do_event_single(Class, '*', '*', Id);
+                    do_send_single(Class, '*', '*', Id, Body);
                 ok ->
                     ok
             end;
@@ -66,16 +74,24 @@ event_single(Class, Type, Sub, Id) ->
 
 
 %% @doc
--spec event_all(class(), type(), sub(), id()) ->
-    ok.
+-spec send_all(class(), type(), sub(), obj_id()) ->
+    ok | not_found.
 
-event_all(Class, Type, Sub, Id) ->
-    do_event_all(Class, Type, Sub, Id),
-    do_event_all(Class, Type, '*', Id),
-    do_event_all(Class, '*', '*', Id).
+send_all(Class, Type, Sub, Id) ->
+    send_all(Class, Type, Sub, Id, #{}).
+
 
 %% @doc
--spec reg(class(), type(), sub(), id(), body()) ->
+-spec send_all(class(), type(), sub(), obj_id(), body()) ->
+    ok.
+
+send_all(Class, Type, Sub, Id, Body) ->
+    do_send_all(Class, Type, Sub, Id, Body),
+    do_send_all(Class, Type, '*', Id, Body),
+    do_send_all(Class, '*', '*', Id, Body).
+
+%% @doc
+-spec reg(class(), type(), sub(), obj_id(), body()) ->
     ok.
 
 reg(Class, Type, Sub, Id, Body) ->
@@ -84,7 +100,7 @@ reg(Class, Type, Sub, Id, Body) ->
 
 
 %% @doc
--spec unreg(class(), type(), sub(), id()) ->
+-spec unreg(class(), type(), sub(), obj_id()) ->
     ok.
 
 unreg(Class, Type, Sub, Id) ->
@@ -123,8 +139,8 @@ dump(Class, Type, Sub) ->
     class :: atom(),
     type :: atom(),
     sub :: atom(),
-    regs = #{} :: #{id() => [{pid(), term()}]},
-    pids = #{} :: #{pid() => {reference(), [id()]}}
+    regs = #{} :: #{obj_id() => [{pid(), term()}]},
+    pids = #{} :: #{pid() => {reference(), [obj_id()]}}
 }).
 
 %% @private
@@ -147,7 +163,8 @@ init([Class, Type, Sub]) ->
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}} | {noreply, #state{}} | {stop, normal, ok, #state{}}.
 
-handle_call({event_single, Type, Sub, Id}, _From, #state{class=Class, regs=Regs}=State) ->
+handle_call({send_single, Type, Sub, Id, Body}, _From, State) ->
+    #state{class=Class, regs=Regs} = State,
     % lager:error("Event single: ~p:~p:~p:~p (~p:~p)", 
     %             [Class, Type, Sub, Id, State#state.type, State#state.sub]),
     PidTerms = case maps:get(Id, Regs, []) of
@@ -161,8 +178,8 @@ handle_call({event_single, Type, Sub, Id}, _From, #state{class=Class, regs=Regs}
             {reply, not_found, State};
         _ ->
             Pos = nklib_util:l_timestamp() rem length(PidTerms) + 1,
-            {Pid, Body} = lists:nth(Pos, PidTerms),
-            send_event(Class, Type, Sub, Id, Body, Pid),
+            {Pid, RegBody} = lists:nth(Pos, PidTerms),
+            send_event(Class, Type, Sub, Id, Body, Pid, RegBody),
             {reply, ok, State}
     end;
 
@@ -178,16 +195,18 @@ handle_call(Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}}.
 
-handle_cast({event_all, Type, Sub, Id}, #state{class=Class, regs=Regs}=State) ->
+handle_cast({send_all, Type, Sub, Id, Body}, #state{class=Class, regs=Regs}=State) ->
     % lager:error("Event all: ~p:~p:~p:~p (~p:~p)", 
     %             [Class, Type, Sub, Id, State#state.type, State#state.sub]),
     PidTerms1 = maps:get(Id, Regs, []),
     lists:foreach(
-        fun({Pid, Body}) -> send_event(Class, Type, Sub, Id, Body, Pid) end,
+        fun({Pid, RegBody}) -> 
+            send_event(Class, Type, Sub, Id, Body, Pid, RegBody) end,
         PidTerms1),
     PidTerms2 = maps:get('*', Regs, []) -- PidTerms1,
     lists:foreach(
-        fun({Pid, Body}) -> send_event(Class, Type, Sub, Id, Body, Pid) end,
+        fun({Pid, RegBody}) -> 
+            send_event(Class, Type, Sub, Id, Body, Pid, RegBody) end,
         PidTerms2),
     {noreply, State};
 
@@ -252,20 +271,20 @@ terminate(_Reason, _State) ->
 
 
 %% @private
-do_event_single(Class, Type, Sub, Id) ->
+do_send_single(Class, Type, Sub, Id, Body) ->
     case find_server(Class, Type, Sub) of
         {ok, Server} -> 
-            gen_server:call(Server, {event_single, Type, Sub, Id});
+            gen_server:call(Server, {send_single, Type, Sub, Id, Body});
         not_found -> 
             not_found
     end.
 
 
 %% @private
-do_event_all(Class, Type, Sub, Id) ->
+do_send_all(Class, Type, Sub, Id, Body) ->
     case find_server(Class, Type, Sub) of
         {ok, Server} -> 
-            gen_server:cast(Server, {event_all, Type, Sub, Id});
+            gen_server:cast(Server, {send_all, Type, Sub, Id, Body});
         not_found -> 
             ok
     end.
@@ -352,10 +371,17 @@ do_unreg([Id|Rest], Pid, Regs, Pids) ->
 
 
 %% @private
-send_event(Class, Type, Sub, Id, Body, Pid) ->
+send_event(Class, Type, Sub, Id, Body, Pid, RegBody) ->
     % lager:info("Sending event ~p:~p:~p:~p to ~p (~p)",
     %            [Class, Type, Sub, Id, Pid, Body]),
-    Pid ! {nkservice_event, Class, Type, Sub, Id, Body}.
+    Body2 = case is_map(Body) andalso is_map(RegBody) of
+        true -> maps:merge(RegBody, Body);
+        false when map_size(Body)==0 -> RegBody;
+        false -> RegBody
+    end,
+    Pid ! {nkservice_event, Class, Type, Sub, Id, Body2}.
+
+
 
 
 
@@ -393,6 +419,8 @@ basic_test_() ->
         ]
     }.
 
+% -compile([export_all]).
+
 test1() ->
     Self = self(),
     reg(c, t, s, id1, b1),
@@ -415,7 +443,8 @@ test1() ->
 
     unreg(c, t, s, id3),
     unreg(c, t, s, id2),
-    {[], []} = dump(c, t, s).
+    {[], []} = dump(c, t, s),
+    ok.
 
 
 test2() ->
@@ -430,7 +459,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            event_single(c, t, s, 0),
+            send_single(c, t, s, 0),
             receive 
                 {c, _RP1, 0, RB1} -> true = lists:member(RB1, [b1, b1b, b2, b3, b3b, b7])
                 after 100 -> error(?LINE) 
@@ -440,7 +469,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            event_single(c, t, s, 1),
+            send_single(c, t, s, 1),
             receive 
                 {c, _RP2, 1, RB2} -> true = lists:member(RB2, [b1, b1b, b7])
                 after 100 -> error(?LINE) 
@@ -450,7 +479,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            event_single(c, t, s, 2),
+            send_single(c, t, s, 2),
             receive 
                 {c, RP3, 2, RB2} -> 
                     true = lists:member(RB2, [b2, b7]),
@@ -463,7 +492,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            event_single(c, t, s, 3),
+            send_single(c, t, s, 3),
             receive 
                 {c, _RP3, 3, RB2} -> true = lists:member(RB2, [b3, b3b, b7])
                 after 100 -> error(?LINE) 
@@ -473,7 +502,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            event_single(c, t, s, 25),
+            send_single(c, t, s, 25),
             receive 
                 {c, P7, 25, b7} -> ok
                 after 100 -> error(?LINE) 
@@ -481,7 +510,7 @@ test2() ->
         end,
         lists:seq(1, 100)),
 
-    event_all(c, t, s, 0),
+    send_all(c, t, s, 0),
     receive {c, P1, 0, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P2, 0, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P3, 0, b1b} -> ok after 100 -> error(?LINE) end,
@@ -490,22 +519,22 @@ test2() ->
     receive {c, P6, 0, b3b} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 0, b7} -> ok after 100 -> error(?LINE) end,
 
-    event_all(c, t, s, 1),
+    send_all(c, t, s, 1),
     receive {c, P1, 1, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P2, 1, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P3, 1, b1b} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 1, b7} -> ok after 100 -> error(?LINE) end,
 
-    event_all(c, t, s, 2),
+    send_all(c, t, s, 2),
     receive {c, P4, 2, b2} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 2, b7} -> ok after 100 -> error(?LINE) end,
 
-    event_all(c, t, s, 3),
+    send_all(c, t, s, 3),
     receive {c, P5, 3, b3} -> ok after 100 -> error(?LINE) end,
     receive {c, P6, 3, b3b} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 3, b7} -> ok after 100 -> error(?LINE) end,
 
-    event_all(c, t, s, 33),
+    send_all(c, t, s, 33),
     receive {c, P7, 33, b7} -> ok after 100 -> error(?LINE) end,
 
     receive _ -> error(?LINE) after 100 -> ok end,
@@ -564,7 +593,7 @@ test3() ->
         ]
     } = 
         dump(c, t, s),
-    ok,
+
     [P ! stop || P <- [P1, P2, P3, P4, P5, P6, P7]],
     ok.
 
