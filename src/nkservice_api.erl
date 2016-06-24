@@ -23,7 +23,7 @@
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([class/0, cmd/0]).
--export([launch/6, cmd/4]).
+-export([launch/5, cmd/3]).
 -export([syntax/1, defaults/1, mandatory/1]).
 
 %% ===================================================================
@@ -33,35 +33,33 @@
 -type class() :: atom().
 -type cmd() :: atom().
 
--type state() ::
-    #{
-    }.
-
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
 %% @doc This functions launches the processing of an external API request
--spec launch(nkservice:id(), class(), cmd(), map()|list(), term(), term()) ->
-    {ok, term()} | {error, term()} | {syntax, binary()}.
+%% It parses the request, and if it is valid, calls SrvId:api_cmd()
+-spec launch(nkservice:id(), class(), cmd(), map()|list(), term()) ->
+    {ok, term()} | ack | {error, nkservice:error_code()}.
 
-launch(SrvId, Class, Cmd, Data, TId, State) ->
+launch(SrvId, Class, Cmd, Data, TId) ->
+    {ok, Syntax} = SrvId:api_cmd_syntax(Class, Cmd, Data),
+    {ok, Defaults} = SrvId:api_cmd_defaults(Class, Cmd, Data),
+    {ok, Mandatory} = SrvId:api_cmd_mandatory(Class, Cmd, Data), 
     Opts = #{
         return => map, 
-        defaults => SrvId:api_cmd_defaults(Class, Cmd, Data),
-        mandatory => SrvId:api_cmd_mandatory(Class, Cmd, Data)
+        defaults => Defaults,
+        mandatory => Mandatory
     },
-    Syntax = SrvId:api_cmd_syntax(Class, Cmd, Data),
     case nklib_config:parse_config(Data, Syntax, Opts) of
         {ok, Parsed, _} ->
-            SrvId:api_cmd(SrvId, Class, Cmd, Parsed, TId, State);
+            SrvId:api_cmd(SrvId, Class, Cmd, Parsed, TId);
         {error, {syntax_error, Error}} ->
-            {syntax, Error};
-        {error, Error} ->
-            error(Error)
+            {error, {syntax_error, Error}};
+        {error, {missing_mandatory_field, Field}} ->
+            {error, {missing_field, Field}}
     end.
-
 
 
 
@@ -71,38 +69,38 @@ launch(SrvId, Class, Cmd, Data, TId, State) ->
 
 
 %% @doc
--spec cmd(nkservice:id(), atom(), Data::map(), state()) ->
-    {ok, map(), state()} | {error, nkservice:error_code(), state()}.
+-spec cmd(nkservice:id(), atom(), Data::map()) ->
+    {ok, map()} | {error, nkservice:error_code()}.
 
-cmd(_SrvId, register, Data, State) ->
-    #{class:=Class, type:=Type, sub:=Sub, id:=Id} = Data,
+cmd(_SrvId, register, Data) ->
+    #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
     Body = maps:get(body, Data, #{}),
     nkservice_events:reg(Class, Type, Sub, Id, Body),
-    {ok, #{}, State};
+    {ok, #{}};
 
-cmd(_SrvId, unregister, Data, State) ->
-    #{class:=Class, type:=Type, sub:=Sub, id:=Id} = Data,
+cmd(_SrvId, unregister, Data) ->
+    #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
     nkservice_events:unreg(Class, Type, Sub, Id),
-    {ok, #{}, State};
+    {ok, #{}};
 
-cmd(_SrvId, send_event, Data, State) ->
-    #{class:=Class, type:=Type, sub:=Sub, id:=Id} = Data,
+cmd(_SrvId, send_event, Data) ->
+    #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
     Body = maps:get(body, Data, #{}),
     case maps:get(broadcast, Data, false) of
         true ->
             nkservice_events:send_all(Class, Type, Sub, Id, Body),
-            {ok, #{}, State};
+            {ok, #{}};
         false ->
             case nkservice_events:send_single(Class, Type, Sub, Id, Body) of
                 ok ->
-                    {ok, #{}, State};
+                    {ok, #{}};
                 not_found ->
-                    {error, no_event_listener, State}
+                    {error, no_event_listener}
             end
     end;
 
-cmd(_SrvId, _Other, _Data, State) ->
-    {error, unknown_cmd, State}.
+cmd(_SrvId, _Other, _Data) ->
+    {error, unknown_cmd}.
 
 
 
@@ -117,7 +115,7 @@ syntax(send_event) ->
         class => atom,
         type => atom,
         sub => atom,
-        id => binary,
+        obj_id => binary,
         broadcast => boolean,
         body => any
     };
@@ -127,7 +125,7 @@ syntax(register) ->
         class => atom,
         type => atom,
         sub => atom,
-        id => binary,
+        obj_id => binary,
         body => any
     };
 
@@ -136,23 +134,23 @@ syntax(unregister) ->
         class => atom,
         type => atom,
         sub => atom,
-        id => binary
-    }.
+        obj_id => binary
+    };
+
+syntax(_) ->
+    #{}.
+
 
 %% @private
 defaults(register) ->
     #{
         type => '*',
         sub => '*',
-        id => '*'
+        obj_id => '*'
     };
 
 defaults(unregister) ->
-    #{
-        type => '*',
-        sub => '*',
-        id => '*'
-    };
+    defaults(register);
 
 defaults(_) ->
     #{}.
@@ -160,9 +158,15 @@ defaults(_) ->
 
 %% @private
 mandatory(send_event) ->
-    [class, type, sub, id];
+    [class, type, sub, obj_id];
 
 mandatory(register) ->
-    [class].
+    [class];
+
+mandatory(unregister) ->
+    mandatory(register);
+
+mandatory(_) ->
+    [].
 
 

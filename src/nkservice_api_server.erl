@@ -32,8 +32,8 @@
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Admin Server (~s, ~s) "++Txt, 
-               [State#state.user, State#state.session_id | Args])).
+    lager:Type("NkMEDIA Admin Server ~s (~s) "++Txt, 
+               [State#state.session_id, State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
         print(Txt, Args, State),    % Uncomment this for detailed logs
@@ -287,8 +287,13 @@ conn_parse({text, Text}, NkPort, State) ->
     {ok, nkpacket:outcoming()} | continue | {error, term()}.
 
 conn_encode(Msg, _NkPort) when is_map(Msg) ->
-    Json = nklib_json:encode(Msg),
-    {ok, {text, Json}};
+    case nklib_json:encode(Msg) of
+        error ->
+            lager:warning("invalid json in ~p: ~p", [?MODULE, Msg]),
+            {error, invalid_json};
+        Json ->
+            {ok, {text, Json}}
+    end;
 
 conn_encode(Msg, _NkPort) when is_binary(Msg) ->
     {ok, {text, Msg}}.
@@ -383,8 +388,11 @@ conn_handle_info(Info, _NkPort, State) ->
 -spec conn_stop(Reason::term(), nkpacket:nkport(), #state{}) ->
     ok.
 
-conn_stop(Reason, _NkPort, State) ->
-    ?LLOG(info, "server stop (~p)", [Reason], State),
+conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
+    lists:foreach(
+        fun({_, #trans{from=From}}) -> nklib_util:reply(From, {error, stopped}) end,
+        maps:to_list(Trans)),
+    ?LLOG(info, "server stop (~p): ~p", [Reason, Trans], State),
     catch handle(api_server_terminate, [Reason], State).
 
 
@@ -433,6 +441,8 @@ process_client_req(Class, event, #{<<"type">>:=Type, <<"sub">>:=Sub}=Data,
     end;
 
 process_client_req(_Class, _Cmd, _Data, TId, NkPort, #state{session_id = <<>>}=State) ->
+    lager:warning("C: ~p, ~p", [_Class, _Cmd]),
+
     send_reply_error(not_authenticated, TId, NkPort, State);
 
 process_client_req(Class, Cmd, Data, TId, NkPort, State) ->
