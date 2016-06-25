@@ -32,7 +32,7 @@
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Admin Server ~s (~s) "++Txt, 
+    lager:Type("NkMEDIA API Server ~s (~s) "++Txt, 
                [State#state.session_id, State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
@@ -84,7 +84,7 @@ reply_ok(Pid, TId, Data) ->
 
 
 %% @doc Sends an error reply to a command (when you reply 'ack' in callbacks)
--spec reply_error(pid(), term(), nkservice:error_code()) ->
+-spec reply_error(pid(), term(), nkservice:error()) ->
     ok.
 
 reply_error(Pid, TId, Code) ->
@@ -251,7 +251,7 @@ conn_parse({text, Text}, NkPort, State) ->
                 Class2 ->
                     case catch binary_to_existing_atom(Cmd, latin1) of
                         {'EXIT', _} ->
-                            send_reply_error(unknown_cmd, TId, NkPort, State);
+                            send_reply_error(unknown_command, TId, NkPort, State);
                         Cmd2 ->
                             Data = maps:get(<<"data">>, Msg, #{}),
                             process_client_req(Class2, Cmd2, Data, TId, NkPort, State)

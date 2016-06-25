@@ -37,7 +37,7 @@
 
 -type continue() :: continue | {continue, list()}.
 -type config() :: nkservice:config().
--type error_code() :: nkservice:error_code().
+-type error_code() :: nkservice:error().
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
@@ -191,16 +191,29 @@ service_terminate(_Reason, State) ->
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(not_implemented) 	-> {1000, <<"Not Implemented">>};
-error_code(unauthorized) 		-> {1001, <<"Unauthorized">>};
-error_code(not_authenticated)	-> {1002, <<"Not Authenticated">>};
-error_code(internal_error)		-> {1003, <<"Internal Error">>};
-error_code(unknown_cmd)			-> {1003, <<"Unknown Command">>};
-error_code(unknown_class)		-> {1003, <<"Unknown Class">>};
-error_code(no_event_listener)	-> {1003, <<"No Event Listener">>};
-error_code({syntax_error, Txt})	-> {1004, <<"Syntax Error: ", Txt/binary>>};
-error_code({missing_field, Txt})-> {1004, <<"Missing Field: ", Txt/binary>>};
-error_code(_) 					-> {9999, <<"Unknown Error">>}.
+error_code(not_implemented) 		-> {1000, <<"Not Implemented">>};
+error_code(unauthorized) 			-> {1000, <<"Unauthorized">>};
+error_code(not_authenticated)		-> {1000, <<"Not Authenticated">>};
+error_code(user_not_found)			-> {1000, <<"User Not Found">>};
+error_code(internal_error)			-> {1000, <<"Internal Error">>};
+error_code(operation_error) 		-> {1000, <<"Operation Error">>};
+error_code(unknown_command)			-> {1000, <<"Unknown Command">>};
+error_code(unknown_class)			-> {1000, <<"Unknown Class">>};
+error_code(incompatible_operation) 	-> {1000, <<"Incompatible Operation">>};
+error_code(unknown_operation) 		-> {1000, <<"Unknown Operation">>};
+error_code(no_event_listener)		-> {1000, <<"No Event Listener">>};
+error_code({syntax_error, Txt})		-> {1000, <<"Syntax Error: ", Txt/binary>>};
+error_code(missing_parameters) 		-> {1000, <<"Missing Parameters">>};
+error_code({missing_field, Txt})	-> {1000, <<"Missing Field: ", Txt/binary>>};
+error_code(session_timeout) 		-> {1000, <<"Session Timeout">>};
+error_code(session_stop) 			-> {1000, <<"Session Stop">>};
+error_code(session_not_found) 		-> {1000, <<"Session Not Found">>};
+error_code(service_not_found) 		-> {1000, <<"Service Not Found">>};
+error_code(timeout) 				-> {1000, <<"Timeout">>};
+error_code(noproc) 					-> {1000, <<"No Process">>};
+
+error_code(Other) -> 
+	{9999, <<"Unknown Error: ", (nklib_util:to_binary(Other))/binary>>}.
 
 
 
@@ -326,7 +339,7 @@ api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
 %% @doc Called when a new API command has arrived and is authorized
 -spec api_cmd(nkservice:id(), binary(), binary(), nkservice_api:class(), 
 			  nkservice_api:cmd(), map(), term(), state()) ->
-	{ok, map(), state()} | {ack, state()} | {error, nkservice:error_code(), state()}.
+	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
 api_cmd(SrvId, _User, _SessId, core, Cmd, Parsed, _TId, State) ->
 	nkservice_api:cmd(SrvId, Cmd, Parsed, State);

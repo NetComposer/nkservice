@@ -219,7 +219,7 @@ conn_parse({text, Text}, NkPort, State) ->
                 unrecognized ->
                     ?LLOG(warning, "unrecognized server request ~s: ~p", 
                           [Cmd, Data], State),
-                    send_reply_error(unknown_cmd, TId, NkPort, State)
+                    send_reply_error(unknown_command, TId, NkPort, State)
             end;
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
