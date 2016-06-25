@@ -23,8 +23,8 @@
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([class/0, cmd/0]).
--export([launch/5, cmd/3]).
--export([syntax/1, defaults/1, mandatory/1]).
+-export([launch/8, handle_down/4]).
+-export([cmd/4, syntax/1, defaults/1, mandatory/1]).
 
 %% ===================================================================
 %% Types
@@ -32,6 +32,8 @@
 
 -type class() :: atom().
 -type cmd() :: atom().
+-type state() :: map().
+
 
 
 %% ===================================================================
@@ -40,10 +42,12 @@
 
 %% @doc This functions launches the processing of an external API request
 %% It parses the request, and if it is valid, calls SrvId:api_cmd()
--spec launch(nkservice:id(), class(), cmd(), map()|list(), term()) ->
-    {ok, term()} | ack | {error, nkservice:error_code()}.
+%% It received some state (usually from api_server) that can be updated
+-spec launch(nkservice:id(), binary(), binary(), class(), cmd(), map()|list(), 
+             term(), state()) ->
+    {ok, term(), state()} | {ack, state()} | {error, nkservice:error_code(), state()}.
 
-launch(SrvId, Class, Cmd, Data, TId) ->
+launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
     {ok, Syntax} = SrvId:api_cmd_syntax(Class, Cmd, Data),
     {ok, Defaults} = SrvId:api_cmd_defaults(Class, Cmd, Data),
     {ok, Mandatory} = SrvId:api_cmd_mandatory(Class, Cmd, Data), 
@@ -54,12 +58,34 @@ launch(SrvId, Class, Cmd, Data, TId) ->
     },
     case nklib_config:parse_config(Data, Syntax, Opts) of
         {ok, Parsed, _} ->
-            SrvId:api_cmd(SrvId, Class, Cmd, Parsed, TId);
+            case SrvId:api_allow(SrvId, User, Class, Cmd, Parsed, State) of
+                {true, State2} ->
+                    SrvId:api_cmd(SrvId, User, SessId, Class, Cmd, Parsed, TId, State2);
+                {false, State2} ->
+                    {error, unauthorized, State2}
+            end;
         {error, {syntax_error, Error}} ->
-            {error, {syntax_error, Error}};
+            {error, {syntax_error, Error}, State};
         {error, {missing_mandatory_field, Field}} ->
-            {error, {missing_field, Field}}
+            {error, {missing_field, Field}, State}
     end.
+
+
+%% @doc Called when the connection receives a down, it can be one of 
+%% our monitored event servers
+-spec handle_down(reference(), pid(), term(), state()) ->
+    {ok, state()}.
+
+handle_down(Mon, _Pid, _Reason, State) ->
+    Regs = get_regs(State),
+    case lists:keytake(Mon, 2, Regs) of
+        {value, {{Class, Type, Sub, Id}, Mon}, Regs2} ->
+            %% TODO: retry reg or send event to client
+            lager:warning("Registration failed for ~p:~p:~p:~p", [Class, Type, Sub, Id]);
+        false ->
+            Regs2 = Regs
+    end,
+    {ok, set_regs(Regs2, State)}.
 
 
 
@@ -69,44 +95,49 @@ launch(SrvId, Class, Cmd, Data, TId) ->
 
 
 %% @doc
--spec cmd(nkservice:id(), atom(), Data::map()) ->
+-spec cmd(nkservice:id(), atom(), Data::map(), state()) ->
     {ok, map()} | {error, nkservice:error_code()}.
 
-cmd(_SrvId, register, Data) ->
+%% @TODO: must monitor listener proc
+
+cmd(_SrvId, register, Data, State) ->
     #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
     Body = maps:get(body, Data, #{}),
-    nkservice_events:reg(Class, Type, Sub, Id, Body),
-    {ok, #{}};
+    {ok, Pid} = nkservice_events:reg(Class, Type, Sub, Id, Body),
+    Mon = monitor(process, Pid),
+    Regs2 = [{{Class, Type, Sub, Id}, Mon}|get_regs(State)],
+    {ok, #{}, set_regs(Regs2, State)};
 
-cmd(_SrvId, unregister, Data) ->
+cmd(_SrvId, unregister, Data, State) ->
     #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
     nkservice_events:unreg(Class, Type, Sub, Id),
-    {ok, #{}};
+    Regs = get_regs(State),
+    case lists:keytake({Class, Type, Sub, Id}, 1, Regs) of
+        {value, {_, Mon}, Regs2} ->
+            demonitor(Mon);
+        false ->
+            Regs2 = Regs
+    end,
+    {ok, #{}, set_regs(Regs2, State)};
 
-cmd(_SrvId, send_event, Data) ->
+cmd(_SrvId, send_event, Data, State) ->
     #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
     Body = maps:get(body, Data, #{}),
     case maps:get(broadcast, Data, false) of
         true ->
             nkservice_events:send_all(Class, Type, Sub, Id, Body),
-            {ok, #{}};
+            {ok, #{}, State};
         false ->
             case nkservice_events:send_single(Class, Type, Sub, Id, Body) of
                 ok ->
-                    {ok, #{}};
+                    {ok, #{}, State};
                 not_found ->
-                    {error, no_event_listener}
+                    {error, no_event_listener, State}
             end
     end;
 
-cmd(_SrvId, _Other, _Data) ->
-    {error, unknown_cmd}.
-
-
-
-%% ===================================================================
-%% Internal
-%% ===================================================================
+cmd(_SrvId, _Other, _Data, State) ->
+    {error, unknown_cmd, State}.
 
 
 %% @private
@@ -168,5 +199,23 @@ mandatory(unregister) ->
 
 mandatory(_) ->
     [].
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+
+%% @private
+get_regs(State) ->
+    ApiData = maps:get(?MODULE, State, #{}),
+    maps:get(regs, ApiData, []).
+
+
+%% @private
+set_regs(Regs, State) ->
+    ApiData1 = maps:get(?MODULE, State, #{}),
+    ApiData2 = ApiData1#{regs=>Regs},
+    State#{?MODULE=>ApiData2}.
 
 
