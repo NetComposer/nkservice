@@ -22,13 +22,13 @@
 -module(nkservice_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
--export([send_single/4, send_single/5, send_all/4, send_all/5, reg/5, unreg/4]).
+-export([send_single/4, send_single/5, send_all/4, send_all/5]).
+-export([reg/5, reg/6, unreg/4, unreg/5, unreg_id/4]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, 
          handle_cast/2, handle_info/2]).
 % -export([atest/0]).
 
--compile([export_all]).
 
 %% ===================================================================
 %% Types
@@ -91,16 +91,25 @@ send_all(Class, Type, Sub, Id, Body) ->
     do_send_all(Class, Type, {Sub, '*'}, Id, Body),
     do_send_all(Class, {Type, '*'}, {Sub, '*'}, Id, Body).
 
+
 %% @doc
 -spec reg(class(), type(), sub(), obj_id(), body()) ->
     {ok, pid()}.
 
 reg(Class, Type, Sub, Id, Body) ->
+    reg(Class, Type, Sub, Id, Body, self()).
+
+
+%% @doc
+-spec reg(class(), type(), sub(), obj_id(), body(), pid()) ->
+    {ok, pid()}.
+
+reg(Class, Type, Sub, Id, Body, Pid) ->
     Type2 = check_all(Type),
     Sub2 = check_all(Sub),
     Id2 = check_all(Id),
     Server = start_server(Class, Type2, Sub2),
-    gen_server:cast(Server, {reg, Id2, Body, self()}),
+    gen_server:cast(Server, {reg, Id2, Body, Pid}),
     {ok, Server}.
 
 
@@ -109,11 +118,36 @@ reg(Class, Type, Sub, Id, Body) ->
     ok.
 
 unreg(Class, Type, Sub, Id) ->
+    unreg(Class, Type, Sub, Id, self()).
+
+
+%% @doc
+-spec unreg(class(), type(), sub(), obj_id(), pid()) ->
+    ok.
+
+unreg(Class, Type, Sub, Id, Pid) ->
     Type2 = check_all(Type),
     Sub2 = check_all(Sub),
     Id2 = check_all(Id),
     Server = start_server(Class, Type2, Sub2),
-    gen_server:cast(Server, {unreg, Id2, self()}).
+    gen_server:cast(Server, {unreg, Id2, Pid}).
+
+
+
+%% @doc
+-spec unreg_id(class(), type(), sub(), obj_id()) ->
+    ok.
+
+unreg_id(Class, Type, Sub, Id) ->
+    Type2 = check_all(Type),
+    Sub2 = check_all(Sub),
+    Id2 = check_all(Id),
+    case find_server(Class, Type2, Sub2) of
+        {ok, Server} ->
+            gen_server:cast(Server, {unreg_id, Id2});
+        not_found ->
+            ok
+    end.
 
 
 %% @private
@@ -226,6 +260,16 @@ handle_cast({reg, Id, Body, Pid}, #state{regs=Regs, pids=Pids}=State) ->
 handle_cast({unreg, Id, Pid}, #state{regs=Regs, pids=Pids}=State) ->
     {Regs2, Pids2} = do_unreg([Id], Pid, Regs, Pids),
     {noreply, State#state{regs=Regs2, pids=Pids2}};
+
+handle_cast({unreg_id, Id}, #state{regs=Regs, pids=Pids}=State) ->
+    case maps:find(Id, Regs) of
+        {ok, PidTerms} -> 
+            IdPids = [Pid || {Pid, _Body} <- PidTerms],
+            {Regs2, Pids2} = do_unreg_pids(IdPids, Id, Regs, Pids),
+            {noreply, State#state{regs=Regs2, pids=Pids2}};
+        error ->
+            {noreply, State}
+    end;
 
 handle_cast(remove_all, #state{pids=Pids}=State) ->
     lists:foreach(fun({_Pid, {Mon, _}}) -> demonitor(Mon) end, maps:to_list(Pids)),
@@ -397,6 +441,17 @@ do_unreg([Id|Rest], Pid, Regs, Pids) ->
             Pids
     end,
     do_unreg(Rest, Pid, Regs2, Pids2).
+
+
+
+%% @private
+do_unreg_pids([], _Id, Regs, Pids) ->
+    {Regs, Pids};
+
+do_unreg_pids([Pid|Rest], Id, Regs, Pids) ->
+    {Regs2, Pids2} = do_unreg([Id], Pid, Regs, Pids),
+    do_unreg_pids(Rest, Id, Regs2, Pids2).
+
 
 
 %% @private
