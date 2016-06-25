@@ -21,6 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
 -export([get_core_listeners/2, make_id/1, update_uuid/2]).
 
@@ -34,6 +35,24 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc Safe call (no exceptions)
+call(Dest, Msg) ->
+    call(Dest, Msg, 5000).
+
+
+%% @doc Safe call (no exceptions)
+call(Dest, Msg, Timeout) ->
+    case nklib_util:call(Dest, Msg, Timeout) of
+        {error, {exit, {{timeout, _Fun}, _Stack}}} ->
+            {error, timeout};
+        {error, {exit, {{noproc, _Fun}, _Stack}}} ->
+            {error, noproc};
+        Other ->
+            Other
+    end.
+
 
 
 parse_syntax(Spec, Syntax, Defaults) ->

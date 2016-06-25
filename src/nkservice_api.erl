@@ -45,7 +45,7 @@
 %% It received some state (usually from api_server) that can be updated
 -spec launch(nkservice:id(), binary(), binary(), class(), cmd(), map()|list(), 
              term(), state()) ->
-    {ok, term(), state()} | {ack, state()} | {error, nkservice:error_code(), state()}.
+    {ok, term(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
 launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
     {ok, Syntax} = SrvId:api_cmd_syntax(Class, Cmd, Data),
@@ -96,7 +96,7 @@ handle_down(Mon, _Pid, _Reason, State) ->
 
 %% @doc
 -spec cmd(nkservice:id(), atom(), Data::map(), state()) ->
-    {ok, map()} | {error, nkservice:error_code()}.
+    {ok, map()} | {error, nkservice:error()}.
 
 %% @TODO: must monitor listener proc
 
@@ -137,7 +137,7 @@ cmd(_SrvId, send_event, Data, State) ->
     end;
 
 cmd(_SrvId, _Other, _Data, State) ->
-    {error, unknown_cmd, State}.
+    {error, unknown_command, State}.
 
 
 %% @private
