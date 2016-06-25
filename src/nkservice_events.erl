@@ -61,15 +61,11 @@ send_single(Class, Type, Sub, Id) ->
 
 send_single(Class, Type, Sub, Id, Body) ->
     % In each search, we search for Id and Id=='*'
-    Id2 = case Id of
-        '*' -> '*';
-        _ -> nklib_util:to_binary(Id)
-    end,
-    case do_send_single(Class, Type, Sub, Id2, Body) of
+    case do_send_single(Class, Type, Sub, Id, Body) of
         not_found ->
-            case do_send_single(Class, Type, '*', Id2, Body) of
+            case do_send_single(Class, Type, {Sub, '*'}, Id, Body) of
                 not_found ->
-                    do_send_single(Class, '*', '*', Id2, Body);
+                    do_send_single(Class, {Type, '*'}, {Sub, '*'}, Id, Body);
                 ok ->
                     ok
             end;
@@ -91,21 +87,21 @@ send_all(Class, Type, Sub, Id) ->
     ok.
 
 send_all(Class, Type, Sub, Id, Body) ->
-    Id2 = case Id of
-        '*' -> '*';
-        _ -> nklib_util:to_binary(Id)
-    end,
-    do_send_all(Class, Type, Sub, Id2, Body),
-    do_send_all(Class, Type, '*', Id2, Body),
-    do_send_all(Class, '*', '*', Id2, Body).
+    do_send_all(Class, Type, Sub, Id, Body),
+    do_send_all(Class, Type, {Sub, '*'}, Id, Body),
+    do_send_all(Class, {Type, '*'}, {Sub, '*'}, Id, Body).
 
 %% @doc
 -spec reg(class(), type(), sub(), obj_id(), body()) ->
-    ok.
+    {ok, pid()}.
 
 reg(Class, Type, Sub, Id, Body) ->
-    Server = start_server(Class, Type, Sub),
-    gen_server:cast(Server, {reg, Id, Body, self()}).
+    Type2 = check_all(Type),
+    Sub2 = check_all(Sub),
+    Id2 = check_all(Id),
+    Server = start_server(Class, Type2, Sub2),
+    gen_server:cast(Server, {reg, Id2, Body, self()}),
+    {ok, Server}.
 
 
 %% @doc
@@ -113,8 +109,11 @@ reg(Class, Type, Sub, Id, Body) ->
     ok.
 
 unreg(Class, Type, Sub, Id) ->
-    Server = start_server(Class, Type, Sub),
-    gen_server:cast(Server, {unreg, Id, self()}).
+    Type2 = check_all(Type),
+    Sub2 = check_all(Sub),
+    Id2 = check_all(Id),
+    Server = start_server(Class, Type2, Sub2),
+    gen_server:cast(Server, {unreg, Id2, self()}).
 
 
 %% @private
@@ -180,9 +179,9 @@ handle_call({send_single, Type, Sub, Id, Body}, _From, State) ->
         List ->
             List
     end,
-    lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
-                [Class, Type, Sub, Id, State#state.type, State#state.sub,
-                 PidTerms]),
+    % lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
+    %             [Class, Type, Sub, Id, State#state.type, State#state.sub,
+    %              PidTerms]),
     case PidTerms of
         [] ->
             {reply, not_found, State};
@@ -279,13 +278,24 @@ terminate(_Reason, _State) ->
 %% Private
 %% ===================================================================
 
+%% @private
+check_all(<<"*">>) -> '*';
+check_all(Any) -> Any.
+
 
 %% @private
 do_send_single(Class, Type, Sub, Id, Body) ->
-    case find_server(Class, Type, Sub) of
+    case Type of
+        {TypeC, TypeS} -> ok;
+        TypeC -> TypeS = TypeC
+    end,
+    case Sub of
+        {SubC, SubS} -> ok;
+        SubC -> SubS = SubC
+    end,
+    case find_server(Class, TypeS, SubS) of
         {ok, Server} -> 
-            lager:error("S: ~p", [Server]),
-            gen_server:call(Server, {send_single, Type, Sub, Id, Body});
+            gen_server:call(Server, {send_single, TypeC, SubC, Id, Body});
         not_found -> 
             not_found
     end.
@@ -293,9 +303,17 @@ do_send_single(Class, Type, Sub, Id, Body) ->
 
 %% @private
 do_send_all(Class, Type, Sub, Id, Body) ->
-    case find_server(Class, Type, Sub) of
+    case Type of
+        {TypeC, TypeS} -> ok;
+        TypeC -> TypeS = TypeC
+    end,
+    case Sub of
+        {SubC, SubS} -> ok;
+        SubC -> SubS = SubC
+    end,
+    case find_server(Class, TypeS, SubS) of
         {ok, Server} -> 
-            gen_server:cast(Server, {send_all, Type, Sub, Id, Body});
+            gen_server:cast(Server, {send_all, TypeC, SubC, Id, Body});
         not_found -> 
             ok
     end.

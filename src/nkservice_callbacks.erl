@@ -30,7 +30,8 @@
 		 api_server_login/3, api_server_cmd/5, api_server_event/6,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_cmd/5, api_cmd_syntax/3, api_cmd_defaults/3, api_cmd_mandatory/3]).
+-export([api_allow/6, api_cmd/8, api_cmd_syntax/3, api_cmd_defaults/3, 
+	     api_cmd_mandatory/3]).
 
 -export_type([continue/0]).
 
@@ -261,12 +262,9 @@ api_server_login(_Data, _SessId, State) ->
 	{ok, data(), state()} | {ack, state()} | 
 	{error, error_code(), state()} | continue().
 
-api_server_cmd(core, Cmd, Data, TId, #{srv_id:=SrvId}=State) ->
-	case nkservice_api:launch(SrvId, core, Cmd, Data, TId) of
-		{ok, Reply} -> {ok, Reply, State};
-		ack -> {ack, State};
-		{error, Error} -> {error, Error, State}
-	end;
+api_server_cmd(core, Cmd, Data, TId, State) ->
+	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
+	nkservice_api:launch(SrvId, User, SessId, core, Cmd, Data, TId, State);
 	
 api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
     {error, not_implemented, State}.
@@ -307,6 +305,10 @@ api_server_handle_info({nkservice_event, Class, Type, Sub, ObjId, Body}, State) 
 	nkservice_api_server:event(self(), Class, Type, Sub, ObjId, Body),
 	{ok, State};
 
+api_server_handle_info({'DOWN', Mon, process, Pid, Reason}, State) ->
+	{ok, State2} = nkservice_api:handle_down(Mon, Pid, Reason, State),
+	{ok, State2};
+
 api_server_handle_info(Msg, State) ->
     lager:notice("Module ~p received unexpected info ~p", [?MODULE, Msg]),
 	{ok, State}.
@@ -333,16 +335,26 @@ api_server_terminate(_Reason, State) ->
 %% ===================================================================
 
 %% @doc Called when a new API command has arrived and called nkservice_api:launch/6
-%% The request is parsed, and if ok, will call this callback
--spec api_cmd(nkservice:id(), nkservice_api:class(), nkservice_api:cmd(),
-			  map(), term()) ->
-	{ok, map()} | ack | {error, nkservice:error_code()}.
+%% The request is parsed, if ok, will call this callback to see if it is authorized
+%% If it is, it will call api_cmd/6
+-spec api_allow(nkservice:id(), binary(), nkservice_api:class(), nkservice_api:cmd(),
+			    map(), state()) ->
+	{boolean(), state()}.
 
-api_cmd(SrvId, core, Cmd, Parsed, _TId) ->
-	nkservice_api:cmd(SrvId, Cmd, Parsed);
+api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
+	{true, State}.
 
-api_cmd(_SrvId, _Class, _Cmd, _Parsed, _TId) ->
-	{error, not_implemented}.
+
+%% @doc Called when a new API command has arrived and is authorized
+-spec api_cmd(nkservice:id(), binary(), binary(), nkservice_api:class(), 
+			  nkservice_api:cmd(), map(), term(), state()) ->
+	{ok, map(), state()} | {ack, state()} | {error, nkservice:error_code(), state()}.
+
+api_cmd(SrvId, _User, _SessId, core, Cmd, Parsed, _TId, State) ->
+	nkservice_api:cmd(SrvId, Cmd, Parsed, State);
+
+api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->
+	{error, not_implemented, State}.
 
 
 %% @doc Called to get the syntax for an external API command

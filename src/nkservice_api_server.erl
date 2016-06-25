@@ -305,6 +305,10 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 conn_handle_call({nkservice_cmd, Class, Cmd, Data}, From, NkPort, State) ->
     send_request(Class, Cmd, Data, From, NkPort, State);
 
+conn_handle_call(get_state, From, _NkPort, State) ->
+    gen_server:reply(From, {ok, State}),
+    {ok, State};
+    
 conn_handle_call(Msg, From, _NkPort, State) ->
     handle(api_server_handle_call, [Msg, From], State).
 
