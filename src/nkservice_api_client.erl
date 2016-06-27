@@ -22,7 +22,7 @@
 -module(nkservice_api_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/5, cmd/4, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
+-export([start/6, cmd/4, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
 -export([register/6, unregister/5]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
@@ -56,16 +56,16 @@
 
 
 %% @doc Starts a new verto session to FS
--spec start(term(), binary(), binary(), binary(), function()) ->
+-spec start(term(), binary(), binary(), binary(), function(), term()) ->
     {ok, SessId::binary(), pid()} | {error, term()}.
 
-start(Serv, Url, User, Pass, Fun) ->
+start(Serv, Url, User, Pass, Fun, UserData) ->
     {ok, SrvId} = nkservice_srv:get_srv_id(Serv),
     ConnOpts = #{
         class => {?MODULE, SrvId},
         monitor => self(),
         idle_timeout => ?WS_TIMEOUT,
-        user => #{callback=>Fun}
+        user => {Fun, UserData}
     },
     case nkpacket:connect(Url, ConnOpts) of
         {ok, Pid} -> 
@@ -85,6 +85,9 @@ start(Serv, Url, User, Pass, Fun) ->
 
 
 %% @doc
+-spec cmd(pid(), atom(), atom(), map()) ->
+    {ok, map()} | {error, {integer(), binary()}}.
+
 cmd(Pid, Class, Cmd, Data) ->
     nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
 
@@ -100,11 +103,11 @@ reply_error(Pid, TId, Code) ->
 
 
 %% @doc
-register(Pid, Class, Type, Sub, ObjId, Body) ->
+register(Pid, Class, Type, Obj, ObjId, Body) ->
     Data1 = [
         {class, Class},
         case Type of all -> []; _ -> {type, Type} end,
-        case Sub of all -> []; _ -> {sub, Sub} end,
+        case Obj of all -> []; _ -> {obj, Obj} end,
         case ObjId of all -> []; _ -> {obj_id, ObjId} end,
         case map_size(Body) of 0 -> []; _ -> {body, Body} end
     ],
@@ -113,11 +116,11 @@ register(Pid, Class, Type, Sub, ObjId, Body) ->
 
 
 %% @doc
-unregister(Pid, Class, Type, Sub, ObjId) ->
+unregister(Pid, Class, Type, Obj, ObjId) ->
     Data1 = [
         {class, Class},
         case Type of all -> []; _ -> {type, Type} end,
-        case Sub of all -> []; _ -> {sub, Sub} end,
+        case Obj of all -> []; _ -> {obj, Obj} end,
         case ObjId of all -> []; _ -> {obj_id, ObjId} end
     ],
     Data2 = maps:from_list(lists:flatten(Data1)),
@@ -153,10 +156,11 @@ stop_all() ->
 
 -record(state, {
     srv_id :: nkservice:id(),
-    trans :: #{tid() => #trans{}},
-    tid :: integer(),
+    trans = #{} :: #{tid() => #trans{}},
+    tid = 1000 :: integer(),
     remote :: binary(),
-    callback :: function()
+    callback :: function(),
+    userdata :: term()
 }).
 
 
@@ -178,14 +182,13 @@ default_port(wss) -> 9011.
 
 %% TODO: Send and receive pings from session when they are not in same cluster
 conn_init(NkPort) ->
-    {ok, {_, SrvId}, #{callback:=CB}} = nkpacket:get_user(NkPort),
+    {ok, {_, SrvId}, {CB, UserData}} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State = #state{
         srv_id = SrvId,
-        trans = #{}, 
-        tid = erlang:phash2(self()),
         remote = Remote,
-        callback = CB
+        callback = CB,
+        userdata = UserData
     },
     ?LLOG(info, "new session (~p)", [self()], State),
     nklib_proc:put(?MODULE),
@@ -332,14 +335,14 @@ conn_handle_info(Info, _NkPort, State) ->
 
 %% @private
 process_server_req(Class, Cmd, Data, TId, NkPort, State) ->
-    #state{callback=CB} = State,
-    case CB({req, Class, Cmd, Data, TId}) of
-        {ok, Reply} ->
-            send_reply_ok(Reply, TId, NkPort, State);
-        ack ->
-            send_ack(TId, NkPort, State);
-        {error, Error} ->
-            send_reply_error(Error, TId, NkPort, State)
+    #state{callback=CB, userdata=UserData} = State,
+    case CB({req, Class, Cmd, Data, TId}, UserData) of
+        {ok, Reply, UserData2} ->
+            send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
+        {ack, UserData2} ->
+            send_ack(TId, NkPort, State#state{userdata=UserData2});
+        {error, Error, UserData2} ->
+            send_reply_error(Error, TId, NkPort, State#state{userdata=UserData2})
     end.
 
 

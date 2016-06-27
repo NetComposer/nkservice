@@ -27,7 +27,8 @@
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
-		 api_server_login/3, api_server_cmd/5, api_server_event/6,
+		 api_server_login/3, api_server_cmd/5, api_server_event/3,
+		 api_server_forward_event/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
 -export([api_allow/6, api_cmd/8, api_cmd_syntax/3, api_cmd_defaults/3, 
@@ -160,7 +161,7 @@ service_init(_Service, State) ->
 	{reply, term(), state()} | {noreply, state()} | continue().
 
 service_handle_call(Msg, _From, State) ->
-    lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
+    lager:error("Module nkservice_srv received unexpected call ~p", [Msg]),
     {noreply, State}.
 
 
@@ -169,7 +170,7 @@ service_handle_call(Msg, _From, State) ->
 	{noreply, state()} | continue().
 
 service_handle_cast(Msg, State) ->
-    lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
+    lager:error("Module nkservice_srv received unexpected cast ~p", [Msg]),
 	{noreply, State}.
 
 
@@ -178,7 +179,7 @@ service_handle_cast(Msg, State) ->
 	{noreply, state()} | continue().
 
 service_handle_info(Msg, State) ->
-    lager:notice("Module ~p received unexpected info ~p", [?MODULE, Msg]),
+    lager:notice("Module nkservice_srv received unexpected info ~p", [Msg]),
 	{noreply, State}.
 
 
@@ -213,26 +214,34 @@ service_terminate(_Reason, State) ->
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(not_implemented) 		-> {1000, <<"Not Implemented">>};
+error_code(normal) 					-> {1000, <<"Normal termination">>};
+error_code(anormal) 				-> {1000, <<"Anormal termination">>};
+error_code(not_implemented) 		-> {1000, <<"Not implemented">>};
 error_code(unauthorized) 			-> {1000, <<"Unauthorized">>};
-error_code(not_authenticated)		-> {1000, <<"Not Authenticated">>};
-error_code(user_not_found)			-> {1000, <<"User Not Found">>};
-error_code(internal_error)			-> {1000, <<"Internal Error">>};
-error_code(operation_error) 		-> {1000, <<"Operation Error">>};
-error_code(unknown_command)			-> {1000, <<"Unknown Command">>};
-error_code(unknown_class)			-> {1000, <<"Unknown Class">>};
-error_code(incompatible_operation) 	-> {1000, <<"Incompatible Operation">>};
-error_code(unknown_operation) 		-> {1000, <<"Unknown Operation">>};
-error_code(no_event_listener)		-> {1000, <<"No Event Listener">>};
-error_code({syntax_error, Txt})		-> {1000, <<"Syntax Error: ", Txt/binary>>};
-error_code(missing_parameters) 		-> {1000, <<"Missing Parameters">>};
-error_code({missing_field, Txt})	-> {1000, <<"Missing Field: ", Txt/binary>>};
-error_code(session_timeout) 		-> {1000, <<"Session Timeout">>};
-error_code(session_stop) 			-> {1000, <<"Session Stop">>};
-error_code(session_not_found) 		-> {1000, <<"Session Not Found">>};
-error_code(service_not_found) 		-> {1000, <<"Service Not Found">>};
+error_code(not_authenticated)		-> {1000, <<"Not authenticated">>};
+error_code(user_not_found)			-> {1000, <<"User not found">>};
+error_code(internal_error)			-> {1000, <<"Internal error">>};
+error_code(operation_error) 		-> {1000, <<"Operation error">>};
+error_code(unknown_command)			-> {1000, <<"Unknown command">>};
+error_code(unknown_class)			-> {1000, <<"Unknown class">>};
+error_code(incompatible_operation) 	-> {1000, <<"Incompatible operation">>};
+error_code(unknown_operation) 		-> {1000, <<"Unknown operation">>};
+error_code(no_event_listener)		-> {1000, <<"No event listener">>};
+error_code({syntax_error, Txt})		-> {1000, <<"Syntax error: ", Txt/binary>>};
+error_code(invalid_parameters) 		-> {1000, <<"Invalid parameters">>};
+error_code(missing_parameters) 		-> {1000, <<"Missing parameters">>};
+error_code({missing_field, Txt})	-> {1000, <<"Missing field: ", Txt/binary>>};
+error_code(session_timeout) 		-> {1000, <<"Session timeout">>};
+error_code(session_stop) 			-> {1000, <<"Session stop">>};
+error_code(session_not_found) 		-> {1000, <<"Session not found">>};
+error_code(service_not_found) 		-> {1000, <<"Service not found">>};
 error_code(timeout) 				-> {1000, <<"Timeout">>};
-error_code(noproc) 					-> {1000, <<"No Process">>};
+error_code(noproc) 					-> {1000, <<"No process">>};
+error_code(user_stop) 				-> {1000, <<"User stop">>};
+error_code(process_down)  			-> {1000, <<"Process failed">>};
+
+error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
+	{Code, Txt};
 
 error_code(Other) -> 
 	{9999, <<"Unknown Error: ", (nklib_util:to_binary(Other))/binary>>}.
@@ -283,21 +292,32 @@ api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
     {error, not_implemented, State}.
 
 
-%% @doc Called when a new cmd is received
--spec api_server_event(class(), nkservice_event:type(), nkservice_event:sub(),
-			           nkservice_event:obj_id(), nkservice_event:body(), state()) ->
+%% @doc Called when a new event has been received from the remote end
+-spec api_server_event(nkservice_event:reg_id(), nkservice_event:body(), state()) ->
 	{ok, state()} | continue().
 
-api_server_event(_Class, _Type, _Sub, _ObjId, _Body, State) ->
+api_server_event(_RegId, _Body, State) ->
 	{ok, State}.
 	
+
+%% @doc Called when the API server receives an event notification from 
+%% nkservice_events. We can send it to the remote side or ignore it.
+-spec api_server_forward_event(nkservice_event:reg_id(), 
+							   nkservice_event:body(), state()) ->
+	{ok, state()} | 
+	{ok, nkservice_event:reg_id(), nkservice_event:body(), continue()} |
+	{ignore, state()}.
+
+api_server_forward_event(RegId, Body, State) ->
+	nkmedia_api:forward_event(RegId, Body, State).
+
 
 %% @doc Called when the xzservice process receives a handle_call/3.
 -spec api_server_handle_call(term(), {pid(), reference()}, state()) ->
 	{ok, state()} | continue().
 
 api_server_handle_call(Msg, _From, State) ->
-    lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
+    lager:error("Module nkservice_api_server received unexpected call ~p", [Msg]),
     {ok, State}.
 
 
@@ -306,7 +326,7 @@ api_server_handle_call(Msg, _From, State) ->
 	{ok, state()} | continue().
 
 api_server_handle_cast(Msg, State) ->
-    lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
+    lager:error("Module nkservice_api_server received unexpected cast ~p", [Msg]),
 	{ok, State}.
 
 
@@ -314,16 +334,13 @@ api_server_handle_cast(Msg, State) ->
 -spec api_server_handle_info(term(), state()) ->
 	{ok, state()} | continue().
 
-api_server_handle_info({nkservice_event, Class, Type, Sub, ObjId, Body}, State) ->
-	nkservice_api_server:event(self(), Class, Type, Sub, ObjId, Body),
-	{ok, State};
 
-api_server_handle_info({'DOWN', Mon, process, Pid, Reason}, State) ->
-	{ok, State2} = nkservice_api:handle_down(Mon, Pid, Reason, State),
-	{ok, State2};
+% api_server_handle_info({'DOWN', Mon, process, Pid, Reason}, State) ->
+% 	{ok, State2} = nkservice_api:handle_down(Mon, Pid, Reason, State),
+% 	{ok, State2};
 
 api_server_handle_info(Msg, State) ->
-    lager:notice("Module ~p received unexpected info ~p", [?MODULE, Msg]),
+    lager:notice("Module nkservice_api_server received unexpected info ~p", [Msg]),
 	{ok, State}.
 
 

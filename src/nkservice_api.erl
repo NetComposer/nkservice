@@ -23,7 +23,7 @@
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([class/0, cmd/0]).
--export([launch/8, handle_down/4]).
+-export([launch/8]).
 -export([cmd/4, syntax/1, defaults/1, mandatory/1]).
 
 %% ===================================================================
@@ -67,25 +67,26 @@ launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
         {error, {syntax_error, Error}} ->
             {error, {syntax_error, Error}, State};
         {error, {missing_mandatory_field, Field}} ->
+            lager:error("M: ~p", [Field]),
             {error, {missing_field, Field}, State}
     end.
 
 
-%% @doc Called when the connection receives a down, it can be one of 
-%% our monitored event servers
--spec handle_down(reference(), pid(), term(), state()) ->
-    {ok, state()}.
+% %% @doc Called when the connection receives a down, it can be one of 
+% %% our monitored event servers
+% -spec handle_down(reference(), pid(), term(), state()) ->
+%     {ok, state()}.
 
-handle_down(Mon, _Pid, _Reason, State) ->
-    Regs = get_regs(State),
-    case lists:keytake(Mon, 2, Regs) of
-        {value, {{Class, Type, Sub, Id}, Mon}, Regs2} ->
-            %% TODO: retry reg or send event to client
-            lager:warning("Registration failed for ~p:~p:~p:~p", [Class, Type, Sub, Id]);
-        false ->
-            Regs2 = Regs
-    end,
-    {ok, set_regs(Regs2, State)}.
+% handle_down(Mon, _Pid, _Reason, State) ->
+%     Regs = get_regs(State),
+%     case lists:keytake(Mon, 2, Regs) of
+%         {value, {{Class, Type, Sub, Id}, Mon}, Regs2} ->
+%             %% TODO: retry reg or send event to client
+%             lager:warning("Registration failed for ~p:~p:~p:~p", [Class, Type, Sub, Id]);
+%         false ->
+%             Regs2 = Regs
+%     end,
+%     {ok, set_regs(Regs2, State)}.
 
 
 
@@ -101,34 +102,28 @@ handle_down(Mon, _Pid, _Reason, State) ->
 %% @TODO: must monitor listener proc
 
 cmd(_SrvId, register, Data, State) ->
-    #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
+    #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
+    RegId = {Class, Type, Obj, ObjId},
     Body = maps:get(body, Data, #{}),
-    {ok, Pid} = nkservice_events:reg(Class, Type, Sub, Id, Body),
-    Mon = monitor(process, Pid),
-    Regs2 = [{{Class, Type, Sub, Id}, Mon}|get_regs(State)],
-    {ok, #{}, set_regs(Regs2, State)};
+    nkservice_api_server:register(self(), RegId, Body),
+    {ok, #{}, State};
 
 cmd(_SrvId, unregister, Data, State) ->
-    #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
-    nkservice_events:unreg(Class, Type, Sub, Id),
-    Regs = get_regs(State),
-    case lists:keytake({Class, Type, Sub, Id}, 1, Regs) of
-        {value, {_, Mon}, Regs2} ->
-            demonitor(Mon);
-        false ->
-            Regs2 = Regs
-    end,
-    {ok, #{}, set_regs(Regs2, State)};
+    #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
+    RegId = {Class, Type, Obj, ObjId},
+    nkservice_api_server:unregister(self(), RegId),
+    {ok, #{}, State};
 
-cmd(_SrvId, send_event, Data, State) ->
-    #{class:=Class, type:=Type, sub:=Sub, obj_id:=Id} = Data,
+cmd(SrvId, send_event, Data, State) ->
+    #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
+    RegId = {Class, Type, Obj, ObjId},
     Body = maps:get(body, Data, #{}),
     case maps:get(broadcast, Data, false) of
         true ->
-            nkservice_events:send_all(Class, Type, Sub, Id, Body),
+            nkservice_events:send_all(SrvId, RegId, Body),
             {ok, #{}, State};
         false ->
-            case nkservice_events:send_single(Class, Type, Sub, Id, Body) of
+            case nkservice_events:send_single(SrvId, RegId, Body) of
                 ok ->
                     {ok, #{}, State};
                 not_found ->
@@ -144,8 +139,8 @@ cmd(_SrvId, _Other, _Data, State) ->
 syntax(send_event) ->
     #{
         class => atom,
+        obj => atom,
         type => atom,
-        sub => atom,
         obj_id => binary,
         broadcast => boolean,
         body => any
@@ -154,8 +149,8 @@ syntax(send_event) ->
 syntax(register) ->
     #{
         class => atom,
+        obj => atom,
         type => atom,
-        sub => atom,
         obj_id => binary,
         body => any
     };
@@ -163,8 +158,8 @@ syntax(register) ->
 syntax(unregister) ->
     #{
         class => atom,
+        obj => atom,
         type => atom,
-        sub => atom,
         obj_id => binary
     };
 
@@ -175,8 +170,8 @@ syntax(_) ->
 %% @private
 defaults(register) ->
     #{
+        obj => '*',
         type => '*',
-        sub => '*',
         obj_id => '*'
     };
 
@@ -189,7 +184,7 @@ defaults(_) ->
 
 %% @private
 mandatory(send_event) ->
-    [class, type, sub, obj_id];
+    [class, obj, type, obj_id];
 
 mandatory(register) ->
     [class];
@@ -206,16 +201,16 @@ mandatory(_) ->
 %% ===================================================================
 
 
-%% @private
-get_regs(State) ->
-    ApiData = maps:get(?MODULE, State, #{}),
-    maps:get(regs, ApiData, []).
+% %% @private
+% get_regs(State) ->
+%     ApiData = maps:get(?MODULE, State, #{}),
+%     maps:get(regs, ApiData, []).
 
 
-%% @private
-set_regs(Regs, State) ->
-    ApiData1 = maps:get(?MODULE, State, #{}),
-    ApiData2 = ApiData1#{regs=>Regs},
-    State#{?MODULE=>ApiData2}.
+% %% @private
+% set_regs(Regs, State) ->
+%     ApiData1 = maps:get(?MODULE, State, #{}),
+%     ApiData2 = ApiData1#{regs=>Regs},
+%     State#{?MODULE=>ApiData2}.
 
 
