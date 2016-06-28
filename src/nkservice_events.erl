@@ -22,25 +22,27 @@
 -module(nkservice_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
--export([send_single/2, send_single/3]).
--export([send_all/2, send_all/3]).
--export([reg/2, reg/3, reg/4, unreg/2, unreg/3]).
+-export([send_single/1, send_single/2]).
+-export([send_all/1, send_all/2]).
+-export([reg/1, reg/2, reg/3, unreg/1, unreg/2]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, 
          handle_cast/2, handle_info/2]).
 % -export([atest/0]).
+
+-include("nkservice.hrl").
 
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
--type reg_id() :: {class(), obj(), type(), srv_id(), obj_id()}.
+-type reg_id() :: #reg_id{}.
 
 -type class() :: atom().
--type srv_id() :: nkservice:id() | '*'.
--type obj() :: atom() | '*'.
 -type type() :: atom() | '*'.
+-type obj() :: atom() | '*'.
+-type srv_id() :: nkservice:id() | '*'.
 -type obj_id() :: term().
 -type body() :: term().
 
@@ -52,24 +54,25 @@
 
 
 %% @doc
--spec send_single(srv_id(), reg_id()) ->
+-spec send_single(reg_id()) ->
     ok | not_found.
 
-send_single(SrvId, RegId) ->
-    send_single(SrvId, RegId, #{}).
+send_single(RegId) ->
+    send_single(RegId, #{}).
 
 
 %% @doc
--spec send_single(srv_id(), reg_id(), body()) ->
+-spec send_single(reg_id(), body()) ->
     ok | not_found.
 
-send_single(SrvId, {Class, Type, Obj, ObjId}, Body) ->
+send_single(#reg_id{}=RegId, Body) ->
+    #reg_id{class=Class, type=Type, obj=Obj, srv_id=SrvId, obj_id=ObjId} = RegId,
     % In each search, we search for Id and Id=='*'
-    case do_send_single(SrvId, Class, Type, Obj, ObjId, Body) of
+    case do_send_single(Class, Type, Obj, SrvId, ObjId, Body) of
         not_found ->
-            case do_send_single(SrvId, Class, {Type, '*'}, Obj, ObjId, Body) of
+            case do_send_single(Class, {Type, '*'}, Obj, SrvId, ObjId, Body) of
                 not_found ->
-                    do_send_single(SrvId, Class, {Type, '*'}, {Obj, '*'}, ObjId, Body);
+                    do_send_single(Class, {Type, '*'}, {Obj, '*'}, SrvId, ObjId, Body);
                 ok ->
                     ok
             end;
@@ -79,44 +82,46 @@ send_single(SrvId, {Class, Type, Obj, ObjId}, Body) ->
 
 
 %% @doc
--spec send_all(srv_id(), reg_id()) ->
+-spec send_all(reg_id()) ->
     ok | not_found.
 
-send_all(SrvId, RegId) ->
-    send_all(SrvId, RegId, {}).
+send_all(RegId) ->
+    send_all(RegId, {}).
 
 
 %% @doc
--spec send_all(srv_id(), reg_id(), body()) ->
+-spec send_all(reg_id(), body()) ->
     ok | not_found.
 
-send_all(SrvId, {Class, Type, Obj, ObjId}, Body) ->
-    do_send_all(SrvId, Class, Type, Obj, ObjId, Body),
-    do_send_all(SrvId, Class, {Type, '*'}, Obj, ObjId, Body),
-    do_send_all(SrvId, Class, {Type, '*'}, {Obj, '*'}, ObjId, Body).
+send_all(#reg_id{}=RegId, Body) ->
+    #reg_id{class=Class, type=Type, obj=Obj, srv_id=SrvId, obj_id=ObjId} = RegId,
+    do_send_all(Class, Type, Obj, SrvId, ObjId, Body),
+    do_send_all(Class, {Type, '*'}, Obj, SrvId, ObjId, Body),
+    do_send_all( Class, {Type, '*'}, {Obj, '*'}, SrvId, ObjId, Body).
 
 
 %% @doc
--spec reg(srv_id(), reg_id()) ->
+-spec reg(reg_id()) ->
     {ok, pid()}.
 
-reg(SrvId, RegId) ->
-    reg(SrvId, RegId, #{}, self()).
+reg(RegId) ->
+    reg(RegId, #{}, self()).
 
 
 %% @doc
--spec reg(srv_id(), reg_id(), body()) ->
+-spec reg(reg_id(), body()) ->
     {ok, pid()}.
 
-reg(SrvId, RegId, Body) ->
-    reg(SrvId, RegId, Body, self()).
+reg(RegId, Body) ->
+    reg(RegId, Body, self()).
 
 
 %% @doc
--spec reg(srv_id(), reg_id(), body(), pid()) ->
+-spec reg(reg_id(), body(), pid()) ->
     {ok, pid()}.
 
-reg(SrvId, {Class, Type, Obj, ObjId}, Body, Pid) ->
+reg(#reg_id{}=RegId, Body, Pid) ->
+    #reg_id{class=Class, type=Type, obj=Obj, srv_id=SrvId, obj_id=ObjId} = RegId,
     Type2 = check_all(Type),
     Obj2 = check_all(Obj),
     ObjId2 = check_all(ObjId),
@@ -126,18 +131,19 @@ reg(SrvId, {Class, Type, Obj, ObjId}, Body, Pid) ->
 
 
 %% @doc
--spec unreg(srv_id(), reg_id()) ->
+-spec unreg(reg_id()) ->
     {ok, pid()}.
 
-unreg(SrvId, RegId) ->
-    unreg(SrvId, RegId, self()).
+unreg(RegId) ->
+    unreg(RegId, self()).
 
 
 %% @doc
--spec unreg(srv_id(), reg_id(), pid()) ->
+-spec unreg(reg_id(), pid()) ->
     ok.
 
-unreg(SrvId, {Class, Type, Obj, ObjId}, Pid) ->
+unreg(#reg_id{}=RegId, Pid) ->
+    #reg_id{class=Class, type=Type, obj=Obj, srv_id=SrvId, obj_id=ObjId} = RegId,
     Type2 = check_all(Type),
     Obj2 = check_all(Obj),
     ObjId2 = check_all(ObjId),
@@ -202,9 +208,9 @@ init([Class, Type, Obj]) ->
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}} | {noreply, #state{}} | {stop, normal, ok, #state{}}.
 
-handle_call({send_single, SrvId, Type, Obj, ObjId, Body}, _From, State) ->
+handle_call({send_single, Type, Obj, SrvId, ObjId, Body}, _From, State) ->
     #state{class=Class, regs=Regs} = State,
-    RegId = {Class, Type, Obj, ObjId},
+    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=SrvId, obj_id=ObjId},
     PidTerms = case maps:get({SrvId, ObjId}, Regs, []) of
         [] ->
             maps:get({SrvId, '*'}, Regs, []);
@@ -220,7 +226,7 @@ handle_call({send_single, SrvId, Type, Obj, ObjId, Body}, _From, State) ->
         _ ->
             Pos = nklib_util:l_timestamp() rem length(PidTerms) + 1,
             {Pid, RegBody} = lists:nth(Pos, PidTerms),
-            send_event(SrvId, RegId, Body, Pid, RegBody),
+            send_event(RegId, Body, Pid, RegBody),
             {reply, ok, State}
     end;
 
@@ -236,25 +242,25 @@ handle_call(Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}}.
 
-handle_cast({send_all, SrvId, Type, Obj, ObjId, Body}, State) ->
+handle_cast({send_all, Type, Obj, SrvId, ObjId, Body}, State) ->
     #state{class=Class, regs=Regs} = State,
-    RegId = {Class, Type, Obj, ObjId},
+    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=SrvId, obj_id=ObjId},
     % lager:error("Event all: ~p:~p:~p:~p (~p:~p)", 
     %             [Class, Type, Obj, Id, State#state.type, State#state.sub]),
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
     lists:foreach(
         fun({Pid, RegBody}) -> 
-            send_event(SrvId, RegId, Body, Pid, RegBody) end,
+            send_event(RegId, Body, Pid, RegBody) end,
         PidTerms1),
     PidTerms2 = maps:get({SrvId, '*'}, Regs, []) -- PidTerms1,
     lists:foreach(
         fun({Pid, RegBody}) -> 
-            send_event(SrvId, RegId, Body, Pid, RegBody) end,
+            send_event(RegId, Body, Pid, RegBody) end,
         PidTerms2),
     PidTerms3 = maps:get({'*', '*'}, Regs, []) -- PidTerms1 -- PidTerms2,
     lists:foreach(
         fun({Pid, RegBody}) -> 
-            send_event(SrvId, RegId, Body, Pid, RegBody) end,
+            send_event(RegId, Body, Pid, RegBody) end,
         PidTerms3),
     {noreply, State};
 
@@ -323,7 +329,7 @@ check_all(Any) -> Any.
 
 
 %% @private
-do_send_single(SrvId, Class, Type, Obj, ObjId, Body) ->
+do_send_single(Class, Type, Obj, SrvId, ObjId, Body) ->
     case Type of
         {TypeC, TypeS} -> ok;
         TypeC -> TypeS = TypeC
@@ -334,14 +340,14 @@ do_send_single(SrvId, Class, Type, Obj, ObjId, Body) ->
     end,
     case find_server(Class, TypeS, ObjS) of
         {ok, Server} -> 
-            gen_server:call(Server, {send_single, SrvId, TypeC, ObjC, ObjId, Body});
+            gen_server:call(Server, {send_single, TypeC, ObjC, SrvId, ObjId, Body});
         not_found -> 
             not_found
     end.
 
 
 %% @private
-do_send_all(SrvId, Class, Type, Obj, ObjId, Body) ->
+do_send_all(Class, Type, Obj, SrvId, ObjId, Body) ->
     case Type of
         {TypeC, TypeS} -> ok;
         TypeC -> TypeS = TypeC
@@ -352,7 +358,7 @@ do_send_all(SrvId, Class, Type, Obj, ObjId, Body) ->
     end,
     case find_server(Class, TypeS, ObjS) of
         {ok, Server} -> 
-            gen_server:cast(Server, {send_all, SrvId, TypeC, ObjC, ObjId, Body});
+            gen_server:cast(Server, {send_all, TypeC, ObjC, SrvId, ObjId, Body});
         not_found -> 
             ok
     end.
@@ -439,7 +445,7 @@ do_unreg([Key|Rest], Pid, Regs, Pids) ->
 
 
 %% @private
-send_event(SrvId, RegId, Body, Pid, RegBody) ->
+send_event(#reg_id{}=RegId, Body, Pid, RegBody) ->
     % lager:info("Sending event ~p:~p:~p:~p to ~p (~p)",
     %            [Class, Type, Obj, Id, Pid, Body]),
     Body2 = case is_map(Body) andalso is_map(RegBody) of
@@ -447,7 +453,7 @@ send_event(SrvId, RegId, Body, Pid, RegBody) ->
         false when map_size(Body)==0 -> RegBody;
         false -> RegBody
     end,
-    Pid ! {nkservice_event, SrvId, RegId, Body2}.
+    Pid ! {nkservice_event, RegId, Body2}.
 
 
 
@@ -492,9 +498,10 @@ basic_test_() ->
 % -compile([export_all]).
 
 test1() ->
+    Reg = #reg_id{class=c, type=t, obj=o, srv_id=srv},
     Self = self(),
-    reg(srv, {c, t, o, id1}, b1),
-    reg(srv, {c, t, o, id2}, b2),
+    reg(Reg#reg_id{obj_id=id1}, b1),
+    reg(Reg#reg_id{obj_id=id2}, b2),
     {
         [
             {{srv, id1}, [{Self, b1}]}, 
@@ -504,15 +511,15 @@ test1() ->
     } = 
         dump(c, t, o),
 
-    unreg(srv, {c, t, o, id1}),
+    unreg(Reg#reg_id{obj_id=id1}),
     {
         [{{srv, id2}, [{Self, b2}]}],
         [{Self, {_, [{srv, id2}]}}]
     } = 
         dump(c, t, o),
 
-    unreg(srv, {c, t, o, id3}),
-    unreg(srv, {c, t, o, id2}),
+    unreg(Reg#reg_id{obj_id=id3}),
+    unreg(Reg#reg_id{obj_id=id2}),
     {[], []} = dump(c, t, o),
     ok.
 
@@ -527,9 +534,10 @@ test2() ->
     P7 = test_reg('*', b7),
     timer:sleep(50),
 
+    Reg = #reg_id{class=c, type=t, obj=o, srv_id=srv},
     lists:foreach(
         fun(_) ->
-            send_single(srv, {c, t, o, 0}),
+            send_single(Reg#reg_id{obj_id=0}),
             receive 
                 {c, _RP1, 0, RB1} -> true = lists:member(RB1, [b1, b1b, b2, b3, b3b, b7]);
                 O -> error(O)
@@ -541,7 +549,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            send_single(srv, {c, t, o, 1}),
+            send_single(Reg#reg_id{obj_id=1}),
             receive 
                 {c, _RP2, 1, RB2} -> true = lists:member(RB2, [b1, b1b, b7])
                 after 100 -> error(?LINE) 
@@ -551,7 +559,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            send_single(srv, {c, t, o, 2}),
+            send_single(Reg#reg_id{obj_id=2}),
             receive 
                 {c, RP3, 2, RB2} -> 
                     true = lists:member(RB2, [b2, b7]),
@@ -564,7 +572,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            send_single(srv, {c, t, o, 3}),
+            send_single(Reg#reg_id{obj_id=3}),
             receive 
                 {c, _RP3, 3, RB2} -> true = lists:member(RB2, [b3, b3b, b7])
                 after 100 -> error(?LINE) 
@@ -574,7 +582,7 @@ test2() ->
 
     lists:foreach(
         fun(_) ->
-            send_single(srv, {c, t, o, 25}),
+            send_single(Reg#reg_id{obj_id=25}),
             receive 
                 {c, P7, 25, b7} -> ok
                 after 100 -> error(?LINE) 
@@ -582,7 +590,7 @@ test2() ->
         end,
         lists:seq(1, 100)),
 
-    send_all(srv, {c, t, o, 0}),
+    send_all(Reg#reg_id{obj_id=0}),
     receive {c, P1, 0, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P2, 0, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P3, 0, b1b} -> ok after 100 -> error(?LINE) end,
@@ -591,22 +599,22 @@ test2() ->
     receive {c, P6, 0, b3b} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 0, b7} -> ok after 100 -> error(?LINE) end,
 
-    send_all(srv, {c, t, o, 1}),
+    send_all(Reg#reg_id{obj_id=1}),
     receive {c, P1, 1, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P2, 1, b1} -> ok after 100 -> error(?LINE) end,
     receive {c, P3, 1, b1b} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 1, b7} -> ok after 100 -> error(?LINE) end,
 
-    send_all(srv, {c, t, o, 2}),
+    send_all(Reg#reg_id{obj_id=2}),
     receive {c, P4, 2, b2} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 2, b7} -> ok after 100 -> error(?LINE) end,
 
-    send_all(srv, {c, t, o, 3}),
+    send_all(Reg#reg_id{obj_id=3}),
     receive {c, P5, 3, b3} -> ok after 100 -> error(?LINE) end,
     receive {c, P6, 3, b3b} -> ok after 100 -> error(?LINE) end,
     receive {c, P7, 3, b7} -> ok after 100 -> error(?LINE) end,
 
-    send_all(srv, {c, t, o, 33}),
+    send_all(Reg#reg_id{obj_id=33}),
     receive {c, P7, 33, b7} -> ok after 100 -> error(?LINE) end,
 
     receive _ -> error(?LINE) after 100 -> ok end,
@@ -672,23 +680,25 @@ test3() ->
 
 
 test_reg(I, B) ->
+    Reg = #reg_id{class=c, type=t, obj=o, srv_id=srv},
     Self = self(),
     spawn(
         fun() -> 
-            reg(srv, {c, t, o, I}, B),
-            reg(srv, {c, t, o, 0}, B),
+            reg(Reg#reg_id{obj_id=I}, B),
+            reg(Reg#reg_id{obj_id=0}, B),
             test_reg_loop(Self, I)
         end).
 
 test_reg_loop(Pid, I) ->
     receive
-        {nkservice_event, srv, {c, t, o, Id}, Body} -> 
+        {nkservice_event, RegId, Body} -> 
+            #reg_id{class=c, type=t, obj=o, srv_id=srv, obj_id=Id} = RegId,
             Pid ! {c, self(), Id, Body},
             test_reg_loop(Pid, I);
         stop ->
             ok;
         unreg ->
-            unreg(srv, {c, t, o, I}),
+            unreg(#reg_id{class=c, type=t, obj=o, srv_id=srv, obj_id=I}),
             test_reg_loop(Pid, I);
         _ ->
             error(?LINE)

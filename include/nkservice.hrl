@@ -56,7 +56,17 @@
 %         false -> ok
 %     end).
 
+%% ===================================================================
+%% Records
+%% ===================================================================
 
+-record(reg_id, {
+	class :: nkservice_events:class(),
+	type = '*' :: nkservice_events:type(),
+	obj = '*'  :: nkservice_events:obj(),
+	srv_id :: nkservice_events:srv_id(),
+	obj_id = '*' :: nkservice_events:obj_id()
+}).
 
 
 -endif.

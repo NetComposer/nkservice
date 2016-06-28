@@ -24,7 +24,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([class/0, cmd/0]).
 -export([launch/8]).
--export([cmd/4, syntax/1, defaults/1, mandatory/1]).
+-export([cmd/4, syntax/4]).
+-export([parse_service/1]).
 
 %% ===================================================================
 %% Types
@@ -34,6 +35,7 @@
 -type cmd() :: atom().
 -type state() :: map().
 
+-include("nkservice.hrl").
 
 
 %% ===================================================================
@@ -48,14 +50,14 @@
     {ok, term(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
 launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
-    {ok, Syntax} = SrvId:api_cmd_syntax(Class, Cmd, Data),
-    {ok, Defaults} = SrvId:api_cmd_defaults(Class, Cmd, Data),
-    {ok, Mandatory} = SrvId:api_cmd_mandatory(Class, Cmd, Data), 
+    {Syntax, Defaults, Mandatory} = 
+        SrvId:api_cmd_syntax(Class, Cmd, Data, #{}, #{}, []),
     Opts = #{
         return => map, 
         defaults => Defaults,
         mandatory => Mandatory
     },
+    % lager:error("Syntax for ~p: ~p, ~p ~p", [Cmd, Syntax, Defaults, Mandatory]),
     case nklib_config:parse_config(Data, Syntax, Opts) of
         {ok, Parsed, _} ->
             case SrvId:api_allow(SrvId, User, Class, Cmd, Parsed, State) of
@@ -67,26 +69,8 @@ launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
         {error, {syntax_error, Error}} ->
             {error, {syntax_error, Error}, State};
         {error, {missing_mandatory_field, Field}} ->
-            lager:error("M: ~p", [Field]),
             {error, {missing_field, Field}, State}
     end.
-
-
-% %% @doc Called when the connection receives a down, it can be one of 
-% %% our monitored event servers
-% -spec handle_down(reference(), pid(), term(), state()) ->
-%     {ok, state()}.
-
-% handle_down(Mon, _Pid, _Reason, State) ->
-%     Regs = get_regs(State),
-%     case lists:keytake(Mon, 2, Regs) of
-%         {value, {{Class, Type, Sub, Id}, Mon}, Regs2} ->
-%             %% TODO: retry reg or send event to client
-%             lager:warning("Registration failed for ~p:~p:~p:~p", [Class, Type, Sub, Id]);
-%         false ->
-%             Regs2 = Regs
-%     end,
-%     {ok, set_regs(Regs2, State)}.
 
 
 
@@ -99,31 +83,38 @@ launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
 -spec cmd(nkservice:id(), atom(), Data::map(), state()) ->
     {ok, map()} | {error, nkservice:error()}.
 
-%% @TODO: must monitor listener proc
-
-cmd(_SrvId, register, Data, State) ->
+cmd(SrvId, subscribe, Data, State) ->
     #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
-    RegId = {Class, Type, Obj, ObjId},
-    Body = maps:get(body, Data, #{}),
-    nkservice_api_server:register(self(), RegId, Body),
-    {ok, #{}, State};
+    EvSrvId = maps:get(service, Data, SrvId),
+    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId},
+    lager:warning("SUBS: ~p, ~p", [SrvId, RegId]),
+    case SrvId:subscribe_allow(SrvId, RegId, State) of
+        true ->
+            Body = maps:get(body, Data, #{}),
+            nkservice_api_server:register(self(), RegId, Body),
+            {ok, #{}, State};
+        false ->
+            {error, unauthorized, State}
+    end;
 
-cmd(_SrvId, unregister, Data, State) ->
+cmd(SrvId, unsubscribe, Data, State) ->
     #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
-    RegId = {Class, Type, Obj, ObjId},
+    EvSrvId = maps:get(service, Data, SrvId),
+    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId},
     nkservice_api_server:unregister(self(), RegId),
     {ok, #{}, State};
 
 cmd(SrvId, send_event, Data, State) ->
     #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
-    RegId = {Class, Type, Obj, ObjId},
+    EvSrvId = maps:get(service, Data, SrvId),
+    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId},
     Body = maps:get(body, Data, #{}),
     case maps:get(broadcast, Data, false) of
         true ->
-            nkservice_events:send_all(SrvId, RegId, Body),
+            nkservice_events:send_all(RegId, Body),
             {ok, #{}, State};
         false ->
-            case nkservice_events:send_single(SrvId, RegId, Body) of
+            case nkservice_events:send_single(RegId, Body) of
                 ok ->
                     {ok, #{}, State};
                 not_found ->
@@ -136,64 +127,60 @@ cmd(_SrvId, _Other, _Data, State) ->
 
 
 %% @private
-syntax(send_event) ->
-    #{
-        class => atom,
-        obj => atom,
-        type => atom,
-        obj_id => binary,
-        broadcast => boolean,
-        body => any
+syntax(send_event, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            class => atom,
+            obj => atom,
+            type => atom,
+            obj_id => binary,
+            broadcast => boolean,
+            body => any,
+            service => fun ?MODULE:parse_service/3
+        },
+        Defaults,
+        [class, obj, type, obj_id|Mandatory]
     };
 
-syntax(register) ->
-    #{
-        class => atom,
-        obj => atom,
-        type => atom,
-        obj_id => binary,
-        body => any
+syntax(subscribe, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            class => atom,
+            obj => atom,
+            type => atom,
+            obj_id => [{enum, ['*']}, binary],
+            body => any,
+            service => fun ?MODULE:parse_service/1
+        },
+        Defaults#{
+            obj => '*',
+            type => '*',
+            obj_id => '*'
+        },
+        Mandatory
     };
 
-syntax(unregister) ->
-    #{
-        class => atom,
-        obj => atom,
-        type => atom,
-        obj_id => binary
+syntax(unsubscribe, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            class => atom,
+            obj => atom,
+            type => atom,
+            obj_id => [{enum, ['*']}, binary],
+            service => fun ?MODULE:parse_service/1
+        },
+        Defaults#{
+            obj => '*',
+            type => '*',
+            obj_id => '*'
+        },
+        Mandatory
     };
 
-syntax(_) ->
-    #{}.
+syntax(_, Syntax, Defaults, Mandatory) ->
+    {Syntax, Defaults, Mandatory}.
 
 
-%% @private
-defaults(register) ->
-    #{
-        obj => '*',
-        type => '*',
-        obj_id => '*'
-    };
-
-defaults(unregister) ->
-    defaults(register);
-
-defaults(_) ->
-    #{}.
-
-
-%% @private
-mandatory(send_event) ->
-    [class, obj, type, obj_id];
-
-mandatory(register) ->
-    [class];
-
-mandatory(unregister) ->
-    mandatory(register);
-
-mandatory(_) ->
-    [].
 
 
 %% ===================================================================
@@ -201,16 +188,23 @@ mandatory(_) ->
 %% ===================================================================
 
 
-% %% @private
-% get_regs(State) ->
-%     ApiData = maps:get(?MODULE, State, #{}),
-%     maps:get(regs, ApiData, []).
-
-
-% %% @private
-% set_regs(Regs, State) ->
-%     ApiData1 = maps:get(?MODULE, State, #{}),
-%     ApiData2 = ApiData1#{regs=>Regs},
-%     State#{?MODULE=>ApiData2}.
+%% @private
+parse_service(Service) ->
+    case nkservice_srv:get_srv_id(Service) of
+        {ok, SrvId} -> 
+            {ok, SrvId};
+        not_found ->
+            case catch binary_to_existing_atom(Service, utf8) of
+                {'EXIT', _} -> 
+                     {error, {syntax_error, <<"unknown service">>}};
+                Atom ->
+                    case nkservice_srv:get_srv_id(Atom) of
+                        {ok, SrvId} -> 
+                            {ok, SrvId};
+                        not_found ->
+                             {error, {syntax_error, <<"unknown service">>}}
+                    end
+            end
+    end.
 
 

@@ -23,7 +23,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([cmd/4, cmd_async/4, reply_ok/3, reply_error/3, reply_ack/2]).
--export([send_event/3, stop/1, start_ping/2, stop_ping/1, register/3, unregister/2]).
+-export([send_event/3, stop/1, start_ping/2, stop_ping/1]).
+-export([register/3, unregister/2]).
 -export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -44,7 +45,7 @@
 -define(ACK_TIME, 180).         % Maximum operation time (with ACK)
 -define(CALL_TIMEOUT, 180).     % Maximum sync call time
 
-
+-include("nkservice.hrl").
 
 
 %% ===================================================================
@@ -140,7 +141,7 @@ register(Pid, RegId, Body) ->
 
 
 %% @doc Registers with the Events system
--spec unregister(pid(), nkservice_events:reg_id()) ->
+-spec unregister(pid(),  nkservice_events:reg_id()) ->
     ok.
 
 unregister(Pid, RegId) ->
@@ -193,7 +194,7 @@ find_session(SessId) ->
     trans = #{} :: #{tid() => #trans{}},
     tid = 1 :: integer(),
     ping :: integer() | undefined,
-    regs = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
+    regs3 = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
     user_state :: user_state()
 }).
 
@@ -348,17 +349,22 @@ conn_handle_cast({reply_ack, TId}, NkPort, State) ->
     end;
 
 conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State) ->
-    {Class, Type, Obj, ObjId} = RegId,
+    #state{srv_id=SrvId} = State,
+    #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId} = RegId,
     Data1 = #{
         type => Type,
         obj => Obj,
         obj_id => ObjId
     },
-    Data2 = case map_size(Body) of
-        0 -> Data1;
-        _ -> Data1#{body=>Body}
+    Data2 = case EvSrvId of
+        SrvId -> Data1;
+        _ -> Data1#{service=>nkservice_srv:get_item(EvSrvId, name)}
     end,
-    send_request(Class, event, Data2, undefined, NkPort, State);
+    Data3 = case map_size(Body) of
+        0 -> Data2;
+        _ -> Data2#{body=>Body}
+    end,
+    send_request(Class, event, Data3, undefined, NkPort, State);
 
 conn_handle_cast(nkservice_stop, _NkPort, State) ->
     {stop, normal, State};
@@ -374,23 +380,22 @@ conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
 conn_handle_cast({nkservice_register, RegId, Body}, _NkPort, State) ->
-    #state{srv_id=SrvId} = State,
-    {ok, Pid} = nkservice_events:reg(SrvId, RegId, Body),
-    #state{regs=Regs} = State,
+    {ok, Pid} = nkservice_events:reg(RegId, Body),
+    #state{regs3=Regs} = State,
     Mon = monitor(process, Pid),
-    {ok, State#state{regs=[{RegId, Body, Mon}|Regs]}};
+    {ok, State#state{regs3=[{RegId, Body, Mon}|Regs]}};
 
 conn_handle_cast({nkservice_unregister, RegId}, _NkPort, State) ->
-    #state{srv_id=SrvId} = State,
-    ok = nkservice_events:unreg(SrvId, RegId),
-    #state{regs=Regs} = State,
+    ok = nkservice_events:unreg(RegId),
+    #state{regs3=Regs} = State,
     case lists:keytake(RegId, 1, Regs) of
-        {value, {_RegId, _Body, Mon}, Regs2} ->
+        {value, {_, _Body, Mon}, Regs2} ->
             demonitor(Mon);
         false ->
             Regs2 = Regs
     end,
-    {ok, State#state{regs=Regs2}};
+    {ok, State#state{regs3=Regs2}};
+
 
 conn_handle_cast(Msg, _NkPort, State) ->
     handle(api_server_handle_cast, [Msg], State).
@@ -417,18 +422,17 @@ conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
     end;
 
 conn_handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, _NkPort, State) ->
-    #state{regs=Regs} = State,
+    #state{regs3=Regs} = State,
     case lists:keytake(Ref, 3, Regs) of
         {value, {RegId, Body, Ref}, Regs2} ->
             gen_server:cast(self(), {nkservice_register, RegId, Body}),
-            {ok, State#state{regs=Regs2}};
+            {ok, State#state{regs3=Regs2}};
         false ->
             handle(api_server_handle_info, [Info], State)
     end;
 
 %% nkservice_events send this message to all registered to this RegId
-conn_handle_info({nkservice_event, SrvId, RegId, Body}, NkPort, State) ->
-    #state{srv_id=SrvId} = State,
+conn_handle_info({nkservice_event, RegId, Body}, NkPort, State) ->
     case handle(api_server_forward_event, [RegId, Body], State) of
         {ok, State2} ->
             conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State2);

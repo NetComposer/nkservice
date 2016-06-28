@@ -25,14 +25,14 @@
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
+-export([subscribe_allow/3]).
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
 		 api_server_login/3, api_server_cmd/5, api_server_event/3,
 		 api_server_forward_event/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_allow/6, api_cmd/8, api_cmd_syntax/3, api_cmd_defaults/3, 
-	     api_cmd_mandatory/3]).
+-export([api_allow/6, api_cmd/8, api_cmd_syntax/6]).
 
 -export_type([continue/0]).
 
@@ -141,6 +141,19 @@ plugin_stop(Config, _Service) ->
 
 
 %% ===================================================================
+%% Subscribe Callbacks
+%% ===================================================================
+
+%% @doc Called when a 'subscribe' external command arrives
+-spec subscribe_allow(nkservice:id(), nkservice_event:reg_id(), map()) ->
+	boolean(). 
+
+subscribe_allow(_SrvId, _RegId, _State) ->
+	false.
+
+
+
+%% ===================================================================
 %% Service Callbacks
 %% ===================================================================
 
@@ -154,7 +167,6 @@ plugin_stop(Config, _Service) ->
 
 service_init(_Service, State) ->
 	{ok, State}.
-
 
 %% @doc Called when the service process receives a handle_call/3.
 -spec service_handle_call(term(), {pid(), reference()}, state()) ->
@@ -388,35 +400,14 @@ api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->
 
 
 %% @doc Called to get the syntax for an external API command
--spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list()) ->
-	{ok, map()}.
+-spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list(), 
+					 map(), map(), list()) ->
+	{map(), map(), list()}.
 
-api_cmd_syntax(core, Cmd, _Data) ->
-	{ok, nkservice_api:syntax(Cmd)};
+api_cmd_syntax(core, Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
-api_cmd_syntax(_Class, _Cmd, _Data) ->
-	{ok, #{}}.
-
-
-%% @doc Called to get the defaults syntax for an external API command
--spec api_cmd_defaults(nkservice_api:class(), nkservice_api:cmd(), map()|list()) ->
-	{ok, map()}.
-
-api_cmd_defaults(core, Cmd, _Data) ->
-	{ok, nkservice_api:defaults(Cmd)};
-	
-api_cmd_defaults(_Class, _Cmd, _Data) ->
-	{ok, #{}}.
-
-
-%% @doc Called to get the mandatory syntax for an external API command
--spec api_cmd_mandatory(nkservice_api:class(), nkservice_api:cmd(), map()|list()) ->
-	{ok, [atom()]}.
-
-api_cmd_mandatory(core, Cmd, _Data) ->
-	{ok, nkservice_api:mandatory(Cmd)};
-	
-api_cmd_mandatory(_Class, _Cmd, _Data) ->
-	{ok, []}.
+api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	{Syntax, Defaults, Mandatory}.
 
 

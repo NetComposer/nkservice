@@ -23,7 +23,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/6, cmd/4, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
--export([register/6, unregister/5]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
@@ -101,30 +100,6 @@ reply_ok(Pid, TId, Data) ->
 reply_error(Pid, TId, Code) ->
     gen_server:cast(Pid, {reply_error, TId, Code}).
 
-
-%% @doc
-register(Pid, Class, Type, Obj, ObjId, Body) ->
-    Data1 = [
-        {class, Class},
-        case Type of all -> []; _ -> {type, Type} end,
-        case Obj of all -> []; _ -> {obj, Obj} end,
-        case ObjId of all -> []; _ -> {obj_id, ObjId} end,
-        case map_size(Body) of 0 -> []; _ -> {body, Body} end
-    ],
-    Data2 = maps:from_list(lists:flatten(Data1)),
-    cmd(Pid, core, register, Data2).
-
-
-%% @doc
-unregister(Pid, Class, Type, Obj, ObjId) ->
-    Data1 = [
-        {class, Class},
-        case Type of all -> []; _ -> {type, Type} end,
-        case Obj of all -> []; _ -> {obj, Obj} end,
-        case ObjId of all -> []; _ -> {obj_id, ObjId} end
-    ],
-    Data2 = maps:from_list(lists:flatten(Data1)),
-    cmd(Pid, core, unregister, Data2).
 
 %% @dodc
 get_all() ->
