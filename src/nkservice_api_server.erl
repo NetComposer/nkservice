@@ -572,7 +572,7 @@ extract_op(TId, #state{trans=AllTrans}=State) ->
 %% @private
 extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
     nklib_util:cancel_timer(Timer),
-    lager:warning("NEW TIME: ~p", [000*?ACK_TIME]),
+    lager:warning("NEW TIME: ~p", [1000*?ACK_TIME]),
 
     Timer2 = erlang:start_timer(1000*?ACK_TIME, self(), {nkservice_op_timeout, TId}),
     Trans2 = Trans#trans{timer=Timer2},
