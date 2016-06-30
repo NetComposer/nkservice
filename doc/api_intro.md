@@ -2,9 +2,9 @@
 
 ## Introduction
 
-NkSERVICE offers an External API interface that can be deployed over TCP, TLS, WS or WSS connections. Each started service can decide to offer or not this interface. You can use it for any of two very different use cases:
+NkSERVICE offers an External API interface that can be deployed over TCP, TLS, WS or WSS connections. Each started service can decide to publish this interface. The service can use it for any of two very different use cases:
 
-* As a server-side application, to connect to the service and administer it, like starting and stopping, update configuration, receiving events and subscribing to callbacks, so that you are notify and can authorize or not when an user logins, when a new call arrives, etc.
+* As a server-side application, to connect to the service and administer it, like starting and stopping, update configuration, receiving events and subscribing to callbacks, so that you are notified and can authorize or not when an user logins, when a new call arrives, etc.
 * As a way to connect client-side applications (for example browsers) to your service. NkSERVICE supports hundreds of thousands of external clients on a single box. The clients can use the methods and events that you decide in your service configuration.
 
 Currently, all messages over the management interface are JSON messages. In the future other encoding mechanisms will be supported.
@@ -16,20 +16,20 @@ Field|Sample|Comment
 ---|---|---
 class|"core"|Subsystem or plugin responsible to process this message, at the server or the client. At the server, `core` class is managed by NkSERVICE itself. Any started _plugin_ can support other classes.
 cmd|"login"|Command to invoke at the client or the server, related to the class. 
-data|"{}"|Optional information to add to the request.
+data|{}|Optional information to add to the request.
 tid|1|Each request must have an unique transaction id (any numerical or text value).
 
 All messages must be answered immediately with a **response** having the following fields:
 
 Field|Sample|Comment
 ---|---|---
-result|"ok"|Each request type can support a set of specific answers. See bellow.
-data|"{}"|Optional information to add to the response.
+result|"ok"|Each request class and command expects a set of specific answers. See bellow.
+data|{}|Optional information to add to the response.
 tid|1|Must match the `tid` field in the request
 
 By convention, success responses will have `"result": "ok"`. Error responses will follow the following structure:
 
-```json
+```js
 {
 	"result": "error",
 	"data": {
@@ -39,35 +39,31 @@ By convention, success responses will have `"result": "ok"`. Error responses wil
 }
 ```
 
-Responses are expected to be sent **immediately**. If a reply is not available withing 1-2 seconds, the called party must send an **ack**, with the following structure:
+Responses are expected to be sent **immediately**. If a response is not going to be available within a sub-second time, the called party must send an **ack**, with the following structure:
 
-```json
+```js
 {
-	"ack": 1
+	"ack": 1	// Must match the tid of the request
 }
 ```
 
-The vale of the `ack` field must must the `tid` of the request.
-
-NkSERVICE will close the connection if no response is received within 5 seconds. Sending each _ack_ will extend this period to 3 more minutes. NkSERVICE server will send periodic ping requests, that follow the same rule.
+NkSERVICE will close the connection if no response is received within 5 seconds. Sending each _ack_ will extend this timeout for 3 more minutes. NkSERVICE server will send periodic ping requests, that follow the same rule.
 
 
+## Login
 
-
-## Login process
-
-Right after starting the connection, the client must send a _login_ request (see [core commands](doc/api_commands.md]). The service or plugin responsible to accept the user must supply an unique `user` (a single user can start multiple connections) and a session-specific `session_id`. The server provides a unique session_id, but the service login can change it, possibly during a session recovery procedure.
+Right after starting the connection, the client must send a _login_ request (see [core commands](doc/api_commands.md)). The service or plugin responsible to accept the user must supply an unique `user` (a single user can start multiple connections) and a session-specific `session_id`. The server provides a unique session_id, but the service login can change it, possibly during a session recovery procedure.
 
 If you login to the External API server started by the core class (defined in NkSERVICE global configuration) you can only use the (also defined in the config) system-wide administrator's user and pass. In this case, you are allowed to perform administrative functions like creating new services (other ways to create services are defined in the introduction).
 
-If you login to a server started by any other service, that service must attend the login petition, using server logic (using Luerl or Erlang) or subscribing to the callback `api_server_login`.
+If you login to a server started by any other service, that service must attend the login petition, in its server logic (using Luerl or Erlang) or subscribing to the callback `api_server_login` (see bellow).
 
 
 ## Creating a service
 
 To be able to create a service externally, the `core` service must be started and listening for incoming requests. You must connect to it and authenticate yourself using global administrator's credentials (see the previous point).
 
-See the `create_service` command in (see [core commands](doc/api_commands.md]).
+See the `create_service` command in (see [core commands](doc/api_commands.md)).
 
 
 ## Events
@@ -87,18 +83,18 @@ service|"myservice"|Optionally, if the event is sent from a different service, t
 
 ### Subscriptions
 
-Clients connecting to an external API server published by an specific service can subscribe their selves to receive specific events. 
+Clients connecting to an external API server published by an specific service can subscribe to receive specific events. 
 
 The core system and any started plugin can send several types of events. All clients subscribed to the _class_, _type_, _obj_ and _obj_id_ of the event will receive it. Clients can also subscribe to groups of events using a wildcard definition, for example:
 
-```json
+```js
 {
 	"class": "core",
 	"cmd": "subscribe",
 	"data": {
 		"class": "media",
 		"obj": "session",
-		"obj_id": "*"
+		"obj_id": "*",
 		"type": "*"
 	}
 }
@@ -106,16 +102,18 @@ The core system and any started plugin can send several types of events. All cli
 
 In this example, this connection will subscribe to all events sent by the _media_ subsystem (provided by the [nkmedia]() plugin), receiving all types of events (start, stop, etc.) generated by all sessions. 
 
-See [core commands](doc/api_commands.md].
+See [core commands](doc/api_commands.md).
 
 
 ## Callbacks registrations
 
 When using the external API as a way to manage its publishing service, you can subscribe to not only events, but also to callbacks generated at the server. 
 
-The core system supports a number of callbacks, for example to allow registering users or to allow them to subscribe to specific events classes. For example, you would use this request to be notified of incoming login requests and have the opportunity to authorize them:
+The core system supports a number of callbacks, for example to allow registering users or to allow them to subscribe to specific events classes. 
 
-```javascript
+For example, you would use this request to be notified of incoming login requests and have the opportunity to authorize them:
+
+```js
 {
 	"class": "core",
 	"cmd": "register_callback",
@@ -124,12 +122,13 @@ The core system supports a number of callbacks, for example to allow registering
 		"callback": "login"
 	},
 	"tid": 1
-}```
+}
+```
 
 after this is accepted by the server, next time an user tries to login you will receive a callback request:
 
 
-```javascript
+```js
 {
 	"class": "core",
 	"cmd": "api_server_login",
@@ -137,21 +136,23 @@ after this is accepted by the server, next time an user tries to login you will 
 		"user": "my_user",
 		"pass": "my_pass"
 	},
-	"tid": 1
-}```
+	"tid": 101
+}
+```
 
 and you could return:
 
 
-```javascript
+```js
 {
 	"result": "ok",
 	"data": {
 		"authorized": "false",
-		reason: "Invalid password"
+		"reason": "Invalid password"
 	},
-	"tid": 2
-}```
+	"tid": 101
+}
+```
 
 
 
