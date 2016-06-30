@@ -1,6 +1,6 @@
 # NkSERVICE
 
-# Overall picture
+# Introduction
 
 NkSERVICE is an Erlang framework to manage a complex set of services in a cluster. It features:
 * A powerful plugin mechanism, so that any service is made of a set of _plugins_ and a bit of custom login.
