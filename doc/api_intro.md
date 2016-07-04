@@ -4,17 +4,17 @@
 
 Each started service can decide to publish an External API interface that can be deployed over TCP, TLS, WS or WSS connections. The service can use it for any of two very different use cases:
 
-* For _server-side_ applications, to connect to the service and administer it, like starting and stopping it, update configuration, receiving events and subscribing to callbacks, so that you are notified and can authorize or not when an user logins, when a new call arrives, etc.
+* For _server-side_ applications, to connect to the service and administer it, like starting and stopping it, update configuration, receiving events and subscribing to callbacks, so that you are notified and can authorize or not when an user logins, process incoming  calls, etc.
 * As a way to connect _client-side_ applications (like browsers) to your service. NkSERVICE supports hundreds of thousands of external clients on a single box. The clients can use the methods and events that you decide to offer in your service configuration.
 
-Currently, all messages over the management interface are JSON messages. In the future other encoding mechanisms may be supported.
+Currently, all messages over the external API interface are JSON messages. In the future other encoding mechanisms may be supported.
 
 Any side of the connection (client or server) can send _requests_ to the other side, that must _answer_ them. All **requests** have the following fields:
 
 
 Field|Sample|Comment
 ---|---|---
-class|"core"|Subsystem or plugin responsible to process this message, at the server or the client. At the server, `core` class is managed by NkSERVICE itself. Any started _plugin_ can support other classes.
+class|"core"|Subsystem or plugin responsible to process this message, at the server or the client. At the server, `core` class is managed by NkSERVICE itself. Any attached _plugin_ can support other classes.
 cmd|"login"|Command to invoke at the client or the server, related to the class. 
 data|{}|Optional information to add to the request.
 tid|1|Each request must have an unique transaction id (any numerical or text value).
@@ -52,7 +52,7 @@ NkSERVICE will close the connection if no response is received within 5 seconds.
 
 ## Login
 
-Right after starting the connection, the client must send a _login_ request (see [core commands](doc/api_commands.md)). The service or plugin responsible to accept the user must supply an unique `user` (a single user can start multiple connections) and a session-specific `session_id`. The server provides a unique session_id, but the service login can change it, possibly during a session recovery procedure.
+Right after starting the connection, the client must send a _login_ request (see [core commands](doc/api_commands.md)). The service or plugin responsible to accept the user must supply an `user` (a single user can start multiple connections) and an unique, session-specific `session_id`. The server provides a unique session_id, but the service login can change it, possibly during a session recovery procedure.
 
 If you login to the External API server started by the core class (defined in NkSERVICE global configuration) you can only use the (also defined in the config) system-wide administrator's user and pass. In this case, you are allowed to perform administrative functions like creating new services (other ways to create services are defined in the introduction).
 
@@ -68,24 +68,24 @@ See the `create_service` command in (see [core commands](doc/api_commands.md)).
 
 ## Events
 
-There is an special type of request called **event**. An event is identical to any other request, but the `cmd` field is `"event"`. Events must be answered immediately, with `"result": "ok"` and no `data` field, since no response data is expected.
+There is an special type of request called **event**. An event is identical to any other request, but the `cmd` field is `"event"`. All defined classes (included `core`) must support events. Events must be answered immediately, with `"result": "ok"` and no `data` field, since no response data is expected.
 
 All received events have the following fields in the `data` field of the request:
 
 Field|Sample|Comment
 ---|---|---
-class|"media"|Subsystem or plugin sending the event.
-type|"stop"|Event type. Each class can send a supported set of _event types_
-obj|"session"|Object or subsystem belonging to the class sending the event.
+class|"media"|Class sending the event (client or server)
+type|"stop"|Event type. Each class supports set of _event types_
+obj|"session"|Object class or subsystem belonging to the class sending the event.
 obj_id|"5179b729-367c-e79c-0399-38c9862f00d9"|Specific instance of the object class this event refers to.
-service|"myservice"|Optionally, if the event is sent from a different service, the sending service is included
+service|"myservice"|Optionally, if the event is sent from a different service, the sending service is included.
 
 
 ### Subscriptions
 
 Clients connecting to an external API server published by an specific service can subscribe to receive specific events. 
 
-The core system and any started plugin can send several types of events. All clients subscribed to the _class_, _type_, _obj_ and _obj_id_ of the event will receive it. Clients can also subscribe to groups of events using a wildcard definition, for example:
+The core system and any attached plugin can send several types of events. All clients subscribed to the _class_, _type_, _obj_ and _obj_id_ of the event will receive it. Clients can also subscribe to groups of events using a wildcard definition, for example:
 
 ```js
 {
@@ -100,16 +100,16 @@ The core system and any started plugin can send several types of events. All cli
 }
 ```
 
-In this example, this connection will subscribe to all events sent by the _media_ subsystem (provided by the [nkmedia]() plugin), receiving all types of events (start, stop, etc.) generated by all sessions. 
+In this example, this connection will subscribe to all events sent by the _media_ subsystem (provided by the [nkmedia](https://github.com/NetComposer/nkmedia) plugin), receiving all types of events (start, stop, etc.) generated by all sessions. 
 
 See [core commands](doc/api_commands.md).
 
 
 ## Callbacks registrations
 
-When using the external API as a way to manage its publishing service, you can subscribe to not only events, but also to callbacks generated at the server. 
+When using the external API as a way to manage its publishing service, you can subscribe not only to events, but also to callbacks generated at the server. 
 
-The core system supports a number of callbacks, for example to allow registering users or to allow them to subscribe to specific events classes. 
+The core system supports a number of callbacks, for example to allow registering users or to allow them to subscribe to specific events.
 
 For example, you would use this request to be notified of incoming login requests and have the opportunity to authorize them:
 
