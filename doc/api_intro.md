@@ -2,12 +2,12 @@
 
 ## Introduction
 
-NkSERVICE offers an External API interface that can be deployed over TCP, TLS, WS or WSS connections. Each started service can decide to publish this interface. The service can use it for any of two very different use cases:
+Each started service can decide to publish an External API interface that can be deployed over TCP, TLS, WS or WSS connections. The service can use it for any of two very different use cases:
 
-* As a server-side application, to connect to the service and administer it, like starting and stopping, update configuration, receiving events and subscribing to callbacks, so that you are notified and can authorize or not when an user logins, when a new call arrives, etc.
-* As a way to connect client-side applications (for example browsers) to your service. NkSERVICE supports hundreds of thousands of external clients on a single box. The clients can use the methods and events that you decide in your service configuration.
+* For _server-side_ applications, to connect to the service and administer it, like starting and stopping it, update configuration, receiving events and subscribing to callbacks, so that you are notified and can authorize or not when an user logins, when a new call arrives, etc.
+* As a way to connect _client-side_ applications (like browsers) to your service. NkSERVICE supports hundreds of thousands of external clients on a single box. The clients can use the methods and events that you decide to offer in your service configuration.
 
-Currently, all messages over the management interface are JSON messages. In the future other encoding mechanisms will be supported.
+Currently, all messages over the management interface are JSON messages. In the future other encoding mechanisms may be supported.
 
 Any side of the connection (client or server) can send _requests_ to the other side, that must _answer_ them. All **requests** have the following fields:
 
