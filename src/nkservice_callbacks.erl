@@ -25,14 +25,13 @@
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([subscribe_allow/3]).
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
 		 api_server_login/3, api_server_cmd/5, api_server_event/3,
 		 api_server_forward_event/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_allow/6, api_cmd/8, api_cmd_syntax/6]).
+-export([api_allow/6, api_subscribe_allow/5, api_cmd/8, api_cmd_syntax/6]).
 
 -export_type([continue/0]).
 
@@ -97,20 +96,6 @@ plugin_listen(Config, #{id:=SrvId}) ->
 	nkservice_util:get_core_listeners(SrvId, Config).
 
 
-%% @doc This function, if implemented, allows to set modules offering APIs 
-%% for the Lua Scripting Environment
--spec plugin_lua_modules(config(), service()) ->
-	[{atom(), module()}].
-
-plugin_lua_modules(_Config, _Service) ->
-	[
-		{log, nkservice_luerl_lager},
-		{kv, nkservice_luerl_kv}
-	].
-
-
-
-
 %% @doc Called during service's start
 %% The plugin must start and can update the service's config
 -spec plugin_start(config(), service()) ->
@@ -118,7 +103,6 @@ plugin_lua_modules(_Config, _Service) ->
 
 plugin_start(Config, _Service) ->
 	{ok, Config}.
-
 
 
 %% @doc Called during service's update
@@ -137,83 +121,6 @@ plugin_update(Config, _Service) ->
 plugin_stop(Config, _Service) ->
 	{ok, Config}.
 
-
-
-
-%% ===================================================================
-%% Subscribe Callbacks
-%% ===================================================================
-
-%% @doc Called when a 'subscribe' external command arrives
--spec subscribe_allow(nkservice:id(), nkservice_event:reg_id(), map()) ->
-	boolean(). 
-
-subscribe_allow(_SrvId, _RegId, _State) ->
-	false.
-
-
-
-%% ===================================================================
-%% Service Callbacks
-%% ===================================================================
-
-
--type service() :: nkservice:service().
--type state() :: map().
-
-%% @doc Called when a new service starts
--spec service_init(service(), state()) ->
-	{ok, state()} | {stop, term()}.
-
-service_init(_Service, State) ->
-	{ok, State}.
-
-%% @doc Called when the service process receives a handle_call/3.
--spec service_handle_call(term(), {pid(), reference()}, state()) ->
-	{reply, term(), state()} | {noreply, state()} | continue().
-
-service_handle_call(Msg, _From, State) ->
-    lager:error("Module nkservice_srv received unexpected call ~p", [Msg]),
-    {noreply, State}.
-
-
-%% @doc Called when the NkApp process receives a handle_cast/3.
--spec service_handle_cast(term(), state()) ->
-	{noreply, state()} | continue().
-
-service_handle_cast(Msg, State) ->
-    lager:error("Module nkservice_srv received unexpected cast ~p", [Msg]),
-	{noreply, State}.
-
-
-%% @doc Called when the NkApp process receives a handle_info/3.
--spec service_handle_info(term(), state()) ->
-	{noreply, state()} | continue().
-
-service_handle_info(Msg, State) ->
-    lager:notice("Module nkservice_srv received unexpected info ~p", [Msg]),
-	{noreply, State}.
-
-
--spec service_code_change(term()|{down, term()}, state(), term()) ->
-    ok | {ok, service()} | {error, term()} | continue().
-
-service_code_change(OldVsn, State, Extra) ->
-	{continue, [OldVsn, State, Extra]}.
-
-
-%% @doc Called when a service is stopped
--spec service_terminate(term(), service()) ->
-	{ok, service()}.
-
-service_terminate(_Reason, State) ->
-	{ok, State}.
-
-
-
-%% ===================================================================
-%% External Server Callbacks
-%% ===================================================================
 
 
 
@@ -281,7 +188,7 @@ api_server_init(_NkPort, State) ->
 %% @doc Cmd "login" is received (class "core")
 %% You get the class and data fields, along with a server-generated session id
 %% You can accept the request setting an 'user' for this connection
-%% and, optionally, changing the session id (for example for session recovery)
+%% and, optionally, changing the session id (for example for session recoverty)
 -spec api_server_login(data(), SessId::binary(), state()) ->
 	{true, User::binary(), state()} | 
 	{true, User::binary(), SessId::binary(), state()} | 
@@ -296,9 +203,9 @@ api_server_login(_Data, _SessId, State) ->
 	{ok, data(), state()} | {ack, state()} | 
 	{error, error_code(), state()} | continue().
 
-api_server_cmd(core, Cmd, Data, TId, State) ->
+api_server_cmd(<<"core">>, Cmd, Data, TId, State) ->
 	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-	nkservice_api:launch(SrvId, User, SessId, core, Cmd, Data, TId, State);
+	nkservice_api:launch(SrvId, User, SessId, <<"core">>, Cmd, Data, TId, State);
 	
 api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
     {error, not_implemented, State}.
@@ -376,15 +283,36 @@ api_server_terminate(_Reason, State) ->
 %% API Management Callbacks
 %% ===================================================================
 
+%% @doc Called to get the syntax for an external API command
+-spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list(), 
+					 map(), map(), list()) ->
+	{Syntax::map(), Defaults::map(), Mandatory::list()}.
+
+api_cmd_syntax(<<"core">>, Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
+	
+api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	{Syntax, Defaults, Mandatory}.
+
+
 %% @doc Called when a new API command has arrived and called nkservice_api:launch/6
-%% The request is parsed, if ok, will call this callback to see if it is authorized
-%% If it is, it will call api_cmd/6
+%% to authorized the (already parsed) request
 -spec api_allow(nkservice:id(), binary(), nkservice_api:class(), nkservice_api:cmd(),
 			    map(), state()) ->
 	{boolean(), state()}.
 
 api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
-	{true, State}.
+	{false, State}.
+
+
+%% @doc Called when a 'subscribe' external command arrives
+%% You should allow subscribing to other service's events without care.
+-spec api_subscribe_allow(nkservice_events:class(), nkservice_events:subclass(), 
+						  nkservice_events:type(), nkservice:id(), map()) ->
+	{boolean(), map()}.
+
+api_subscribe_allow(_Class, _SubClass, _Type, _SrvId, State) ->
+	{false, State}.
 
 
 %% @doc Called when a new API command has arrived and is authorized
@@ -392,22 +320,69 @@ api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
 			  nkservice_api:cmd(), map(), term(), state()) ->
 	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
-api_cmd(SrvId, _User, _SessId, core, Cmd, Parsed, _TId, State) ->
+api_cmd(SrvId, _User, _SessId, <<"core">>, Cmd, Parsed, _TId, State) ->
 	nkservice_api:cmd(SrvId, Cmd, Parsed, State);
 
 api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->
 	{error, not_implemented, State}.
 
 
-%% @doc Called to get the syntax for an external API command
--spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list(), 
-					 map(), map(), list()) ->
-	{map(), map(), list()}.
 
-api_cmd_syntax(core, Cmd, _Data, Syntax, Defaults, Mandatory) ->
-	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
-	
-api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
-	{Syntax, Defaults, Mandatory}.
 
+
+%% ===================================================================
+%% Service Callbacks
+%% ===================================================================
+
+
+-type service() :: nkservice:service().
+-type state() :: map().
+
+%% @doc Called when a new service starts
+-spec service_init(service(), state()) ->
+	{ok, state()} | {stop, term()}.
+
+service_init(_Service, State) ->
+	{ok, State}.
+
+%% @doc Called when the service process receives a handle_call/3.
+-spec service_handle_call(term(), {pid(), reference()}, state()) ->
+	{reply, term(), state()} | {noreply, state()} | continue().
+
+service_handle_call(Msg, _From, State) ->
+    lager:error("Module nkservice_srv received unexpected call ~p", [Msg]),
+    {noreply, State}.
+
+
+%% @doc Called when the NkApp process receives a handle_cast/3.
+-spec service_handle_cast(term(), state()) ->
+	{noreply, state()} | continue().
+
+service_handle_cast(Msg, State) ->
+    lager:error("Module nkservice_srv received unexpected cast ~p", [Msg]),
+	{noreply, State}.
+
+
+%% @doc Called when the NkApp process receives a handle_info/3.
+-spec service_handle_info(term(), state()) ->
+	{noreply, state()} | continue().
+
+service_handle_info(Msg, State) ->
+    lager:notice("Module nkservice_srv received unexpected info ~p", [Msg]),
+	{noreply, State}.
+
+
+-spec service_code_change(term()|{down, term()}, state(), term()) ->
+    ok | {ok, service()} | {error, term()} | continue().
+
+service_code_change(OldVsn, State, Extra) ->
+	{continue, [OldVsn, State, Extra]}.
+
+
+%% @doc Called when a service is stopped
+-spec service_terminate(term(), service()) ->
+	{ok, service()}.
+
+service_terminate(_Reason, State) ->
+	{ok, State}.
 

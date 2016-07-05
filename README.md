@@ -43,5 +43,5 @@ When defining a service, you can set an administrator users and password. Specia
 
 NkSERVICE offers a flexible, easy to use protocol suitable for developing both client-side applications (supporting hundreds of thousands of connections) and server-side applications, where an external application written in any language can start any number of channels to a service, and receive incoming tasks and messages, that are load-balanced over all started channels.
 
-See the [external API introduction](doc/api_intro.md) for a description of the protocol, and [external API commands](doc/api_commands.erl) for currently implemented commands and events in NkSERVICE. Any activated plugin for a service can add new commands and events, of modify the behavior of current ones.
+See the [external API introduction](doc/api_intro.md) for a description of the protocol, and [external API commands](doc/api_commands.md) for currently implemented commands and events in NkSERVICE. Any activated plugin for a service can add new commands and events, of modify the behavior of current ones.
 
