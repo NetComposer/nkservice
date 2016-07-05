@@ -86,11 +86,11 @@ launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
     {ok, map()} | {error, nkservice:error()}.
 
 cmd(SrvId, subscribe, Data, State) ->
-    #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
+    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId},
+    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
     lager:warning("SUBS: ~p, ~p", [SrvId, RegId]),
-    case SrvId:subscribe_allow(SrvId, RegId, State) of
+    case SrvId:api_subscribe_allow(SrvId, RegId, State) of
         true ->
             Body = maps:get(body, Data, #{}),
             nkservice_api_server:register(self(), RegId, Body),
@@ -100,16 +100,16 @@ cmd(SrvId, subscribe, Data, State) ->
     end;
 
 cmd(SrvId, unsubscribe, Data, State) ->
-    #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
+    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId},
+    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
     nkservice_api_server:unregister(self(), RegId),
     {ok, #{}, State};
 
 cmd(SrvId, send_event, Data, State) ->
-    #{class:=Class, type:=Type, obj:=Obj, obj_id:=ObjId} = Data,
+    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId},
+    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
     Body = maps:get(body, Data, #{}),
     case maps:get(broadcast, Data, false) of
         true ->
@@ -130,57 +130,37 @@ cmd(_SrvId, _Other, _Data, State) ->
 
 %% @private
 syntax(send_event, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            class => atom,
-            obj => atom,
-            type => atom,
-            obj_id => binary,
-            broadcast => boolean,
-            body => any,
-            service => fun ?MODULE:parse_service/3
-        },
-        Defaults,
-        [class, obj, type, obj_id|Mandatory]
-    };
+    {S, D, M} = syntax(unsubscribe, Syntax, Defaults, Mandatory),
+    {S#{broadcast => boolean, body => any}, D, M};
 
 syntax(subscribe, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            class => atom,
-            obj => atom,
-            type => atom,
-            obj_id => [{enum, ['*']}, binary],
-            body => any,
-            service => fun ?MODULE:parse_service/1
-        },
-        Defaults#{
-            obj => '*',
-            type => '*',
-            obj_id => '*'
-        },
-        [class|Mandatory]
-    };
+    {S, D, M} = syntax(unsubscribe, Syntax, Defaults, Mandatory),
+    {S#{body => any}, D, M};
 
 syntax(unsubscribe, Syntax, Defaults, Mandatory) ->
+    syntax_events(Syntax, Defaults, Mandatory);
+  
+syntax(_, Syntax, Defaults, Mandatory) ->
+    {Syntax, Defaults, Mandatory}.
+
+
+%% @private
+syntax_events(Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            class => atom,
-            obj => atom,
-            type => atom,
+            class => [atom, binary],
+            subclass => [atom, binary],
+            type => [atom, binary],
             obj_id => [{enum, ['*']}, binary],
             service => fun ?MODULE:parse_service/1
         },
         Defaults#{
-            obj => '*',
+            subclass => '*',
             type => '*',
             obj_id => '*'
         },
         [class|Mandatory]
-    };
-
-syntax(_, Syntax, Defaults, Mandatory) ->
-    {Syntax, Defaults, Mandatory}.
+    }.
 
 
 

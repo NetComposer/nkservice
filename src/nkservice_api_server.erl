@@ -350,10 +350,10 @@ conn_handle_cast({reply_ack, TId}, NkPort, State) ->
 
 conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State) ->
     #state{srv_id=SrvId} = State,
-    #reg_id{class=Class, type=Type, obj=Obj, srv_id=EvSrvId, obj_id=ObjId} = RegId,
+    #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId} = RegId,
     Data1 = #{
+        subclass => Sub,
         type => Type,
-        obj => Obj,
         obj_id => ObjId
     },
     Data2 = case EvSrvId of
@@ -489,13 +489,18 @@ process_client_req(core, login, Data, TId, NkPort, State) ->
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
     end;
 
-process_client_req(Class, event, #{<<"type">>:=Type, <<"obj">>:=Obj}=Data, 
-                   TId, NkPort, State) ->
-    ObjId = maps:get(<<"obj_id">>, Data, <<>>),
-    Body = maps:get(<<"body">>, Data, #{}),
+process_client_req(core, event, #{<<"class">>:=Class}=Data, TId, NkPort, State) ->
+    #state{srv_id=SrvId} = State,
     case send_reply_ok(#{}, TId, NkPort, State) of
         {ok, State2} ->
-            RegId = {Class, Type, Obj, ObjId},
+            RegId = #reg_id{
+                srv_id = maps:get(<<"service">>, Data, SrvId),
+                class = Class, 
+                subclass = maps:get(<<"subclass">>, Data, <<"*">>),
+                type = maps:get(<<"type">>, Data, <<"*">>),
+                obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
+            },
+            Body = maps:get(<<"body">>, Data, #{}),
             {ok, State3} = handle(api_server_event, [RegId, Body], State2),
             {ok, State3};
         Other ->

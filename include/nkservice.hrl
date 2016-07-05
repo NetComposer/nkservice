@@ -61,10 +61,10 @@
 %% ===================================================================
 
 -record(reg_id, {
-	class :: nkservice_events:class(),
-	type = '*' :: nkservice_events:type(),
-	obj = '*'  :: nkservice_events:obj(),
 	srv_id :: nkservice_events:srv_id(),
+	class :: nkservice_events:class(),
+	subclass = '*'  :: nkservice_events:subclass(),
+	type = '*' :: nkservice_events:type(),
 	obj_id = '*' :: nkservice_events:obj_id()
 }).
 

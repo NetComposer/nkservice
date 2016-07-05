@@ -25,14 +25,13 @@
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([subscribe_allow/3]).
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
 		 api_server_login/3, api_server_cmd/5, api_server_event/3,
 		 api_server_forward_event/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_allow/6, api_cmd/8, api_cmd_syntax/6]).
+-export([api_allow/6, api_subscribe_allow/3, api_cmd/8, api_cmd_syntax/6]).
 
 -export_type([continue/0]).
 
@@ -122,19 +121,6 @@ plugin_update(Config, _Service) ->
 plugin_stop(Config, _Service) ->
 	{ok, Config}.
 
-
-
-
-%% ===================================================================
-%% Subscribe Callbacks
-%% ===================================================================
-
-%% @doc Called when a 'subscribe' external command arrives
--spec subscribe_allow(nkservice:id(), nkservice_event:reg_id(), map()) ->
-	boolean(). 
-
-subscribe_allow(_SrvId, _RegId, _State) ->
-	false.
 
 
 
@@ -317,6 +303,15 @@ api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
 
 api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
 	{true, State}.
+
+
+%% @doc Called when a 'subscribe' external command arrives
+%% You should allow subscribing to other service's events without care.
+-spec api_subscribe_allow(nkservice:id(), nkservice_event:reg_id(), map()) ->
+	boolean(). 
+
+api_subscribe_allow(_SrvId, _RegId, _State) ->
+	false.
 
 
 %% @doc Called when a new API command has arrived and is authorized
