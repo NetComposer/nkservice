@@ -101,8 +101,6 @@ send_all(#reg_id{}=RegId, Body) ->
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),
     ObjId2 = check_wildcard(ObjId),
-    lager:error("Send All: ~p:~p:~p:~p", [Class, Sub2, Type2, ObjId2]),
-
     do_send_all(Class, Sub2, Type2, SrvId, ObjId2, Body),
     do_send_all(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body),
     do_send_all(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body).
@@ -225,9 +223,9 @@ handle_call({send_single, Sub, Type, SrvId, ObjId, Body}, _From, State) ->
         List ->
             List
     end,
-    lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
-                [Class, Sub, Type, ObjId, State#state.sub, State#state.type,
-                 PidTerms]),
+    % lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
+    %             [Class, Sub, Type, ObjId, State#state.sub, State#state.type,
+    %              PidTerms]),
     case PidTerms of
         [] ->
             {reply, not_found, State};
@@ -253,8 +251,8 @@ handle_call(Msg, _From, State) ->
 handle_cast({send_all, Sub, Type, SrvId, ObjId, Body}, State) ->
     #state{class=Class, regs=Regs} = State,
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId},
-    lager:error("Event all: ~p (~p:~p)", 
-                [lager:pr(RegId, ?MODULE), State#state.sub, State#state.type]),
+    % lager:error("Event all: ~p (~p:~p)", 
+    %             [lager:pr(RegId, ?MODULE), State#state.sub, State#state.type]),
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
     lists:foreach(
         fun({Pid, RegBody}) -> 
