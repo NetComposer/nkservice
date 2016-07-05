@@ -246,18 +246,8 @@ conn_parse({text, Text}, NkPort, State) ->
     ?PRINT("received ~s", [Msg], State),
     case Msg of
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
-            case catch binary_to_existing_atom(Class, latin1) of
-                {'EXIT', _} ->
-                    send_reply_error(unknown_class, TId, NkPort, State);
-                Class2 ->
-                    case catch binary_to_existing_atom(Cmd, latin1) of
-                        {'EXIT', _} ->
-                            send_reply_error(unknown_command, TId, NkPort, State);
-                        Cmd2 ->
-                            Data = maps:get(<<"data">>, Msg, #{}),
-                            process_client_req(Class2, Cmd2, Data, TId, NkPort, State)
-                    end
-            end;
+            Data = maps:get(<<"data">>, Msg, #{}),
+            process_client_req(Class, Cmd, Data, TId, NkPort, State);
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
@@ -351,20 +341,31 @@ conn_handle_cast({reply_ack, TId}, NkPort, State) ->
 conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State) ->
     #state{srv_id=SrvId} = State,
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId} = RegId,
-    Data1 = #{
-        subclass => Sub,
-        type => Type,
-        obj_id => ObjId
-    },
-    Data2 = case EvSrvId of
-        SrvId -> Data1;
-        _ -> Data1#{service=>nkservice_srv:get_item(EvSrvId, name)}
-    end,
-    Data3 = case map_size(Body) of
-        0 -> Data2;
-        _ -> Data2#{body=>Body}
-    end,
-    send_request(Class, event, Data3, undefined, NkPort, State);
+    Data1 = [
+        {class, Class},
+        case Sub of
+            '*' -> [];
+            _ -> {subclass, Sub}
+        end,
+        case Type of
+            '*' -> [];
+            _ -> {type, Type}
+        end,
+        case ObjId of
+            '*' -> [];
+            _ -> {obj_id, ObjId}
+        end,
+        case EvSrvId of
+            SrvId -> [];
+            _ -> {service, nkservice_srv:get_item(EvSrvId, name)}
+        end,
+        case map_size(Body) of
+            0 -> [];
+            _ -> {body, Body}
+        end
+    ],
+    Data2 = maps:from_list(lists:flatten(Data1)),
+    send_request(core, event, Data2, undefined, NkPort, State);
 
 conn_handle_cast(nkservice_stop, _NkPort, State) ->
     {stop, normal, State};
@@ -464,7 +465,7 @@ conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
 %% ===================================================================
 
 %% @private
-process_client_req(core, login, Data, TId, NkPort, State) ->
+process_client_req(<<"core">>, <<"login">>, Data, TId, NkPort, State) ->
     _ = send_ack(TId, NkPort, State),
     SessId = nklib_util:uuid_4122(),
     case handle(api_server_login, [Data, SessId], State) of
@@ -489,7 +490,8 @@ process_client_req(core, login, Data, TId, NkPort, State) ->
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
     end;
 
-process_client_req(core, event, #{<<"class">>:=Class}=Data, TId, NkPort, State) ->
+process_client_req(<<"core">>, <<"event">>, #{<<"class">>:=Class}=Data, 
+                   TId, NkPort, State) ->
     #state{srv_id=SrvId} = State,
     case send_reply_ok(#{}, TId, NkPort, State) of
         {ok, State2} ->
@@ -508,8 +510,6 @@ process_client_req(core, event, #{<<"class">>:=Class}=Data, TId, NkPort, State) 
     end;
 
 process_client_req(_Class, _Cmd, _Data, TId, NkPort, #state{session_id = <<>>}=State) ->
-    lager:warning("C: ~p, ~p", [_Class, _Cmd]),
-
     send_reply_error(not_authenticated, TId, NkPort, State);
 
 process_client_req(Class, Cmd, Data, TId, NkPort, State) ->

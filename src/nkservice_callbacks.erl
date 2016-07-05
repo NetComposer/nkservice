@@ -31,7 +31,7 @@
 		 api_server_forward_event/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_allow/6, api_subscribe_allow/3, api_cmd/8, api_cmd_syntax/6]).
+-export([api_allow/6, api_subscribe_allow/5, api_cmd/8, api_cmd_syntax/6]).
 
 -export_type([continue/0]).
 
@@ -203,9 +203,9 @@ api_server_login(_Data, _SessId, State) ->
 	{ok, data(), state()} | {ack, state()} | 
 	{error, error_code(), state()} | continue().
 
-api_server_cmd(core, Cmd, Data, TId, State) ->
+api_server_cmd(<<"core">>, Cmd, Data, TId, State) ->
 	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-	nkservice_api:launch(SrvId, User, SessId, core, Cmd, Data, TId, State);
+	nkservice_api:launch(SrvId, User, SessId, <<"core">>, Cmd, Data, TId, State);
 	
 api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
     {error, not_implemented, State}.
@@ -288,7 +288,7 @@ api_server_terminate(_Reason, State) ->
 					 map(), map(), list()) ->
 	{Syntax::map(), Defaults::map(), Mandatory::list()}.
 
-api_cmd_syntax(core, Cmd, _Data, Syntax, Defaults, Mandatory) ->
+api_cmd_syntax(<<"core">>, Cmd, _Data, Syntax, Defaults, Mandatory) ->
 	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
 api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
@@ -302,16 +302,17 @@ api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
 	{boolean(), state()}.
 
 api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
-	{true, State}.
+	{false, State}.
 
 
 %% @doc Called when a 'subscribe' external command arrives
 %% You should allow subscribing to other service's events without care.
--spec api_subscribe_allow(nkservice:id(), nkservice_event:reg_id(), map()) ->
-	boolean(). 
+-spec api_subscribe_allow(nkservice_events:class(), nkservice_events:subclass(), 
+						  nkservice_events:type(), nkservice:id(), map()) ->
+	{boolean(), map()}.
 
-api_subscribe_allow(_SrvId, _RegId, _State) ->
-	false.
+api_subscribe_allow(_Class, _SubClass, _Type, _SrvId, State) ->
+	{false, State}.
 
 
 %% @doc Called when a new API command has arrived and is authorized
@@ -319,7 +320,7 @@ api_subscribe_allow(_SrvId, _RegId, _State) ->
 			  nkservice_api:cmd(), map(), term(), state()) ->
 	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
-api_cmd(SrvId, _User, _SessId, core, Cmd, Parsed, _TId, State) ->
+api_cmd(SrvId, _User, _SessId, <<"core">>, Cmd, Parsed, _TId, State) ->
 	nkservice_api:cmd(SrvId, Cmd, Parsed, State);
 
 api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->

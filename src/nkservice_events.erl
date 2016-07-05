@@ -40,9 +40,9 @@
 -type reg_id() :: #reg_id{}.
 
 -type srv_id() :: nkservice:id() | '*'.
--type class() :: atom().
--type subclass() :: atom() | '*'.
--type type() :: atom() | '*'.
+-type class() :: term().
+-type subclass() :: term() | '*'.
+-type type() :: term() | '*'.
 -type obj_id() :: term().
 -type body() :: term().
 
@@ -67,12 +67,15 @@ send_single(RegId) ->
 
 send_single(#reg_id{}=RegId, Body) ->
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = RegId,
+    Sub2 = check_wildcard(Sub),
+    Type2 = check_wildcard(Type),
+    ObjId2 = check_wildcard(ObjId),
     % In each search, we search for Id and Id=='*'
-    case do_send_single(Class, Sub, Type, SrvId, ObjId, Body) of
+    case do_send_single(Class, Sub2, Type2, SrvId, ObjId2, Body) of
         not_found ->
-            case do_send_single(Class, Sub, {Type, '*'}, SrvId, ObjId, Body) of
+            case do_send_single(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body) of
                 not_found ->
-                    do_send_single(Class, {Sub, '*'}, {Type, '*'}, SrvId, ObjId, Body);
+                    do_send_single(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body);
                 ok ->
                     ok
             end;
@@ -95,9 +98,14 @@ send_all(RegId) ->
 
 send_all(#reg_id{}=RegId, Body) ->
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = RegId,
-    do_send_all(Class, Sub, Type, SrvId, ObjId, Body),
-    do_send_all(Class, Sub, {Type, '*'}, SrvId, ObjId, Body),
-    do_send_all(Class, {Sub, '*'}, {Type, '*'}, SrvId, ObjId, Body).
+    Sub2 = check_wildcard(Sub),
+    Type2 = check_wildcard(Type),
+    ObjId2 = check_wildcard(ObjId),
+    lager:error("Send All: ~p:~p:~p:~p", [Class, Sub2, Type2, ObjId2]),
+
+    do_send_all(Class, Sub2, Type2, SrvId, ObjId2, Body),
+    do_send_all(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body),
+    do_send_all(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body).
 
 
 %% @doc
@@ -122,9 +130,9 @@ reg(RegId, Body) ->
 
 reg(#reg_id{}=RegId, Body, Pid) ->
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = RegId,
-    Sub2 = check_all(Sub),
-    Type2 = check_all(Type),
-    ObjId2 = check_all(ObjId),
+    Sub2 = check_wildcard(Sub),
+    Type2 = check_wildcard(Type),
+    ObjId2 = check_wildcard(ObjId),
     Server = start_server(Class, Sub2, Type2),
     gen_server:cast(Server, {reg, SrvId, ObjId2, Body, Pid}),
     {ok, Server}.
@@ -144,9 +152,9 @@ unreg(RegId) ->
 
 unreg(#reg_id{}=RegId, Pid) ->
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = RegId,
-    Sub2 = check_all(Sub),
-    Type2 = check_all(Type),
-    ObjId2 = check_all(ObjId),
+    Sub2 = check_wildcard(Sub),
+    Type2 = check_wildcard(Type),
+    ObjId2 = check_wildcard(ObjId),
     Server = start_server(Class, Sub2, Type2),
     gen_server:cast(Server, {unreg, SrvId, ObjId2, Pid}).
 
@@ -181,9 +189,9 @@ dump(Class, Sub, Type) ->
 -type key() :: {srv_id(), obj_id()}.
 
 -record(state, {
-    class :: atom(),
-    type :: atom(),
-    subclass :: atom(),
+    class :: class(),
+    sub :: subclass(),
+    type :: type(),
     regs = #{} :: #{key() => [{pid(), body()}]},
     pids = #{} :: #{pid() => {reference(), [key()]}}
 }).
@@ -201,7 +209,7 @@ init([Class, Sub, Type]) ->
     true = nklib_proc:reg({?MODULE, Class, Sub, Type}),
     nklib_proc:put(?MODULE, {Class, Sub, Type}),
     lager:info("Starting events for ~p:~p:~p (~p)", [Class, Sub, Type, self()]),
-    {ok, #state{class=Class, subclass=Sub, type=Type}}.
+    {ok, #state{class=Class, sub=Sub, type=Type}}.
 
 
 %% @private
@@ -217,9 +225,9 @@ handle_call({send_single, Sub, Type, SrvId, ObjId, Body}, _From, State) ->
         List ->
             List
     end,
-    % lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
-    %             [Class, Sub, Type, Id, State#state.type, State#state.sub,
-    %              PidTerms]),
+    lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
+                [Class, Sub, Type, ObjId, State#state.sub, State#state.type,
+                 PidTerms]),
     case PidTerms of
         [] ->
             {reply, not_found, State};
@@ -245,8 +253,8 @@ handle_call(Msg, _From, State) ->
 handle_cast({send_all, Sub, Type, SrvId, ObjId, Body}, State) ->
     #state{class=Class, regs=Regs} = State,
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId},
-    % lager:error("Event all: ~p:~p:~p:~p (~p:~p)", 
-    %             [Class, Sub, Type, Id, State#state.type, State#state.sub]),
+    lager:error("Event all: ~p (~p:~p)", 
+                [lager:pr(RegId, ?MODULE), State#state.sub, State#state.type]),
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
     lists:foreach(
         fun({Pid, RegBody}) -> 
@@ -322,8 +330,8 @@ terminate(_Reason, _State) ->
 %% ===================================================================
 
 %% @private
-check_all(<<"*">>) -> '*';
-check_all(Any) -> Any.
+check_wildcard(<<"*">>) -> '*';
+check_wildcard(Any) -> Any.
 
 
 %% @private
@@ -444,8 +452,8 @@ do_unreg([Key|Rest], Pid, Regs, Pids) ->
 
 %% @private
 send_event(#reg_id{}=RegId, Body, Pid, RegBody) ->
-    % lager:info("Sending event ~p:~p:~p:~p to ~p (~p)",
-    %            [Class, Sub, Type, Id, Pid, Body]),
+    lager:info("Sending event ~p to ~p (~p)",
+               [lager:pr(RegId, ?MODULE), Pid, Body]),
     Body2 = case is_map(Body) andalso is_map(RegBody) of
         true -> maps:merge(RegBody, Body);
         false when map_size(Body)==0 -> RegBody;
@@ -463,9 +471,8 @@ send_event(#reg_id{}=RegId, Body, Pid, RegBody) ->
 
 
 % -define(TEST, 1).
-% -ifdef(TEST).
+-ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
-
 -compile([export_all]).
 
 basic_test_() ->
@@ -705,4 +712,4 @@ test_reg_loop(Pid, I) ->
     end.
 
 
-% -endif.
+-endif.

@@ -31,8 +31,8 @@
 %% Types
 %% ===================================================================
 
--type class() :: atom().
--type cmd() :: atom().
+-type class() :: binary().
+-type cmd() :: binary().
 -type state() :: map().
 
 -include("nkservice.hrl").
@@ -85,28 +85,28 @@ launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
 -spec cmd(nkservice:id(), atom(), Data::map(), state()) ->
     {ok, map()} | {error, nkservice:error()}.
 
-cmd(SrvId, subscribe, Data, State) ->
+cmd(SrvId, <<"subscribe">>, Data, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
     lager:warning("SUBS: ~p, ~p", [SrvId, RegId]),
-    case SrvId:api_subscribe_allow(SrvId, RegId, State) of
-        true ->
+    case SrvId:api_subscribe_allow(Class, Sub, Type, EvSrvId, State) of
+        {true, State2} ->
             Body = maps:get(body, Data, #{}),
             nkservice_api_server:register(self(), RegId, Body),
-            {ok, #{}, State};
-        false ->
-            {error, unauthorized, State}
+            {ok, #{}, State2};
+        {false, State2} ->
+            {error, unauthorized, State2}
     end;
 
-cmd(SrvId, unsubscribe, Data, State) ->
+cmd(SrvId, <<"unsubscribe">>, Data, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
     nkservice_api_server:unregister(self(), RegId),
     {ok, #{}, State};
 
-cmd(SrvId, send_event, Data, State) ->
+cmd(SrvId, <<"send_event">>, Data, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
@@ -129,15 +129,15 @@ cmd(_SrvId, _Other, _Data, State) ->
 
 
 %% @private
-syntax(send_event, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax(unsubscribe, Syntax, Defaults, Mandatory),
+syntax(<<"send_event">>, Syntax, Defaults, Mandatory) ->
+    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
     {S#{broadcast => boolean, body => any}, D, M};
 
-syntax(subscribe, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax(unsubscribe, Syntax, Defaults, Mandatory),
+syntax(<<"subscribe">>, Syntax, Defaults, Mandatory) ->
+    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
     {S#{body => any}, D, M};
 
-syntax(unsubscribe, Syntax, Defaults, Mandatory) ->
+syntax(<<"unsubscribe">>, Syntax, Defaults, Mandatory) ->
     syntax_events(Syntax, Defaults, Mandatory);
   
 syntax(_, Syntax, Defaults, Mandatory) ->
@@ -148,16 +148,16 @@ syntax(_, Syntax, Defaults, Mandatory) ->
 syntax_events(Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            class => [atom, binary],
-            subclass => [atom, binary],
-            type => [atom, binary],
-            obj_id => [{enum, ['*']}, binary],
+            class => binary,
+            subclass => binary,
+            type => binary,
+            obj_id => binary,
             service => fun ?MODULE:parse_service/1
         },
         Defaults#{
-            subclass => '*',
-            type => '*',
-            obj_id => '*'
+            subclass => <<"*">>,
+            type => <<"*">>,
+            obj_id => <<"*">>
         },
         [class|Mandatory]
     }.
