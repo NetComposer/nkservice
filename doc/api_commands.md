@@ -2,7 +2,7 @@
 
 ## Core Commands
 
-The currently supported External API commands as described here. See [External API](api_intro.md) for an introducition to the External API.
+The currently supported External API commands as described here. See [External API](api_intro.md) for an introducition to the External API. See the documentation of each plugin to learn the supported classes and commands.
 
 ### Subscribe
 
@@ -17,6 +17,8 @@ obj|`string`|"session"|Object class belonging to the class
 obj_id|`string`|"5179b729-367c-e79c-0399-38c9862f00d9"|Specific event to subscribe to
 type|`string`|"hangup"|Specific event type to subscribe to
 
+The subscription attemp must be authorized by the server side code. If the connection is dropped, all subscriptions are deleted.
+
 **Sample**
 
 ```js
@@ -30,7 +32,7 @@ type|`string`|"hangup"|Specific event type to subscribe to
 }
 ```
 
-This example would subscribe the connection to all specific sessions and event types for sessions beloging to the `media` class.
+This example would subscribe the connection to all specific sessions and event types for sessions beloging to the `media` class. All events sent from class `media`, generated at object `session` (with any `type` and `obj_id`) will be sent to this connection.
 
 
 
