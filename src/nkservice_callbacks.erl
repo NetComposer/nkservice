@@ -138,63 +138,6 @@ subscribe_allow(_SrvId, _RegId, _State) ->
 
 
 
-%% ===================================================================
-%% Service Callbacks
-%% ===================================================================
-
-
--type service() :: nkservice:service().
--type state() :: map().
-
-%% @doc Called when a new service starts
--spec service_init(service(), state()) ->
-	{ok, state()} | {stop, term()}.
-
-service_init(_Service, State) ->
-	{ok, State}.
-
-%% @doc Called when the service process receives a handle_call/3.
--spec service_handle_call(term(), {pid(), reference()}, state()) ->
-	{reply, term(), state()} | {noreply, state()} | continue().
-
-service_handle_call(Msg, _From, State) ->
-    lager:error("Module nkservice_srv received unexpected call ~p", [Msg]),
-    {noreply, State}.
-
-
-%% @doc Called when the NkApp process receives a handle_cast/3.
--spec service_handle_cast(term(), state()) ->
-	{noreply, state()} | continue().
-
-service_handle_cast(Msg, State) ->
-    lager:error("Module nkservice_srv received unexpected cast ~p", [Msg]),
-	{noreply, State}.
-
-
-%% @doc Called when the NkApp process receives a handle_info/3.
--spec service_handle_info(term(), state()) ->
-	{noreply, state()} | continue().
-
-service_handle_info(Msg, State) ->
-    lager:notice("Module nkservice_srv received unexpected info ~p", [Msg]),
-	{noreply, State}.
-
-
--spec service_code_change(term()|{down, term()}, state(), term()) ->
-    ok | {ok, service()} | {error, term()} | continue().
-
-service_code_change(OldVsn, State, Extra) ->
-	{continue, [OldVsn, State, Extra]}.
-
-
-%% @doc Called when a service is stopped
--spec service_terminate(term(), service()) ->
-	{ok, service()}.
-
-service_terminate(_Reason, State) ->
-	{ok, State}.
-
-
 
 %% ===================================================================
 %% Error Codes
@@ -354,9 +297,20 @@ api_server_terminate(_Reason, State) ->
 %% API Management Callbacks
 %% ===================================================================
 
+%% @doc Called to get the syntax for an external API command
+-spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list(), 
+					 map(), map(), list()) ->
+	{Syntax::map(), Defaults::map(), Mandatory::list()}.
+
+api_cmd_syntax(core, Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
+	
+api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	{Syntax, Defaults, Mandatory}.
+
+
 %% @doc Called when a new API command has arrived and called nkservice_api:launch/6
-%% The request is parsed, if ok, will call this callback to see if it is authorized
-%% If it is, it will call api_cmd/6
+%% to authorized the (already parsed) request
 -spec api_allow(nkservice:id(), binary(), nkservice_api:class(), nkservice_api:cmd(),
 			    map(), state()) ->
 	{boolean(), state()}.
@@ -377,15 +331,62 @@ api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->
 	{error, not_implemented, State}.
 
 
-%% @doc Called to get the syntax for an external API command
--spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list(), 
-					 map(), map(), list()) ->
-	{map(), map(), list()}.
 
-api_cmd_syntax(core, Cmd, _Data, Syntax, Defaults, Mandatory) ->
-	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
-	
-api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
-	{Syntax, Defaults, Mandatory}.
 
+
+%% ===================================================================
+%% Service Callbacks
+%% ===================================================================
+
+
+-type service() :: nkservice:service().
+-type state() :: map().
+
+%% @doc Called when a new service starts
+-spec service_init(service(), state()) ->
+	{ok, state()} | {stop, term()}.
+
+service_init(_Service, State) ->
+	{ok, State}.
+
+%% @doc Called when the service process receives a handle_call/3.
+-spec service_handle_call(term(), {pid(), reference()}, state()) ->
+	{reply, term(), state()} | {noreply, state()} | continue().
+
+service_handle_call(Msg, _From, State) ->
+    lager:error("Module nkservice_srv received unexpected call ~p", [Msg]),
+    {noreply, State}.
+
+
+%% @doc Called when the NkApp process receives a handle_cast/3.
+-spec service_handle_cast(term(), state()) ->
+	{noreply, state()} | continue().
+
+service_handle_cast(Msg, State) ->
+    lager:error("Module nkservice_srv received unexpected cast ~p", [Msg]),
+	{noreply, State}.
+
+
+%% @doc Called when the NkApp process receives a handle_info/3.
+-spec service_handle_info(term(), state()) ->
+	{noreply, state()} | continue().
+
+service_handle_info(Msg, State) ->
+    lager:notice("Module nkservice_srv received unexpected info ~p", [Msg]),
+	{noreply, State}.
+
+
+-spec service_code_change(term()|{down, term()}, state(), term()) ->
+    ok | {ok, service()} | {error, term()} | continue().
+
+service_code_change(OldVsn, State, Extra) ->
+	{continue, [OldVsn, State, Extra]}.
+
+
+%% @doc Called when a service is stopped
+-spec service_terminate(term(), service()) ->
+	{ok, service()}.
+
+service_terminate(_Reason, State) ->
+	{ok, State}.
 

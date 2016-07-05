@@ -42,9 +42,11 @@
 %% Public
 %% ===================================================================
 
-%% @doc This functions launches the processing of an external API request
-%% It parses the request, and if it is valid, calls SrvId:api_cmd()
-%% It received some state (usually from api_server) that can be updated
+%% @doc Starts the processing of an external API request
+%% It parses the request, getting the syntax calling SrvId:api_cmd_syntax()
+%% If it is valid, calls SrvId:api_allow() to authorized the request
+%% If is is authorized, calls SrvId:api_cmd() to process the request.
+%% It received some state (usually from api_server_cmd/5) that can be updated
 -spec launch(nkservice:id(), binary(), binary(), class(), cmd(), map()|list(), 
              term(), state()) ->
     {ok, term(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
@@ -157,7 +159,7 @@ syntax(subscribe, Syntax, Defaults, Mandatory) ->
             type => '*',
             obj_id => '*'
         },
-        Mandatory
+        [class|Mandatory]
     };
 
 syntax(unsubscribe, Syntax, Defaults, Mandatory) ->
@@ -174,7 +176,7 @@ syntax(unsubscribe, Syntax, Defaults, Mandatory) ->
             type => '*',
             obj_id => '*'
         },
-        Mandatory
+        [class|Mandatory]
     };
 
 syntax(_, Syntax, Defaults, Mandatory) ->
