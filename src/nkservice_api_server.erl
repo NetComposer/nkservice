@@ -29,11 +29,12 @@
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
--export([get_all/0, print/3]).
+-export([list_users/2, get_user/4, get_subscriptions/2]).
+-export([get_all/0, get_all/1, print/3]).
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA API Server ~s (~s) "++Txt, 
+    lager:Type("NkSERVICE API Server ~s (~s) "++Txt, 
                [State#state.session_id, State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
@@ -62,7 +63,7 @@
 
 %% @doc Send a command and wait a response
 -spec cmd(pid(), nkservice_api:class(), nkservice_api:cmd(), map()) ->
-    {ok, map()} | {error, term()}.
+    {ok, Result::binary(), Data::map()} | {error, term()}.
 
 cmd(Pid, Class, Cmd, Data) ->
     do_call(Pid, {nkservice_cmd, Class, Cmd, Data}).
@@ -156,6 +157,14 @@ get_all() ->
     [{User, SessId, Pid} || {{User, SessId}, Pid} <- nklib_proc:values(?MODULE)].
 
 
+%% @private
+-spec get_all(nkservice:id()) ->
+    [{User::binary(), SessId::binary(), pid()}].
+
+get_all(SrvId) ->
+    [{User, SessId, Pid} || {{User, SessId}, Pid} <- nklib_proc:values({?MODULE, SrvId})].
+
+
 -spec find_user(string()|binary()) ->
     [{SessId::binary(), pid()}].
 
@@ -172,6 +181,14 @@ find_session(SessId) ->
         [{User, Pid}] -> {ok, User, Pid};
         [] -> not_found
     end.
+
+
+
+
+
+
+
+
 
 
 
@@ -194,7 +211,7 @@ find_session(SessId) ->
     trans = #{} :: #{tid() => #trans{}},
     tid = 1 :: integer(),
     ping :: integer() | undefined,
-    regs3 = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
+    regs = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
     retry_time = 100 :: integer(),
     user_state :: user_state()
 }).
@@ -221,7 +238,7 @@ default_port(tls) -> 9011.
 conn_init(NkPort) ->
     {ok, {nkservice_api_server, SrvId}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
-    UserState = #{srv_id=>SrvId, remote=>Remote},
+    UserState = #{type=>api_server, srv_id=>SrvId, remote=>Remote},
     State1 = #state{srv_id = SrvId, user_state = UserState},
     nklib_proc:put(?MODULE, <<>>),
     ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
@@ -255,12 +272,11 @@ conn_parse({text, Text}, NkPort, State) ->
                     Data = maps:get(<<"data">>, Msg, #{}),
                     process_client_resp(Result, Data, Trans, NkPort, State2);
                 not_found ->
-                    ?LLOG(warning, "received client response for unknown req: ~p", 
-                          [Msg], State),
+                    ?LLOG(warning, "received client response for unknown req: ~p, ~p, ~p", 
+                          [Msg, TId, State#state.trans], State),
                     {ok, State}
             end;
         #{<<"ack">> := TId} ->
-            lager:error("ACK!"),
             case extract_op(TId, State) of
                 {Trans, State2} ->
                     {ok, extend_op(TId, Trans, State2)};
@@ -278,7 +294,7 @@ conn_parse({text, Text}, NkPort, State) ->
 -spec conn_encode(term(), nkpacket:nkport()) ->
     {ok, nkpacket:outcoming()} | continue | {error, term()}.
 
-conn_encode(Msg, _NkPort) when is_map(Msg) ->
+conn_encode(Msg, _NkPort) when is_map(Msg); is_list(Msg) ->
     case nklib_json:encode(Msg) of
         error ->
             lager:warning("invalid json in ~p: ~p", [?MODULE, Msg]),
@@ -296,6 +312,29 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 
 conn_handle_call({nkservice_cmd, Class, Cmd, Data}, From, NkPort, State) ->
     send_request(Class, Cmd, Data, From, NkPort, State);
+    
+conn_handle_call(nkservice_get_user_data, From, _NkPort, State) ->
+    #state{user_state=UserState} = State,
+    gen_server:reply(From, get_user_data(self(), UserState)),
+    {ok, State};
+
+conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs=Regs}=State) ->
+    Data = [
+        #{
+            class => Class,
+            subclass => SubClass,
+            type => Type,
+            obj_id => ObjId,
+            service => SrvId
+        }
+        ||
+            {
+                #reg_id{srv_id=SrvId, class=Class, subclass=SubClass, 
+                        type=Type, obj_id=ObjId}, _Body, _Mon}
+            <- Regs
+    ],
+    gen_server:reply(From, Data),
+    {ok, State};
 
 conn_handle_call(get_state, From, _NkPort, State) ->
     gen_server:reply(From, {ok, State}),
@@ -316,7 +355,7 @@ conn_handle_cast({reply_ok, TId, Data}, NkPort, State) ->
         {#trans{op=ack}, State2} ->
             send_reply_ok(Data, TId, NkPort, State2);
         not_found ->
-            ?LLOG(warning, "received reply response for unknown req", [], State), 
+            ?LLOG(warning, "received user reply_ok for unknown req: ~p ~p", [TId, State#state.trans], State), 
             {ok, State}
     end;
 
@@ -325,7 +364,7 @@ conn_handle_cast({reply_error, TId, Code}, NkPort, State) ->
         {#trans{op=ack}, State2} ->
             send_reply_error(Code, TId, NkPort, State2);
         not_found ->
-            ?LLOG(warning, "received reply response for unknown req", [], State), 
+            ?LLOG(warning, "received user reply_error for unknown req: ~p ~p", [TId, State#state.trans], State), 
             {ok, State}
     end;
 
@@ -335,7 +374,7 @@ conn_handle_cast({reply_ack, TId}, NkPort, State) ->
             State3 = insert_ack(TId, State2),
             send_ack(TId, NkPort, State3);
         not_found ->
-            ?LLOG(warning, "received reply response for unknown req", [], State), 
+            ?LLOG(warning, "received user reply_ack for unknown req", [], State), 
             {ok, State}
     end;
 
@@ -383,20 +422,20 @@ conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
 
 conn_handle_cast({nkservice_register, RegId, Body}, _NkPort, State) ->
     {ok, Pid} = nkservice_events:reg(RegId, Body),
-    #state{regs3=Regs} = State,
+    #state{regs=Regs} = State,
     Mon = monitor(process, Pid),
-    {ok, State#state{regs3=[{RegId, Body, Mon}|Regs]}};
+    {ok, State#state{regs=[{RegId, Body, Mon}|Regs]}};
 
 conn_handle_cast({nkservice_unregister, RegId}, _NkPort, State) ->
     ok = nkservice_events:unreg(RegId),
-    #state{regs3=Regs} = State,
+    #state{regs=Regs} = State,
     case lists:keytake(RegId, 1, Regs) of
         {value, {_, _Body, Mon}, Regs2} ->
             demonitor(Mon);
         false ->
             Regs2 = Regs
     end,
-    {ok, State#state{regs3=Regs2}};
+    {ok, State#state{regs=Regs2}};
 
 
 conn_handle_cast(Msg, _NkPort, State) ->
@@ -417,18 +456,18 @@ conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
     case extract_op(TId, State) of
         {#trans{op=Op, from=From}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation ~p timeout!", [Op], State),
+            ?LLOG(warning, "operation ~p (~p) timeout!", [Op, TId], State),
             {stop, normal, State2};
         not_found ->
             {ok, State}
     end;
 
 conn_handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, _NkPort, State) ->
-    #state{regs3=Regs} = State,
+    #state{regs=Regs} = State,
     case lists:keytake(Ref, 3, Regs) of
         {value, {RegId, Body, Ref}, Regs2} ->
             gen_server:cast(self(), {nkservice_register, RegId, Body}),
-            {ok, State#state{regs3=Regs2}};
+            {ok, State#state{regs=Regs2}};
         false ->
             handle(api_server_handle_info, [Info], State)
     end;
@@ -484,12 +523,25 @@ process_client_req(<<"core">>, <<"login">>, Data, TId, NkPort, State) ->
             State3 = State2#state{retry_time=2*Time},
             send_reply_error(ReplyError, TId, NkPort, State3); 
         _ ->
-            #state{user_state=UserState2} = State2,
+            #state{srv_id=SrvId, user_state=UserState2} = State2,
             UserState3 = UserState2#{user=>User, session_id=>SessId2},
             State3 = State2#state{user_state=UserState3, user=User, session_id=SessId2},
             nklib_proc:put(?MODULE, {User, SessId2}),
+            nklib_proc:put({?MODULE, SrvId}, {User, SessId2}),
             nklib_proc:put({?MODULE, user, User}, SessId2),
             true = nklib_proc:reg({?MODULE, session, SessId2}, User),
+            RegId1 = #reg_id{
+                srv_id = SrvId,
+                class = <<"core">>,
+                subclass = <<"user_event">>,
+                obj_id = User
+            },
+            register(self(), RegId1, #{}),
+            RegId2 = RegId1#reg_id{
+                subclass = <<"session_event">>,
+                obj_id = SessId
+            },
+            register(self(), RegId2, #{}),
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
     end;
 
@@ -537,6 +589,58 @@ process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+
+%% @private
+list_users(SrvId, Acc) ->
+    lists:foldl(
+        fun({User, SessId, _Pid}, FunAcc) ->
+            Sessions = maps:get(User, FunAcc, []),
+            maps:put(User, [SessId|Sessions], FunAcc)
+        end,
+        Acc,
+        get_all(SrvId)
+    ).
+
+
+%% @private
+get_user(_SrvId, User, UserState, Acc) ->
+    lists:foldl(
+        fun({SessId, Pid}, FunAcc) ->
+            case get_user_data(Pid, UserState) of
+                {ok, UserData} ->
+                    maps:put(SessId, UserData, FunAcc);
+                _ ->
+                    FunAcc
+            end
+        end,
+        Acc,
+        find_user(User)
+    ).
+
+
+%% @private
+get_user_data(Pid, _UserState) when Pid/= self() ->
+    nklib_util:call(Pid, nkservice_get_user_data);
+
+get_user_data(_Pid, #{srv_id:=SrvId}=UserState) ->
+    UserState2 = maps:without([session_id, srv_id, user], UserState),
+    SrvId:api_server_get_user_data(UserState2).
+
+
+%% @private
+get_subscriptions(TId, #{type:=api_server}) ->
+    Self = self(),
+    _ = spawn_link(
+        fun() ->
+            Subs = gen_server:call(Self, nkservice_get_regs),
+            reply_ok(Self, TId, Subs)        
+        end),
+    ok;
+
+get_subscriptions(_TId, _) ->
+    continue.
+
 
 %% @private
 do_call(Pid, Msg) ->
@@ -609,9 +713,11 @@ send_reply_ok(Data, TId, NkPort, State) ->
         result => ok,
         tid => TId
     },
-    Msg2 = case map_size(Data) of
-        0 -> Msg1;
-        _ -> Msg1#{data=>Data}
+    Msg2 = case Data of
+        #{} when map_size(Data)==0 -> Msg1;
+        #{} -> Msg1#{data=>Data};
+        List when is_list(List), length(List)==0 -> Msg1;
+        List when is_list(List) -> Msg1#{data=>Data}
     end,
     send(Msg2, NkPort, State).
 

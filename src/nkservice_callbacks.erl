@@ -28,7 +28,7 @@
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
 		 api_server_login/3, api_server_cmd/5, api_server_event/3,
-		 api_server_forward_event/3,
+		 api_server_forward_event/3, api_server_get_user_data/1,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
 -export([api_allow/6, api_subscribe_allow/5, api_cmd/8, api_cmd_syntax/6]).
@@ -149,6 +149,7 @@ error_code(no_event_listener)		-> {1000, <<"No event listener">>};
 error_code({syntax_error, Txt})		-> {1000, <<"Syntax error: ", Txt/binary>>};
 error_code(invalid_parameters) 		-> {1000, <<"Invalid parameters">>};
 error_code(missing_parameters) 		-> {1000, <<"Missing parameters">>};
+error_code(invalid_reply) 			-> {1000, <<"Invalid reply">>};
 error_code({missing_field, Txt})	-> {1000, <<"Missing field: ", Txt/binary>>};
 error_code(session_timeout) 		-> {1000, <<"Session timeout">>};
 error_code(session_stop) 			-> {1000, <<"Session stop">>};
@@ -229,6 +230,15 @@ api_server_event(_RegId, _Body, State) ->
 
 api_server_forward_event(RegId, Body, State) ->
 	nkmedia_api:forward_event(RegId, Body, State).
+
+
+%% @doc Called when the API server receives an event notification from 
+%% nkservice_events. We can send it to the remote side or ignore it.
+-spec api_server_get_user_data(state()) ->
+	{ok, term()}.
+
+api_server_get_user_data(State) ->
+	{ok, State}.
 
 
 %% @doc Called when the xzservice process receives a handle_call/3.
@@ -320,13 +330,11 @@ api_subscribe_allow(_Class, _SubClass, _Type, _SrvId, State) ->
 			  nkservice_api:cmd(), map(), term(), state()) ->
 	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
-api_cmd(SrvId, _User, _SessId, <<"core">>, Cmd, Parsed, _TId, State) ->
-	nkservice_api:cmd(SrvId, Cmd, Parsed, State);
+api_cmd(SrvId, _User, _SessId, <<"core">>, Cmd, Parsed, TId, State) ->
+	nkservice_api:cmd(SrvId, Cmd, Parsed, TId, State);
 
 api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->
 	{error, not_implemented, State}.
-
-
 
 
 

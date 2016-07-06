@@ -30,7 +30,7 @@
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Admin Client (~s) "++Txt, [State#state.remote| Args])).
+    lager:Type("NkSERVICE API Client (~s) "++Txt, [State#state.remote| Args])).
 
 -define(PRINT(Txt, Args, State), 
         % print(Txt, Args, State),    % Comment this
@@ -88,7 +88,8 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
     {ok, map()} | {error, {integer(), binary()}}.
 
 cmd(Pid, Class, Cmd, Data) ->
-    nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
+    nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 6000).
+    % nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
 
 
 %% @doc
