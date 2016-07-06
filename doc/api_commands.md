@@ -23,7 +23,7 @@ Cmd|Description
 Returns a list of currently logged in users for the _service_, along with their started
 sessions.
 
-** Sample ***
+**Sample**
 
 ```js
 {
@@ -56,7 +56,7 @@ Gets information about a logged in user. Returns a list of started sessions and 
 
 The field `user` is mandatory.
 
-** Sample **
+**Sample**
 
 
 ```js
@@ -92,7 +92,7 @@ The field `user` is mandatory.
 
 Disconnects a currently started session. The field `session_id` is mandatory.
 
-** Sample **
+**Sample**
 
 ```js
 {
@@ -205,7 +205,7 @@ Fields omitted or with value `"*"` will be omitted in the event. Only clients su
 Gets the current list of subscriptions for a session.
 All sessions are subscribed automatically to receive user events and session events.
 
-** Sample **
+**Sample**
 
 ```js
 {
@@ -247,7 +247,7 @@ type|`"*"`|Event type to send
 body|`{}`|Body to include in the message
 
 
-** Sample **
+**Sample**
 
 ```js
 {
@@ -292,7 +292,7 @@ type|`"*"`|Event type to send
 body|`{}`|Body to include in the message
 
 
-** Sample **
+**Sample**
 
 ```js
 {
