@@ -6,9 +6,104 @@ The currently supported External API commands as described here. See [External A
 
 Cmd|Description
 ---|---
+[`list_users`](#list-users)|List current logged in users
+[`get_user`](#get-user-info)|Get info about an user
+[`logout_session`](#disconnect-a-session)|Forces disconnection of a sessions
 [`subscribe`](#subscribe)|Subscribe to events
 [`unsubscribe`](#unsubscribe)|Remove a previously registered subscription
 [`send_event`](#send-event)|Fires an event
+[`get_subscriptions`](#get-subscriptions)|Get all current subscriptions
+[`send_user_event`](#send-an-event-to-an-user)|Sends a event to an user
+[`send_session_event`](#send-an-event-to-a-session)|Sends a event to a session
+[`call_session`](#send-an-command-to-a-session)|Sends a command to a session
+
+
+### List Users
+
+Returns a list of currently logged in users for the _service_, along with their started
+sessions.
+
+** Sample ***
+
+```js
+{
+	class: "core",
+	cmd: "list_users",
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: {
+		"user1@domain.com": [
+			"54c1b637-36fb-70c2-8080-28f07603cda8",
+      		"ed26cbdb-36fb-70d7-fdcd-28f07603cda8"
+    	],
+		"user2@domain.com": [
+      		"b840f878-36fb-70e1-f3df-28f07603cda8"
+    	],    	
+	}
+	tid: 1
+}
+```
+
+
+### Get User Info
+
+Gets information about a logged in user. Returns a list of started sessions and metadata stored at the server. The server login can decide which information must be returned.
+
+The field `user` is mandatory.
+
+** Sample **
+
+
+```js
+{
+	class: "core",
+	cmd: "get_user",
+	data: {
+		"user": "user1@domain.com"
+	},
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: {
+		"54c1b637-36fb-70c2-8080-28f07603cda8": {
+			"remote": "wss:127.0.0.1:63393",
+			"type": "api_server"
+		},
+		"ed26cbdb-36fb-70d7-fdcd-28f07603cda8": {
+			"remote": "wss:127.0.0.1:63396",
+			"type": "api_server"
+    	},
+	}
+	tid: 1
+}
+```
+
+
+### Disconnect a session
+
+Disconnects a currently started session. The field `session_id` is mandatory.
+
+** Sample **
+
+```js
+{
+	class: "core",
+	cmd: "logout_session",
+	data: {
+		"session_id": "54c1b637-36fb-70c2-8080-28f07603cda8"
+	},
+	tid: 1
+}
+```
 
 
 ### Subscribe
@@ -105,8 +200,125 @@ Fields omitted or with value `"*"` will be omitted in the event. Only clients su
 }
 ```
 
+### Get subscriptions
+
+Gets the current list of subscriptions for a session.
+All sessions are subscribed automatically to receive user events and session events.
+
+** Sample **
+
+```js
+{
+	class: "core",
+	cmd: "get_subscriptions",
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: [
+		{
+			"class": "core",
+       		"subclass": "session_event",
+       		"obj_id": "275a94a7-36fb-8fce-1f4b-28f07603cda8",
+       		"type": "*"
+        },
+     	{
+     		"class": "core",
+       		"subclass": "user_event",
+       		"obj_id": "user1@domain.com",
+       		"type": "*"
+       	}
+    ],
+	tid: 1
+}
+```
+
+### Send an event to an user
+
+Allows a connection to send an event to all started sessions by an specific user.
+
+Field|Default|Description
+---|---|---|---
+user|(mandatory)|User to send the event to
+type|`"*"`|Event type to send
+body|`{}`|Body to include in the message
 
 
+** Sample **
+
+```js
+{
+	class: "core",
+	cmd: "send_user_event",
+	data: {
+		user: "user2@domain.com",
+		type: "my_type",
+		body: {
+			key: "val"
+		}
+	},
+	tid: 1
+}
+```
+
+The destination client will receive this message over all started sessions:
+
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "core",
+		subclass: "user_event",
+		type: "my_type",
+		obj_id: "user2@domain.com"
+	}
+	tid: 1
+}
+```
+
+
+### Send an event to a sessions
+
+Allows a connection to send an event to a specific session
+
+Field|Default|Description
+---|---|---|---
+session_id|(mandatory)|User to send the event to
+type|`"*"`|Event type to send
+body|`{}`|Body to include in the message
+
+
+** Sample **
+
+```js
+{
+	class: "core",
+	cmd: "send_user_event",
+	data: {
+		session_id: "275a94a7-36fb-8fce-1f4b-28f07603cda8",
+	},
+	tid: 1
+}
+```
+
+The destination client will receive this message over all started sessions:
+
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "core",
+		subclass: "session_event",
+		obj_id: "275a94a7-36fb-8fce-1f4b-28f07603cda8"
+	}
+	tid: 1
+}
+```
 
 
 
