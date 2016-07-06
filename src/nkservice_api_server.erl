@@ -195,6 +195,7 @@ find_session(SessId) ->
     tid = 1 :: integer(),
     ping :: integer() | undefined,
     regs3 = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
+    retry_time = 100 :: integer(),
     user_state :: user_state()
 }).
 
@@ -478,8 +479,10 @@ process_client_req(<<"core">>, <<"login">>, Data, TId, NkPort, State) ->
     end,
     case SessId2 of
         {error, ReplyError} ->
-            stop(self()),
-            send_reply_error(ReplyError, TId, NkPort, State2);
+            #state{retry_time=Time} = State2,
+            timer:sleep(Time),
+            State3 = State2#state{retry_time=2*Time},
+            send_reply_error(ReplyError, TId, NkPort, State3); 
         _ ->
             #state{user_state=UserState2} = State2,
             UserState3 = UserState2#{user=>User, session_id=>SessId2},
