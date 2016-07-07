@@ -15,7 +15,7 @@ Cmd|Description
 [`send_event`](#send-event)|Fires an event
 [`send_user_event`](#send-an-event-to-an-user)|Sends a event to an user
 [`send_session_event`](#send-an-event-to-a-session)|Sends a event to a session
-[`call_session`](#send-an-command-to-a-session)|Sends a command to a session
+[`call_session`](#send-a-command-to-a-session)|Sends a command to a session
 
 
 ### List Users
@@ -282,7 +282,7 @@ The destination client will receive this message over all started sessions:
 ```
 
 
-### Send an event to a sessions
+### Send an event to a session
 
 Allows a connection to send an event to a specific session
 
