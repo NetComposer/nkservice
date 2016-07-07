@@ -11,8 +11,8 @@ Cmd|Description
 [`logout_session`](#disconnect-a-session)|Forces disconnection of a sessions
 [`subscribe`](#subscribe)|Subscribe to events
 [`unsubscribe`](#unsubscribe)|Remove a previously registered subscription
-[`send_event`](#send-event)|Fires an event
 [`get_subscriptions`](#get-subscriptions)|Get all current subscriptions
+[`send_event`](#send-event)|Fires an event
 [`send_user_event`](#send-an-event-to-an-user)|Sends a event to an user
 [`send_session_event`](#send-an-event-to-a-session)|Sends a event to a session
 [`call_session`](#send-an-command-to-a-session)|Sends a command to a session
@@ -167,39 +167,6 @@ Removes a previously registered subscription. Must match exactly the same fields
 ```
 
 
-### Send event
-
-Allows to fire an event. 
-
-Field|Default|Description
----|---|---|---
-class|(mandatory)|Class to send the event to
-subclass|`"*"`|Subclass to send the event to
-type|`"*"`|Event type to send
-obj_id|`"*"`|Specific object id
-body|`{}`|Body to include in the message
-service|(this service)|Send the event to a different _service_
-
-Fields omitted or with value `"*"` will be omitted in the event. Only clients subscribed to the value `"*"` for that field (or that omitted them in the subscription request) will receive the message.
-
-
-**Sample**
-
-```js
-{
-	class: "core",
-	cmd: "send_event",
-	data: {
-		class: "my_class",
-		subclass: "my_subclass"
-		body: {
-			my_key: "my value"
-		}
-	}
-	tid: 1
-}
-```
-
 ### Get subscriptions
 
 Gets the current list of subscriptions for a session.
@@ -235,6 +202,40 @@ All sessions are subscribed automatically to receive user events and session eve
 	tid: 1
 }
 ```
+
+### Send event
+
+Allows to fire an event. 
+
+Field|Default|Description
+---|---|---|---
+class|(mandatory)|Class to send the event to
+subclass|`"*"`|Subclass to send the event to
+type|`"*"`|Event type to send
+obj_id|`"*"`|Specific object id
+body|`{}`|Body to include in the message
+service|(this service)|Send the event to a different _service_
+
+Fields omitted or with value `"*"` will be omitted in the event. Only clients subscribed to the value `"*"` for that field (or that omitted them in the subscription request) will receive the message.
+
+
+**Sample**
+
+```js
+{
+	class: "core",
+	cmd: "send_event",
+	data: {
+		class: "my_class",
+		subclass: "my_subclass"
+		body: {
+			my_key: "my value"
+		}
+	}
+	tid: 1
+}
+```
+
 
 ### Send an event to an user
 
@@ -287,7 +288,7 @@ Allows a connection to send an event to a specific session
 
 Field|Default|Description
 ---|---|---|---
-session_id|(mandatory)|User to send the event to
+session_id|(mandatory)|Session to send the event to
 type|`"*"`|Event type to send
 body|`{}`|Body to include in the message
 
@@ -305,7 +306,7 @@ body|`{}`|Body to include in the message
 }
 ```
 
-The destination client will receive this message over all started sessions:
+The destination session will receive this message over all started sessions:
 
 ```js
 {
@@ -315,6 +316,75 @@ The destination client will receive this message over all started sessions:
 		class: "core",
 		subclass: "session_event",
 		obj_id: "275a94a7-36fb-8fce-1f4b-28f07603cda8"
+	}
+	tid: 1
+}
+```
+
+
+
+### Send a command to a session
+
+Allows to send a synchronous command a to a different session, and return the response.
+
+Field|Default|Description
+---|---|---|---
+session_id|(mandatory)|Session to send the event to
+class|(mandatory)|Class to include in the request
+cmd|(mandatory)|Command to include in the request
+dara|`{}`|Optional data field
+
+
+**Sample**
+
+```js
+{
+	class: "core",
+	cmd: "call_session",
+	data: {
+		session_id: "275a94a7-36fb-8fce-1f4b-28f07603cda8",
+		class: "my_class",
+		cmd: "my_cmd",
+		data: { 
+			key: "val"
+		}
+	},
+	tid: 1
+}
+```
+
+The destination session will receive this request:
+
+```js
+{
+	class: "my_class",
+	cmd: "my_cmd",
+	data: {
+		key: "val",
+	}
+	tid: 1001
+}
+```
+
+then, if the remote sessions answers:
+
+```js
+{
+	result: "ok",
+	data: {
+		received: true,
+	}
+	tid: 1001
+}
+```
+
+the calling session will receive as response:
+
+```js
+{
+	result: "ok",
+	data: {
+		received: true,
 	}
 	tid: 1
 }

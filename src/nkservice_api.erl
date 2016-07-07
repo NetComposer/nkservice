@@ -111,10 +111,49 @@ cmd(_SrvId, <<"logout_session">>, #{session_id:=SessId}, _TId, State) ->
             {error, session_not_found, State}
     end;
 
+cmd(SrvId, <<"subscribe">>, Data, _TId, State) ->
+    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
+    EvSrvId = maps:get(service, Data, SrvId),
+    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
+    lager:warning("SUBS: ~p, ~p", [SrvId, RegId]),
+    case SrvId:api_subscribe_allow(Class, Sub, Type, EvSrvId, State) of
+        {true, State2} ->
+            Body = maps:get(body, Data, #{}),
+            nkservice_api_server:register(self(), RegId, Body),
+            {ok, #{}, State2};
+        {false, State2} ->
+            {error, unauthorized, State2}
+    end;
+
+cmd(SrvId, <<"unsubscribe">>, Data, _TId, State) ->
+    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
+    EvSrvId = maps:get(service, Data, SrvId),
+    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
+    nkservice_api_server:unregister(self(), RegId),
+    {ok, #{}, State};
+
 %% Gets [#{class=>...}]
 cmd(_SrvId, <<"get_subscriptions">>, _Data, TId, State) ->
     ok = nkservice_api_server:get_subscriptions(TId, State),
     {ack, State};
+
+cmd(SrvId, <<"send_event">>, Data, _TId, State) ->
+    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
+    EvSrvId = maps:get(service, Data, SrvId),
+    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
+    Body = maps:get(body, Data, #{}),
+    case maps:get(broadcast, Data, false) of
+        true ->
+            nkservice_events:send_all(RegId, Body),
+            {ok, #{}, State};
+        false ->
+            case nkservice_events:send_single(RegId, Body) of
+                ok ->
+                    {ok, #{}, State};
+                not_found ->
+                    {error, no_event_listener, State}
+            end
+    end;
 
 cmd(SrvId, <<"send_user_event">>, Data, _TId, State) ->
     #{type:=Type, user:=User} = Data,
@@ -169,45 +208,6 @@ cmd(_SrvId, <<"call_session">>, Data, TId, State) ->
             {error, session_not_found, State}
     end;
 
-cmd(SrvId, <<"subscribe">>, Data, _TId, State) ->
-    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
-    EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    lager:warning("SUBS: ~p, ~p", [SrvId, RegId]),
-    case SrvId:api_subscribe_allow(Class, Sub, Type, EvSrvId, State) of
-        {true, State2} ->
-            Body = maps:get(body, Data, #{}),
-            nkservice_api_server:register(self(), RegId, Body),
-            {ok, #{}, State2};
-        {false, State2} ->
-            {error, unauthorized, State2}
-    end;
-
-cmd(SrvId, <<"unsubscribe">>, Data, _TId, State) ->
-    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
-    EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    nkservice_api_server:unregister(self(), RegId),
-    {ok, #{}, State};
-
-cmd(SrvId, <<"send_event">>, Data, _TId, State) ->
-    #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
-    EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    Body = maps:get(body, Data, #{}),
-    case maps:get(broadcast, Data, false) of
-        true ->
-            nkservice_events:send_all(RegId, Body),
-            {ok, #{}, State};
-        false ->
-            case nkservice_events:send_single(RegId, Body) of
-                ok ->
-                    {ok, #{}, State};
-                not_found ->
-                    {error, no_event_listener, State}
-            end
-    end;
-
 cmd(_SrvId, _Other, _Data, _TId, State) ->
     {error, unknown_command, State}.
 
@@ -218,6 +218,17 @@ syntax(<<"get_user">>, Syntax, Defaults, Mandatory) ->
 
 syntax(<<"logout_session">>, Syntax, Defaults, Mandatory) ->
     {Syntax#{session_id=>binary}, Defaults, [session_id|Mandatory]};
+
+syntax(<<"subscribe">>, Syntax, Defaults, Mandatory) ->
+    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
+    {S#{body => any}, D, M};
+
+syntax(<<"unsubscribe">>, Syntax, Defaults, Mandatory) ->
+    syntax_events(Syntax, Defaults, Mandatory);
+  
+syntax(<<"send_event">>, Syntax, Defaults, Mandatory) ->
+    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
+    {S#{broadcast => boolean, body => any}, D, M};
 
 syntax(<<"send_user_event">>, Syntax, Defaults, Mandatory) ->
     {
@@ -257,17 +268,6 @@ syntax(<<"call_session">>, Syntax, Defaults, Mandatory) ->
         [session_id, class, cmd|Mandatory]
     };
 
-syntax(<<"send_event">>, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
-    {S#{broadcast => boolean, body => any}, D, M};
-
-syntax(<<"subscribe">>, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
-    {S#{body => any}, D, M};
-
-syntax(<<"unsubscribe">>, Syntax, Defaults, Mandatory) ->
-    syntax_events(Syntax, Defaults, Mandatory);
-  
 syntax(_, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
 
