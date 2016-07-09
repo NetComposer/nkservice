@@ -724,13 +724,13 @@ send_reply_ok(Data, TId, NkPort, State) ->
 
 %% @private
 send_reply_error(Error, TId, NkPort, #state{srv_id=SrvId}=State) ->
-    {Code, Text} = SrvId:error_code(Error),
+    {Code, Text} = nkservice_util:error_code(SrvId, Error),
     Msg = #{
         result => error,
         tid => TId,
         data => #{ 
             code => Code,
-            error => nklib_util:to_binary(Text)
+            error => Text
         }
     },
     send(Msg, NkPort, State).

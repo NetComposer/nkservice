@@ -61,7 +61,14 @@ launch(SrvId, User, SessId, Class, Cmd, Data, TId, State) ->
     },
     % lager:error("Syntax for ~p: ~p, ~p ~p", [Cmd, Syntax, Defaults, Mandatory]),
     case nklib_config:parse_config(Data, Syntax, Opts) of
-        {ok, Parsed, _} ->
+        {ok, Parsed, Other} ->
+            case maps:size(Other) of
+                0 -> 
+                    ok;
+                _ -> 
+                    lager:notice("NkSERVICE API: Unknown keys in service launch "
+                                 "~s:~s: ~p", [Class, Cmd, maps:keys(Other)])
+            end,
             case SrvId:api_allow(SrvId, User, Class, Cmd, Parsed, State) of
                 {true, State2} ->
                     SrvId:api_cmd(SrvId, User, SessId, Class, Cmd, Parsed, TId, State2);

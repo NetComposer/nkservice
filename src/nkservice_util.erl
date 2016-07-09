@@ -24,6 +24,7 @@
 -export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
 -export([get_core_listeners/2, make_id/1, update_uuid/2]).
+-export([error_code/2]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 
@@ -154,6 +155,15 @@ save_uuid(Path, Name, UUID) ->
         Error ->
             lager:warning("Could not write file ~s: ~p", [Path, Error]),
             ok
+    end.
+
+
+%% @private
+error_code(SrvId, Error) ->
+    {Code, Text} = SrvId:error_code(Error),
+    if
+        is_binary(Text) -> {Code, Text};
+        is_list(Text) -> {Code, list_to_binary(Text)}
     end.
 
 
