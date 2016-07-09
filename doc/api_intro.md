@@ -8,6 +8,7 @@ Each started service can decide to publish an External API interface that can be
 * As a way to connect _client-side_ applications (like browsers) to your service. NkSERVICE supports hundreds of thousands of external clients on a single box. The clients can use the methods and events that you decide to offer in your service configuration.
 
 Currently, all messages over the external API interface are JSON messages. In the future other encoding mechanisms may be supported.
+See the [command reference](api_commands.md) for a detailed reference of supported commands.
 
 Any side of the connection (client or server) can send _requests_ to the other side, that must _answer_ them. All **requests** have the following fields:
 
