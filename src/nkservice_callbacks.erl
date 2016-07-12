@@ -150,6 +150,7 @@ error_code({syntax_error, Txt})		-> {1000, <<"Syntax error: ", Txt/binary>>};
 error_code(invalid_parameters) 		-> {1000, <<"Invalid parameters">>};
 error_code(missing_parameters) 		-> {1000, <<"Missing parameters">>};
 error_code(invalid_reply) 			-> {1000, <<"Invalid reply">>};
+error_code(invalid_state) 			-> {1000, <<"Invalid state">>};
 error_code({missing_field, Txt})	-> {1000, <<"Missing field: ", Txt/binary>>};
 error_code(session_timeout) 		-> {1000, <<"Session timeout">>};
 error_code(session_stop) 			-> {1000, <<"Session stop">>};
