@@ -16,6 +16,7 @@ Any side of the connection (client or server) can send _requests_ to the other s
 Field|Sample|Comment
 ---|---|---
 class|"core"|Subsystem or plugin responsible to process this message, at the server or the client. At the server, `core` class is managed by NkSERVICE itself. Any attached _plugin_ can support other classes.
+subclass|"event"|Optional sub classification for the class and command
 cmd|"login"|Command to invoke at the client or the server, related to the class. 
 data|{}|Optional information to add to the request.
 tid|1|Each request must have an unique transaction id (any numerical or text value).
@@ -32,8 +33,8 @@ By convention, success responses will have `"result": "ok"`. Error responses wil
 
 ```js
 {
-	"result": "error",
-	"data": {
+	result: "error",
+	data: {
 		"error": "Error Description",
 		"code": 1001	
 	}
@@ -44,7 +45,7 @@ Responses are expected to be sent **immediately**. If a response is not going to
 
 ```js
 {
-	"ack": 1	// Must match the tid of the request
+	ack: 1	// Must match the tid of the request
 }
 ```
 
@@ -91,13 +92,14 @@ The core system and any attached plugin can send several types of events. All cl
 
 ```js
 {
-	"class": "core",
-	"cmd": "subscribe",
-	"data": {
-		"class": "media",
-		"subclass": "session",
-		"type": "*",				// Can be omitted
-		"obj_id": "*"				// Can be omitted
+	class: "core",
+	subclass: "event",
+	cmd: "subscribe",
+	data: {
+		class: "media",
+		subclass: "session",
+		type: "*",				// Can be omitted
+		obj_id: "*"				// Can be omitted
 	}
 }
 ```
@@ -119,13 +121,14 @@ For example, you would use this request to be notified of incoming login request
 
 ```js
 {
-	"class": "core",
-	"cmd": "register_callback",
-	"data": {
-		"class": "myservice",
-		"callback": "login"
+	class: "core",
+	subclass: "callback",
+	cmd: "register",
+	data: {
+		class: "myservice",
+		callback: "login"
 	},
-	"tid": 1
+	tid: 1
 }
 ```
 
@@ -134,13 +137,14 @@ after this is accepted by the server, next time an user tries to login you will 
 
 ```js
 {
-	"class": "core",
-	"cmd": "api_server_login",
-	"data": {
-		"user": "my_user",
-		"pass": "my_pass"
+	class: "core",
+	class: "callback",
+	cmd: "api_server_login",
+	data: {
+		user: "my_user",
+		pass: "my_pass"
 	},
-	"tid": 101
+	tid: 101
 }
 ```
 
@@ -149,12 +153,12 @@ and you could return:
 
 ```js
 {
-	"result": "ok",
-	"data": {
-		"authorized": "false",
-		"reason": "Invalid password"
+	result: "ok",
+	data: {
+		authorized: false,
+		reason: "Invalid password"
 	},
-	"tid": 101
+	tid": 101
 }
 ```
 
