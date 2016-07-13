@@ -1,7 +1,7 @@
 # NkSERVICE External API
 
-Class|SubClas|Cmd|Description
----|---
+Class|Subclass|Cmd|Description
+---|---|---|---
 `core`|`user`|[`list`](#list-users)|List current logged in users
 `core`|`user`|[`get`](#get-user-info)|Get info about an user
 `core`|`user`|[`send_event`](#send-an-event-to-an-user)|Sends a event to an user

@@ -158,7 +158,7 @@ and you could return:
 		authorized: false,
 		reason: "Invalid password"
 	},
-	tid": 101
+	tid: 101
 }
 ```
 
