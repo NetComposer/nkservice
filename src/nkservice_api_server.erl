@@ -22,7 +22,7 @@
 -module(nkservice_api_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([cmd/4, cmd_async/4, reply_ok/3, reply_error/3, reply_ack/2]).
+-export([cmd/2, cmd_async/2, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([send_event/3, stop/1, start_ping/2, stop_ping/1]).
 -export([register/3, unregister/2]).
 -export([find_user/1, find_session/1]).
@@ -53,7 +53,6 @@
 %% Types
 %% ===================================================================
 
-
 -type user_state() :: map().
 
 
@@ -62,19 +61,19 @@
 %% ===================================================================
 
 %% @doc Send a command and wait a response
--spec cmd(pid(), nkservice_api:class(), nkservice_api:cmd(), map()) ->
+-spec cmd(pid(), #api_req{}) ->
     {ok, Result::binary(), Data::map()} | {error, term()}.
 
-cmd(Pid, Class, Cmd, Data) ->
-    do_call(Pid, {nkservice_cmd, Class, Cmd, Data}).
+cmd(Pid, #api_req{}=Req) ->
+    do_call(Pid, {nkservice_cmd, Req}).
 
 
 %% @doc Send a command and don't wait for a response
--spec cmd_async(pid(), nkservice_api:class(), nkservice_api:cmd(), map()) ->
+-spec cmd_async(pid(), #api_req{}) ->
     ok.
 
-cmd_async(Pid, Class, Cmd, Data) ->
-    gen_server:cast(Pid, {nkservice_cmd, Class, Cmd, Data}).
+cmd_async(Pid, #api_req{}=Req) ->
+    gen_server:cast(Pid, {nkservice_cmd, Req}).
 
 
 %% @doc Sends an ok reply to a command (when you reply 'ack' in callbacks)
@@ -184,14 +183,6 @@ find_session(SessId) ->
 
 
 
-
-
-
-
-
-
-
-
 %% ===================================================================
 %% Protocol callbacks
 %% ===================================================================
@@ -264,8 +255,18 @@ conn_parse({text, Text}, NkPort, State) ->
     ?PRINT("received ~s", [Msg], State),
     case Msg of
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
-            Data = maps:get(<<"data">>, Msg, #{}),
-            process_client_req(Class, Cmd, Data, TId, NkPort, State);
+            #state{srv_id=SrvId, user=User, session_id=Session} = State,
+            Req = #api_req{
+                srv_id = SrvId,
+                class = Class,
+                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
+                cmd = Cmd,
+                tid = TId,
+                data = maps:get(<<"data">>, Msg, #{}),
+                user = User,
+                session = Session
+            },
+            process_client_req(Req, NkPort, State);
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
@@ -310,8 +311,8 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 -spec conn_handle_call(term(), {pid(), term()}, nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_call({nkservice_cmd, Class, Cmd, Data}, From, NkPort, State) ->
-    send_request(Class, Cmd, Data, From, NkPort, State);
+conn_handle_call({nkservice_cmd, Req}, From, NkPort, State) ->
+    send_request(Req, From, NkPort, State);
     
 conn_handle_call(nkservice_get_user_data, From, _NkPort, State) ->
     #state{user_state=UserState} = State,
@@ -322,14 +323,14 @@ conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs=Regs}=State) ->
     Data = [
         #{
             class => Class,
-            subclass => SubClass,
+            subclass => Sub,
             type => Type,
             obj_id => ObjId,
             service => SrvId
         }
         ||
             {
-                #reg_id{srv_id=SrvId, class=Class, subclass=SubClass, 
+                #reg_id{srv_id=SrvId, class=Class, subclass=Sub, 
                         type=Type, obj_id=ObjId}, _Body, _Mon}
             <- Regs
     ],
@@ -347,8 +348,8 @@ conn_handle_call(Msg, From, _NkPort, State) ->
 -spec conn_handle_cast(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_cast({nkservice_cmd, Class, Cmd, Data}, NkPort, State) ->
-    send_request(Class, Cmd, Data, undefined, NkPort, State);
+conn_handle_cast({nkservice_cmd, Req}, NkPort, State) ->
+    send_request(Req, undefined, NkPort, State);
 
 conn_handle_cast({reply_ok, TId, Data}, NkPort, State) ->
     case extract_op(TId, State) of
@@ -405,7 +406,8 @@ conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State) ->
         end
     ],
     Data2 = maps:from_list(lists:flatten(Data1)),
-    send_request(core, event, Data2, undefined, NkPort, State);
+    Req = #api_req{class = <<"core">>, cmd = <<"event">>, data=Data2},
+    send_request(Req, undefined, NkPort, State);
 
 conn_handle_cast(nkservice_stop, _NkPort, State) ->
     {stop, normal, State};
@@ -437,7 +439,6 @@ conn_handle_cast({nkservice_unregister, RegId}, _NkPort, State) ->
     end,
     {ok, State#state{regs=Regs2}};
 
-
 conn_handle_cast(Msg, _NkPort, State) ->
     handle(api_server_handle_cast, [Msg], State).
 
@@ -450,7 +451,8 @@ conn_handle_info(nkservice_send_ping, _NkPort, #state{ping=undefined}=State) ->
 
 conn_handle_info(nkservice_send_ping, NkPort, #state{ping=Time}=State) ->
     erlang:send_after(1000*Time, self(), nkservice_send_ping),
-    send_request(core, ping, #{time=>Time}, undefined, NkPort, State);
+    Req = #api_req{class = <<"core">>, cmd = <<"ping">>, data = #{time=>Time}},
+    send_request(Req, undefined, NkPort, State);
 
 conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
     case extract_op(TId, State) of
@@ -505,7 +507,10 @@ conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
 %% ===================================================================
 
 %% @private
-process_client_req(<<"core">>, <<"login">>, Data, TId, NkPort, State) ->
+process_client_req(
+        #api_req{class = <<"core">>, subclass = <<"core">>, cmd = <<"login">>} = Req,
+        NkPort, State) ->
+    #api_req{tid=TId, data=Data} = Req,
     _ = send_ack(TId, NkPort, State),
     SessId = nklib_util:uuid_4122(),
     case handle(api_server_login, [Data, SessId], State) of
@@ -545,8 +550,10 @@ process_client_req(<<"core">>, <<"login">>, Data, TId, NkPort, State) ->
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
     end;
 
-process_client_req(<<"core">>, <<"event">>, #{<<"class">>:=Class}=Data, 
-                   TId, NkPort, State) ->
+process_client_req(
+        #api_req{class = <<"core">>, subclass = <<"core">>, cmd = <<"event">>} = Req,
+        NkPort, State) ->
+    #api_req{tid=TId, data=#{<<"class">>:=Class}=Data} = Req, 
     #state{srv_id=SrvId} = State,
     case send_reply_ok(#{}, TId, NkPort, State) of
         {ok, State2} ->
@@ -564,11 +571,11 @@ process_client_req(<<"core">>, <<"event">>, #{<<"class">>:=Class}=Data,
             Other
     end;
 
-process_client_req(_Class, _Cmd, _Data, TId, NkPort, #state{session_id = <<>>}=State) ->
+process_client_req(#api_req{tid=TId}, NkPort, #state{session_id = <<>>}=State) ->
     send_reply_error(not_authenticated, TId, NkPort, State);
 
-process_client_req(Class, Cmd, Data, TId, NkPort, State) ->
-    case handle(api_server_cmd, [Class, Cmd, Data, TId], State) of
+process_client_req(#api_req{tid=TId}=Req, NkPort, State) ->
+    case handle(api_server_cmd, [Req], State) of
         {ok, Reply, State2} when is_map(Reply) ->
             send_reply_ok(Reply, TId, NkPort, State2);
         {ack, State2} ->
@@ -692,18 +699,23 @@ extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
 
 
 %% @private
-send_request(Class, Cmd, Data, From, NkPort, #state{tid=TId}=State) ->
+send_request(Req, From, NkPort, #state{tid=TId}=State) ->
+    #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data} = Req,
     Msg1 = #{
         class => Class,
         cmd => Cmd,
         tid => TId
     },
-    Msg2 = case map_size(Data) of
-        0 -> Msg1;
-        _ -> Msg1#{data=>Data}
+    Msg2 = case Sub == <<"core">> orelse Sub == core of
+        true  -> Msg1;
+        false -> Msg1#{subclass=>Sub}
     end,
-    State2 = insert_op(TId, Msg2, From, State),
-    send(Msg2, NkPort, State2#state{tid=TId+1}).
+    Msg3 = case is_map(Data) andalso map_size(Data)>0  of
+        true -> Msg2#{data=>Data};
+        false -> Msg2
+    end,
+    State2 = insert_op(TId, Msg3, From, State),
+    send(Msg3, NkPort, State2#state{tid=TId+1}).
 
 
 

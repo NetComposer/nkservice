@@ -27,11 +27,11 @@
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([error_code/1]).
 -export([api_server_init/2, api_server_terminate/2, 
-		 api_server_login/3, api_server_cmd/5, api_server_event/3,
+		 api_server_login/3, api_server_cmd/2, api_server_event/3,
 		 api_server_forward_event/3, api_server_get_user_data/1,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_allow/6, api_subscribe_allow/5, api_cmd/8, api_cmd_syntax/6]).
+-export([api_allow/2, api_subscribe_allow/5, api_cmd/2, api_syntax/4]).
 
 -export_type([continue/0]).
 
@@ -173,11 +173,6 @@ error_code(Other) ->
 %% API Server Callbacks
 %% ===================================================================
 
--type class() :: atom().
--type cmd() :: atom().
--type data() :: map().
--type tid() :: term().
-
 
 %% @doc Called when a new connection starts
 -spec api_server_init(nkpacket:nkport(), state()) ->
@@ -191,7 +186,7 @@ api_server_init(_NkPort, State) ->
 %% You get the class and data fields, along with a server-generated session id
 %% You can accept the request setting an 'user' for this connection
 %% and, optionally, changing the session id (for example for session recoverty)
--spec api_server_login(data(), SessId::binary(), state()) ->
+-spec api_server_login(map(), SessId::binary(), state()) ->
 	{true, User::binary(), state()} | 
 	{true, User::binary(), SessId::binary(), state()} | 
 	{false, error_code(), state()} | continue.
@@ -201,15 +196,14 @@ api_server_login(_Data, _SessId, State) ->
 
 
 %% @doc Called when a new cmd is received
--spec api_server_cmd(class(), cmd(), data(), tid(), state()) ->
-	{ok, data(), state()} | {ack, state()} | 
+-spec api_server_cmd(#api_req{}, state()) ->
+	{ok, map(), state()} | {ack, state()} | 
 	{error, error_code(), state()} | continue().
 
-api_server_cmd(<<"core">>, Cmd, Data, TId, State) ->
-	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-	nkservice_api:launch(SrvId, User, SessId, <<"core">>, Cmd, Data, TId, State);
+api_server_cmd(#api_req{class = <<"core">>}=Req, State) ->
+	nkservice_api:launch(Req, State);
 	
-api_server_cmd(_Class, _Cmd, _Data, _Tid, State) ->
+api_server_cmd(_Req, State) ->
     {error, not_implemented, State}.
 
 
@@ -295,46 +289,45 @@ api_server_terminate(_Reason, State) ->
 %% ===================================================================
 
 %% @doc Called to get the syntax for an external API command
--spec api_cmd_syntax(nkservice_api:class(), nkservice_api:cmd(), map()|list(), 
-					 map(), map(), list()) ->
+-spec api_syntax(#api_req{}, map(), map(), list()) ->
 	{Syntax::map(), Defaults::map(), Mandatory::list()}.
 
-api_cmd_syntax(<<"core">>, Cmd, _Data, Syntax, Defaults, Mandatory) ->
-	nkservice_api:syntax(Cmd, Syntax, Defaults, Mandatory);
+api_syntax(#api_req{class = <<"core">>}=Req, Syntax, Defaults, Mandatory) ->
+	#api_req{subclass=Sub, cmd=Cmd} = Req,
+	nkservice_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
 	
-api_cmd_syntax(_Class, _Cmd, _Data, Syntax, Defaults, Mandatory) ->
+api_syntax(_Req, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
 
 
 %% @doc Called when a new API command has arrived and called nkservice_api:launch/6
 %% to authorized the (already parsed) request
--spec api_allow(nkservice:id(), binary(), nkservice_api:class(), nkservice_api:cmd(),
-			    map(), state()) ->
+-spec api_allow(#api_req{}, state()) ->
 	{boolean(), state()}.
 
-api_allow(_SrvId, _User, _Class, _Cmd, _Parsed, State) ->
+api_allow(_Req, State) ->
 	{false, State}.
 
 
 %% @doc Called when a 'subscribe' external command arrives
 %% You should allow subscribing to other service's events without care.
--spec api_subscribe_allow(nkservice_events:class(), nkservice_events:subclass(), 
-						  nkservice_events:type(), nkservice:id(), map()) ->
+-spec api_subscribe_allow(nkservice:id(), nkservice_events:class(),	 
+						  nkservice_events:subclass(), nkservice_events:type(), map()) ->
 	{boolean(), map()}.
 
-api_subscribe_allow(_Class, _SubClass, _Type, _SrvId, State) ->
+api_subscribe_allow(_SrvId, _Class, _SubClass, _Type, State) ->
 	{false, State}.
 
 
 %% @doc Called when a new API command has arrived and is authorized
--spec api_cmd(nkservice:id(), binary(), binary(), nkservice_api:class(), 
-			  nkservice_api:cmd(), map(), term(), state()) ->
+-spec api_cmd(#api_req{}, state()) ->
 	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
-api_cmd(SrvId, _User, _SessId, <<"core">>, Cmd, Parsed, TId, State) ->
-	nkservice_api:cmd(SrvId, Cmd, Parsed, TId, State);
+api_cmd(#api_req{class = <<"core">>}=Req, State) ->
+	#api_req{subclass=Sub, cmd=Cmd} = Req,
+	nkservice_api:cmd(Sub, Cmd, Req, State);
 
-api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, State) ->
+api_cmd(_Req, State) ->
 	{error, not_implemented, State}.
 
 
