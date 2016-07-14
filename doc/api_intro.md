@@ -54,11 +54,7 @@ NkSERVICE will close the connection if no response is received within 5 seconds.
 
 ## Login
 
-Right after starting the connection, the client must send a _login_ request (see [core commands](api_commands.md)). The service or plugin responsible to accept the user must supply an `user` (a single user can start multiple connections) and an unique, session-specific `session_id`. The server provides a unique session_id, but the service login can change it, possibly during a session recovery procedure.
-
-If you login to the External API server started by the core class (defined in NkSERVICE global configuration) you can only use the (also defined in the config) system-wide administrator's user and pass. In this case, you are allowed to perform administrative functions like creating new services (other ways to create services are defined in the introduction).
-
-If you login to a server started by any other service, that service must attend the login petition, in its server logic (using Luerl or Erlang) or subscribing to the callback `api_server_login` (see bellow).
+Right after starting the connection, the client must send a _login_ request (see [core commands](api_commands.md)). 
 
 
 ## Creating a service

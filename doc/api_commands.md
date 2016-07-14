@@ -20,13 +20,13 @@ The currently supported External API commands as described here. See [External A
 
 ## Login
 
-Right after starting the connection, the client must send a _login_ request. You must supply an `user` and, optionally, a password or any other metadata that a plugin can recognize. Some plugins may add other authentication mechanism, or ways to extract metadata from the request.
+Right after starting the connection, the client must send a _login_ request. You must supply an `user` and, optionally, a password. Any installed plugins may add other authentication mechanisms, or ways to extract metadata from the request.
 
-The user can be any unique string, but an _email-like_ user is recommended. 
+The `user` can be any unique string, but an _email-like_ string is recommended. 
 
 By default, the only recognized user is the one defined in the configuration (as _admin_) and it expects a `password` (_admin_password_).
 
-Each connection has an unique session_id. If you don't supply one, it will be automatically generated. 
+Each connection has an unique `session_id`. If you don't supply one, it will be automatically generated. 
 
 
 Field|Default|Description
@@ -46,7 +46,7 @@ session_id|(automatic)|Session-id specific for this connection
 		user: "user@domain.com",
 		password: "1234",
 		meta1: "value1"
-}
+	},
 	tid: 1
 }
 ```
@@ -55,7 +55,7 @@ session_id|(automatic)|Session-id specific for this connection
 {
 	result: "ok",
 	data: {
-		session_id: ""54c1b637-36fb-70c2-8080-28f07603cda8"
+		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8"
 	}
 	tid: 1
 }
