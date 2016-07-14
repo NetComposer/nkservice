@@ -2,6 +2,7 @@
 
 Class|Subclass|Cmd|Description
 ---|---|---|---
+`core`|`user`|[`login`](#login)|Log in
 `core`|`user`|[`list`](#list-users)|List current logged in users
 `core`|`user`|[`get`](#get-user-info)|Get info about an user
 `core`|`user`|[`send_event`](#send-an-event-to-an-user)|Sends a event to an user
@@ -17,7 +18,66 @@ Class|Subclass|Cmd|Description
 The currently supported External API commands as described here. See [External API](api_intro.md) for an introduction to the External API. See the documentation of each plugin to learn the supported classes and commands.
 
 
-### List Users
+## Login
+
+Right after starting the connection, the client must send a _login_ request. You must supply an `user` and, optionally, a password or any other metadata that a plugin can recognize. Some plugins may add other authentication mechanism, or ways to extract metadata from the request.
+
+The user can be any unique string, but an _email-like_ user is recommended. 
+
+By default, the only recognized user is the one defined in the configuration (as _admin_) and it expects a `password` (_admin_password_).
+
+Each connection has an unique session_id. If you don't supply one, it will be automatically generated. 
+
+
+Field|Default|Description
+---|---|---|---
+user|(mandatory)|User who is logging in.
+password|(mandatory for admin user)|Password
+session_id|(automatic)|Session-id specific for this connection
+
+**Sample**
+
+```js
+{
+	class: "core",
+	subclass: "user",
+	cmd: "login",
+	data: {
+		user: "user@domain.com",
+		password: "1234",
+		meta1: "value1"
+}
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: {
+		session_id: ""54c1b637-36fb-70c2-8080-28f07603cda8"
+	}
+	tid: 1
+}
+```
+
+
+## Send an event to an user
+
+Allows a connection to send an event to all started sessions by an specific user.
+
+Field|Default|Description
+---|---|---|---
+user|(mandatory)|User who is logging in.
+type|`"*"`|Event type to send
+body|`{}`|Body to include in the message
+
+
+
+ (see [core commands](api_commands.md)). The service or plugin responsible to accept the user must supply an `user` (a single user can start multiple connections) and an unique, session-specific `session_id`. The server provides a unique session_id, but the service login can change it, possibly during a session recovery procedure.
+
+
+## List Users
 
 Returns a list of currently logged in users for the _service_, along with their started
 sessions.
@@ -50,7 +110,7 @@ sessions.
 ```
 
 
-### Get User Info
+## Get User Info
 
 Gets information about a logged in user. Returns a list of started sessions and metadata stored at the server. The server login can decide which information must be returned.
 
@@ -89,7 +149,7 @@ The field `user` is mandatory.
 ```
 
 
-### Send an event to an user
+## Send an event to an user
 
 Allows a connection to send an event to all started sessions by an specific user.
 
@@ -136,8 +196,7 @@ The destination client will receive this message over all started sessions:
 
 
 
-
-### Disconnect a session
+## Disconnect a session
 
 Disconnects a currently started session. The field `session_id` is mandatory.
 
@@ -157,7 +216,7 @@ Disconnects a currently started session. The field `session_id` is mandatory.
 
 
 
-### Send an event to a session
+## Send an event to a session
 
 Allows a connection to send an event to a specific session
 
@@ -199,7 +258,7 @@ The destination session will receive this message over all started sessions:
 
 
 
-### Send a command to a session
+## Send a command to a session
 
 Allows to send a synchronous command a to a different session, and return the response.
 
@@ -271,7 +330,7 @@ the calling session will receive as response:
 
 
 
-### Subscribe
+## Subscribe
 
 Allows the connection to subscribe to specific events or event classes. The only mandatory field is `class`. 
 
@@ -334,7 +393,7 @@ Removes a previously registered subscription. Must match exactly the same fields
 ```
 
 
-### Get subscriptions
+## Get subscriptions
 
 Gets the current list of subscriptions for a session.
 All sessions are subscribed automatically to receive user events and session events.
@@ -371,7 +430,7 @@ All sessions are subscribed automatically to receive user events and session eve
 }
 ```
 
-### Send event
+## Send event
 
 Allows to fire an event. 
 

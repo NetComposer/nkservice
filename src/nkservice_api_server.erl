@@ -508,7 +508,7 @@ conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
 
 %% @private
 process_client_req(
-        #api_req{class = <<"core">>, subclass = <<"core">>, cmd = <<"login">>} = Req,
+        #api_req{class = <<"core">>, subclass = <<"user">>, cmd = <<"login">>} = Req,
         NkPort, State) ->
     #api_req{tid=TId, data=Data} = Req,
     _ = send_ack(TId, NkPort, State),
