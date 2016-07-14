@@ -31,8 +31,8 @@ Each connection has an unique `session_id`. If you don't supply one, it will be 
 
 Field|Default|Description
 ---|---|---|---
-user|(mandatory)|User who is logging in.
-password|(mandatory for admin user)|Password
+user|(mandatory)|User who is logging in
+password|(mandatory for _admin_ user)|Password
 session_id|(automatic)|Session-id specific for this connection
 
 **Sample**

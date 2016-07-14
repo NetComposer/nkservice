@@ -95,18 +95,6 @@ cmd(Pid, Req) ->
 
 
 %% @doc
--spec reg(pid(), #reg_id{}) ->
-    {ok, map()} | {error, {integer(), binary()}}.
-
-cmd(Pid, RegId) ->
-    Cmd = #api_req{class=core, cmd=event, }
-
-    nklib_util:call(Pid, {cmd, Req}, 6000).
-    % nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
-
-
-
-%% @doc
 reply_ok(Pid, TId, Data) ->
     gen_server:cast(Pid, {reply_ok, TId, Data}).
 
