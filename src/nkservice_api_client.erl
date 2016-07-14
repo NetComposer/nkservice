@@ -26,7 +26,7 @@
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
--export([print/3, get_all/0]).
+-export([print/3, get_all/0, get_user/1]).
 
 
 -define(LLOG(Type, Txt, Args, State),
@@ -95,6 +95,18 @@ cmd(Pid, Req) ->
 
 
 %% @doc
+-spec reg(pid(), #reg_id{}) ->
+    {ok, map()} | {error, {integer(), binary()}}.
+
+cmd(Pid, RegId) ->
+    Cmd = #api_req{class=core, cmd=event, }
+
+    nklib_util:call(Pid, {cmd, Req}, 6000).
+    % nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
+
+
+
+%% @doc
 reply_ok(Pid, TId, Data) ->
     gen_server:cast(Pid, {reply_ok, TId, Data}).
 
@@ -106,7 +118,12 @@ reply_error(Pid, TId, Code) ->
 
 %% @dodc
 get_all() ->
-    [Pid || {_, Pid} <- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
+
+
+get_user(User) ->
+    [Pid || {_, Pid}<- nklib_proc:values({?MODULE, nklib_util:to_binary(User)})].
+
 
 
 %% @doc 
@@ -116,7 +133,7 @@ stop(Pid) ->
 
 %% @doc 
 stop_all() ->
-    [stop(Pid) || Pid <- get_all()].
+    [stop(Pid) || {_, Pid} <- get_all()].
 
 
 %% ===================================================================
@@ -332,7 +349,14 @@ process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
 
 
 %% @private
-process_server_resp(<<"ok">>, Data, #trans{from=From}, _NkPort, State) ->
+process_server_resp(<<"ok">>, Data, #trans{from=From}=Trans, _NkPort, State) ->
+    case Trans of
+        #trans{op=#{cmd:=login, data:=#{user:=User}}} ->
+            nklib_proc:put(?MODULE, User),
+            nklib_proc:put({?MODULE, User});
+        _ ->
+            ok
+    end,
     nklib_util:reply(From, {ok, Data}),
     {ok, State};
 

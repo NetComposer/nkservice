@@ -145,6 +145,7 @@ error_code(unknown_command)			-> {1000, <<"Unknown command">>};
 error_code(unknown_class)			-> {1000, <<"Unknown class">>};
 error_code(incompatible_operation) 	-> {1000, <<"Incompatible operation">>};
 error_code(unknown_operation) 		-> {1000, <<"Unknown operation">>};
+error_code(invalid_operation) 		-> {1000, <<"Invalid operation">>};
 error_code(no_event_listener)		-> {1000, <<"No event listener">>};
 error_code({syntax_error, Txt})		-> {1000, <<"Syntax error: ", Txt/binary>>};
 error_code(invalid_parameters) 		-> {1000, <<"Invalid parameters">>};
