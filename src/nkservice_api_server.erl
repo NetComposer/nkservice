@@ -22,7 +22,7 @@
 -module(nkservice_api_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([cmd/2, cmd_async/2, reply_ok/3, reply_error/3, reply_ack/2]).
+-export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([send_event/3, stop/1, start_ping/2, stop_ping/1]).
 -export([register/3, unregister/2]).
 -export([find_user/1, find_session/1]).
@@ -54,6 +54,10 @@
 %% ===================================================================
 
 -type user_state() :: map().
+-type class() :: atom() | binary().
+-type subclass() :: atom() | binary().
+-type cmd() :: atom() | binary().
+-type data() :: map().
 
 
 %% ===================================================================
@@ -61,18 +65,20 @@
 %% ===================================================================
 
 %% @doc Send a command and wait a response
--spec cmd(pid(), #api_req{}) ->
+-spec cmd(pid(), class(), subclass(), cmd(), data()) ->
     {ok, Result::binary(), Data::map()} | {error, term()}.
 
-cmd(Pid, #api_req{}=Req) ->
+cmd(Pid, Class, SubClass, Cmd, Data) ->
+    Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
     do_call(Pid, {nkservice_cmd, Req}).
 
 
 %% @doc Send a command and don't wait for a response
--spec cmd_async(pid(), #api_req{}) ->
+-spec cmd_async(pid(), class(), subclass(), cmd(), data()) ->
     ok.
 
-cmd_async(Pid, #api_req{}=Req) ->
+cmd_async(Pid, Class, SubClass, Cmd, Data) ->
+    Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
     gen_server:cast(Pid, {nkservice_cmd, Req}).
 
 

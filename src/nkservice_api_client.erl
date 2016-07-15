@@ -22,7 +22,7 @@
 -module(nkservice_api_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/6, cmd/2, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
+-export([start/6, cmd/5, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
@@ -73,8 +73,7 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
                 user => nklib_util:to_binary(User), 
                 pass => nklib_util:to_binary(Pass)
             },
-            Req = #api_req{class=core, cmd=login, data=Data},
-            case cmd(Pid, Req) of
+            case cmd(Pid, core, user, login, Data) of
                 {ok, #{<<"session_id">>:=SessId}} ->
                     {ok, SessId, Pid};
                 {error, Error} ->
@@ -86,10 +85,11 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
 
 
 %% @doc
--spec cmd(pid(), #api_req{}) ->
-    {ok, map()} | {error, {integer(), binary()}}.
+-spec cmd(pid(), atom(), atom(), atom(), map()) ->
+    {ok, map()} | {error, {integer(), binary()}} | {error, term()}.
 
-cmd(Pid, Req) ->
+cmd(Pid, Class, Sub, Cmd, Data) ->
+    Req = #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data},
     nklib_util:call(Pid, {cmd, Req}, 6000).
     % nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
 

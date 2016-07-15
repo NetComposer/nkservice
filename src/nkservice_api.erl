@@ -196,16 +196,11 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
     #{session_id:=SessId, class:=Class, subclass:=Sub, cmd:=Cmd} = Data,
     case nkservice_api_server:find_session(SessId) of
         {ok, _User, Pid} ->
-            Req = #api_req{
-                class = Class, 
-                subclass = Sub,
-                cmd = Cmd, 
-                data = maps:get(data, Data, #{})
-            },
+            CmdData = maps:get(data, Data, #{}),
             Self = self(),
             _ = spawn_link(
                 fun() ->
-                    case nkservice_api_server:cmd(Pid, Req) of
+                    case nkservice_api_server:cmd(Pid, Class, Sub, Cmd, CmdData) of
                         {ok, <<"ok">>, ResData} ->
                             nkservice_api_server:reply_ok(Self, TId, ResData);
                         {ok, <<"error">>, #{<<"code">>:=Code, <<"error">>:=Error}} ->

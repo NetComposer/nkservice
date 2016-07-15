@@ -100,49 +100,49 @@ api_client_fun(_Req, UserData) ->
 
 
 list_users(C) ->
-    nkservice_api_client:cmd(C, make_req(user, list, #{})).
+    nkservice_api_client:cmd(C, core, user, list, #{}).
 
 
 get_user(C, User) ->
-    nkservice_api_client:cmd(C, make_req(user, get, #{user => User})).
+    nkservice_api_client:cmd(C, core, user, get, #{user => User}).
 
 
 logout(C, SessId) ->
-    nkservice_api_client:cmd(C, make_req(session, stop, #{session_id => SessId})).
+    nkservice_api_client:cmd(C, core, session, stop, #{session_id => SessId}).
 
 
 get_subs(C) ->
-    nkservice_api_client:cmd(C, make_req(event, get_subscriptions, #{})).
+    nkservice_api_client:cmd(C, core, event, get_subscriptions, #{}).
 
 
 send_user_event(C, User) ->
     nkservice_api_client:cmd(C, 
-        make_req(user, send_event, #{user=>User, type=>type1, body=>#{k=>v}})).    
+        core, user, send_event, #{user=>User, type=>type1, body=>#{k=>v}}).    
 
 send_session_event(C, SessId) ->
     nkservice_api_client:cmd(C, 
-        make_req(session, send_event,#{session_id=>SessId, type=>type1, body=>#{k=>v}})).    
+        core, session, send_event,#{session_id=>SessId, type=>type1, body=>#{k=>v}}).    
     
 call_session(C, SessId) ->
     {ok, #{<<"k">> := <<"v">>}} = 
         nkservice_api_client:cmd(C,
-            make_req(session, cmd, #{session_id=>SessId, class=>class1, cmd=>cmd1, 
-                                     data=>#{k=>v}})),
+            core, session, cmd, 
+            #{session_id=>SessId, class=>class1, cmd=>cmd1, data=>#{k=>v}}),
     {error, {1000, <<"Not implemented">>}} = 
         nkservice_api_client:cmd(C, 
-            make_req(session, cmd, #{session_id=>SessId, class=>class2, cmd=>cmd1, 
-                                     data=>#{k=>v}})),
+            core, session, cmd, 
+            #{session_id=>SessId, class=>class2, cmd=>cmd1, data=>#{k=>v}}),
     ok.
 
 subscribe(C) ->
     nkservice_api_client:cmd(C,
-        make_req(event, subscribe, #{class=>class1, body=>#{k=>v}})),
+        core, event, subscribe, #{class=>class1, body=>#{k=>v}}),
     nkservice_api_client:cmd(C,
-        make_req(event, subscribe, #{class=>class2, subclass=>s2})),
+        core, event, subscribe, #{class=>class2, subclass=>s2}),
     nkservice_api_client:cmd(C,
-        make_req(event, subscribe, #{class=>class3, subclass=>s3, type=>t3})),
+        core, event, subscribe, #{class=>class3, subclass=>s3, type=>t3}),
     nkservice_api_client:cmd(C,
-        make_req(event, subscribe, #{class=>class4, subclass=>s4, type=>t4, obj_id=>o4})).
+        core, event, subscribe, #{class=>class4, subclass=>s4, type=>t4, obj_id=>o4}).
 
 
 send1(C, T) ->
@@ -155,7 +155,7 @@ send1(C, T) ->
         s4a -> #{class=>class4, subclass=>s4, type=>t4, obj_id=>o4, body=>#{k4=>v4}};
         s4b -> #{class=>class4, subclass=>s4, type=>t4, obj_id=>o5, body=>#{k4=>v4}}
     end,
-    nkservice_api_client:cmd(C, make_req(event, send, Ev)).
+    nkservice_api_client:cmd(C, core, event, send, Ev).
 
 
 
@@ -183,10 +183,6 @@ api_4(C) ->
     },
     nkservice_api_client:cmd(C, core, send_event, Data).
 
-
-
-make_req(Sub, Cmd, Data) ->
-    #api_req{class=core, subclass=Sub, cmd=Cmd, data=Data}.
 
 
 
@@ -250,7 +246,7 @@ api_server_cmd(<<"test">>, <<"op3">>, Data, _TId, State) ->
 	Self = self(),
 	spawn(
 		fun() -> 
-			_ = nkservice_api_server:cmd(Self, server, op3_reply, #{you_sent=>Data})
+			_ = nkservice_api_server:cmd(Self, server, core, op3_reply, #{you_sent=>Data})
 		end),
     {ok, #{received=>ok}, State};
 
@@ -258,7 +254,7 @@ api_server_cmd(<<"test">>, <<"op4">>, Data, _TId, State) ->
 	Self = self(),
 	spawn(
 		fun() -> 
-			_ = nkservice_api_server:cmd(Self, jbg, <<"fun">>, #{you_sent=>Data})
+			_ = nkservice_api_server:cmd(Self, jbg, core, <<"fun">>, #{you_sent=>Data})
 		end),
     {ok, #{received=>ok}, State};
 
