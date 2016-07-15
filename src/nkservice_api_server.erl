@@ -252,9 +252,9 @@ conn_parse({text, Text}, NkPort, State) ->
         Json ->
             Json
     end,
-    ?PRINT("received ~s", [Msg], State),
     case Msg of
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
+            ?PRINT("received ~s", [Msg], State),
             #state{srv_id=SrvId, user=User, session_id=Session} = State,
             Req = #api_req{
                 srv_id = SrvId,
@@ -270,6 +270,10 @@ conn_parse({text, Text}, NkPort, State) ->
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
+                    case Trans of
+                        #trans{op=#{cmd:=<<"ping">>}} -> ok;
+                        _ -> ?PRINT("received ~s", [Msg], State)
+                    end,
                     Data = maps:get(<<"data">>, Msg, #{}),
                     process_client_resp(Result, Data, Trans, NkPort, State2);
                 not_found ->
@@ -278,6 +282,7 @@ conn_parse({text, Text}, NkPort, State) ->
                     {ok, State}
             end;
         #{<<"ack">> := TId} ->
+            ?PRINT("received ~s", [Msg], State),
             case extract_op(TId, State) of
                 {Trans, State2} ->
                     {ok, extend_op(TId, Trans, State2)};
@@ -777,6 +782,8 @@ handle(Fun, Args, State) ->
     
 
 %% @private
+print(_Txt, [#{cmd:=<<"ping">>}], _State) ->
+    ok;
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
