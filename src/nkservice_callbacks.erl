@@ -224,8 +224,8 @@ api_server_event(_RegId, _Body, State) ->
 	{ok, nkservice_event:reg_id(), nkservice_event:body(), continue()} |
 	{ignore, state()}.
 
-api_server_forward_event(RegId, Body, State) ->
-	nkmedia_api:forward_event(RegId, Body, State).
+api_server_forward_event(_RegId, _Body, State) ->
+	{ok, State}.
 
 
 %% @doc Called when the API server receives an event notification from 

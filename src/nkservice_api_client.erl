@@ -143,6 +143,8 @@ stop_all() ->
     tid = 1000 :: integer(),
     remote :: binary(),
     callback :: function(),
+    user :: binary(),
+    session_id :: binary(),
     userdata :: term()
 }).
 
@@ -325,8 +327,8 @@ conn_handle_info(Info, _NkPort, State) ->
 
 %% @private
 process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
-    #state{callback=CB, userdata=UserData} = State,
-    case CB(Req, UserData) of
+    #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
+    case CB(Req#api_req{user=User, session=SessId}, UserData) of
         {ok, Reply, UserData2} ->
             send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
         {ack, UserData2} ->
@@ -338,15 +340,17 @@ process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
 
 %% @private
 process_server_resp(<<"ok">>, Data, #trans{from=From}=Trans, _NkPort, State) ->
-    case Trans of
+    State2 = case Trans of
         #trans{op=#{cmd:=login, data:=#{user:=User}}} ->
+            #{<<"session_id">>:=SessId} = Data,
             nklib_proc:put(?MODULE, User),
-            nklib_proc:put({?MODULE, User});
+            nklib_proc:put({?MODULE, User}),
+            State#state{user=User, session_id=SessId};
         _ ->
-            ok
+            State
     end,
     nklib_util:reply(From, {ok, Data}),
-    {ok, State};
+    {ok, State2};
 
 process_server_resp(<<"error">>, Data, #trans{from=From}, _NkPort, State) ->
     Code = maps:get(<<"code">>, Data, 0),
