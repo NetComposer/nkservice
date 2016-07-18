@@ -144,7 +144,7 @@ cmd(<<"event">>, <<"send">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     Body = maps:get(body, Data, #{}),
     case maps:get(broadcast, Data, true) of
         true ->
-            nkservice_events:send_all(RegId, Body),
+            nkservice_events:send(RegId, Body),
             {ok, #{}, State};
         false ->
             case nkservice_events:send_single(RegId, Body) of
@@ -166,7 +166,7 @@ cmd(<<"user">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
         obj_id = User
     },
     Body = maps:get(body, Data, #{}),
-    nkservice_events:send_all(RegId, Body),
+    nkservice_events:send(RegId, Body),
     {ok, #{}, State};
 
 cmd(<<"session">>, <<"stop">>, #api_req{data=#{session_id:=SessId}}, State) ->
@@ -189,7 +189,7 @@ cmd(<<"session">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) -
         obj_id = SessId
     },
     Body = maps:get(body, Data, #{}),
-    nkservice_events:send_all(RegId, Body),
+    nkservice_events:send(RegId, Body),
     {ok, #{}, State};
 
 cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
