@@ -24,7 +24,7 @@
 
 -export([start/6, cmd/5, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
 -export([transports/1, default_port/1]).
--export([conn_init/1, conn_encode/2, conn_parse/3]).
+-export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3, get_all/0, get_user/1]).
 
@@ -319,6 +319,13 @@ conn_handle_info(Info, _NkPort, State) ->
     ?LLOG(error, "unexpected handle_info: ~p", [Info], State),
     {ok, State}.
 
+
+%% @doc Called when the connection stops
+-spec conn_stop(Reason::term(), nkpacket:nkport(), #state{}) ->
+    ok.
+
+conn_stop(Reason, _NkPort, State) ->
+    ?LLOG(info, "client stop (~p)", [Reason], State).
 
 
 %% ===================================================================

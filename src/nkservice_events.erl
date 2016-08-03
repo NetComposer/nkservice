@@ -66,6 +66,7 @@ send(RegId) ->
     ok | not_found.
 
 send(#reg_id{}=RegId, Body) ->
+    lager:info("EVENT: ~p ~p", [RegId, Body]),
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = RegId,
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),

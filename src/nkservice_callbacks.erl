@@ -161,6 +161,7 @@ error_code(timeout) 				-> {1000, <<"Timeout">>};
 error_code(noproc) 					-> {1000, <<"No process">>};
 error_code(user_stop) 				-> {1000, <<"User stop">>};
 error_code(process_down)  			-> {1000, <<"Process failed">>};
+error_code(api_command)		    	->  {0, <<"API command">>};
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};

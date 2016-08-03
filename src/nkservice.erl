@@ -26,6 +26,7 @@
 -export([get_listeners/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
 -export_type([id/0, name/0, class/0, spec/0, config/0, service/0, error/0]).
+-export_type([user_id/0, user_session/0]).
 
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -87,6 +88,12 @@
 
 
 -type service_select() :: id() | name().
+
+-type user_id() :: binary().
+-type user_session() :: binary().
+
+
+
 
 
 %% ===================================================================

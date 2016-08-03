@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
--export([send_event/3, stop/1, start_ping/2, stop_ping/1]).
+-export([stop/1, start_ping/2, stop_ping/1]).
 -export([register/3, unregister/2]).
 -export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
@@ -108,12 +108,12 @@ reply_ack(Pid, TId) ->
     gen_server:cast(Pid, {reply_ack, TId}).
 
 
-%% @doc Sends an event asynchronously
--spec send_event(pid(), nkservice_event:reg_id(), nkservice_event:body()) ->
-    ok.
+% %% @doc Sends an event asynchronously
+% -spec send_event(pid(), nkservice_event:reg_id(), nkservice_event:body()) ->
+%     ok.
 
-send_event(Pid, RegId, Body) when is_map(Body) ->
-    gen_server:cast(Pid, {nkservice_send_event, RegId, Body}).
+% send_event(Pid, RegId, Body) when is_map(Body) ->
+%     gen_server:cast(Pid, {nkservice_send_event, RegId, Body}).
 
 
 %% @doc Start sending pings
@@ -587,7 +587,7 @@ process_client_req(#api_req{tid=TId}, NkPort, #state{session_id = <<>>}=State) -
 
 process_client_req(#api_req{tid=TId}=Req, NkPort, State) ->
     case handle(api_server_cmd, [Req], State) of
-        {ok, Reply, State2} when is_map(Reply) ->
+        {ok, Reply, State2} when is_map(Reply); is_list(Reply) ->
             send_reply_ok(Reply, TId, NkPort, State2);
         {ack, State2} ->
             State3 = insert_ack(TId, State2),
@@ -793,6 +793,6 @@ print(_Txt, [#{cmd:=<<"ping">>}], _State) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
-    ?LLOG(info, Txt, Args, State).
+    ?LLOG(notice, Txt, Args, State).
 
  
