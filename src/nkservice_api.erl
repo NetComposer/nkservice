@@ -142,18 +142,8 @@ cmd(<<"event">>, <<"send">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     EvSrvId = maps:get(service, Data, SrvId),
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
     Body = maps:get(body, Data, #{}),
-    case maps:get(broadcast, Data, true) of
-        true ->
-            nkservice_events:send(RegId, Body),
-            {ok, #{}, State};
-        false ->
-            case nkservice_events:send_single(RegId, Body) of
-                ok ->
-                    {ok, #{}, State};
-                not_found ->
-                    {error, no_event_listener, State}
-            end
-    end;
+    nkservice_events:send(RegId, Body),
+    {ok, #{}, State};
 
 cmd(<<"user">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{type:=Type, user:=User} = Data,
@@ -217,6 +207,39 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
             {error, session_not_found, State}
     end;
 
+cmd(<<"session">>, <<"log">>, Req, State) ->
+    #api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
+    #{host:=Host, short_message:=Short, level:=Level} = Data,
+    Msg1 = [
+        {version, <<"1.1">>},
+        {host, Host},
+        {short_message, Short},
+        {level, Level},
+        {<<"_srv_id">>, SrvId},
+        {<<"_user">>, User},
+        {<<"_session_id">>, Session},
+        case maps:get(full_message, Data, <<>>) of
+            <<>> -> [];
+            Full -> [{full_message, Full}]
+        end
+        |
+        case maps:get(meta, Data, #{}) of
+            Meta when is_map(Meta) ->
+                [{<<$_, Key/binary>>, Val} || {Key, Val}<- maps:to_list(Meta)];
+            _ ->
+                []
+        end
+    ],
+    Msg2 = nklib_json:encode_pretty(maps:from_list(lists:flatten(Msg1))),
+    if
+        Level < 4 ->  lager:error("Ext API Session Log: ~s", [Msg2]);
+        Level == 4 -> lager:warning("Ext API Session Log: ~s", [Msg2]);
+        Level == 5 -> lager:notice("Ext API Session Log: ~s", [Msg2]);
+        Level == 6 -> lager:info("Ext API Session Log: ~s", [Msg2]);
+        Level == 7 -> lager:debuf("Ext API Session Log: ~s", [Msg2])
+    end,
+    {ok, #{}, State};
+
 cmd(_Sub, _Cmd, _Data, State) ->
     {error, unknown_command, State}.
 
@@ -234,7 +257,7 @@ syntax(<<"event">>, <<"unsubscribe">>, Syntax, Defaults, Mandatory) ->
   
 syntax(<<"event">>, <<"send">>, Syntax, Defaults, Mandatory) ->
     {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
-    {S#{broadcast => boolean, body => any}, D, M};
+    {S#{body => any}, D, M};
 
 syntax(<<"user">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
     {
@@ -278,6 +301,19 @@ syntax(<<"session">>, <<"cmd">>, Syntax, Defaults, Mandatory) ->
         [session_id, class, cmd|Mandatory]
     };
 
+syntax(<<"session">>, <<"log">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            host => binary,
+            short_message => binary,
+            full_message => binary,
+            level => {integer, 1, 7},
+            meta => any
+        },
+        Defaults#{level=>1},
+        [host, short_message|Mandatory]
+    };
+
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
 
@@ -299,6 +335,8 @@ syntax_events(Syntax, Defaults, Mandatory) ->
         },
         [class|Mandatory]
     }.
+
+
 
 
 

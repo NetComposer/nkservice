@@ -9,6 +9,7 @@ Class|Subclass|Cmd|Description
 `core`|`session`|[`stop`](#disconnect-a-session)|Forces disconnection of a sessions
 `core`|`session`|[`send_event`](#send-an-event-to-a-session)|Sends a event to a session
 `core`|`session`|[`cmd`](#send-a-command-to-a-session)|Sends a command to a session
+`core`|`session`|[`log`](#send-logs)|Sends logs to the logging facility
 `core`|`event`|[`subscribe`](#subscribe)|Subscribe to events
 `core`|`event`|[`unsubscribe`](#unsubscribe)|Remove a previously registered subscription
 `core`|`event`|[`get_subscriptions`](#get-subscriptions)|Get all current subscriptions
@@ -276,7 +277,7 @@ data|`{}`|Optional data field
 ```js
 {
 	class: "core",
-	class: "session",
+	subclass: "session",
 	cmd: "cmd",
 	data: {
 		session_id: "275a94a7-36fb-8fce-1f4b-28f07603cda8",
@@ -324,6 +325,56 @@ the calling session will receive as response:
 		received: true,
 	}
 	tid: 1
+}
+```
+
+## Send Logs
+
+Allows to send a log to the configured logging facility. The format of the log
+follows the [GELF 1.1 format](http://docs.graylog.org/en/2.0/pages/gelf.html)
+
+Field|Default|Description
+---|---|---|---
+host|(mandatory)|Host or application
+message|(mandatory)|Short message
+level|1|Syslog-compatible error level (1: Alert)
+full_message|(none)|Optional full messafe
+meta|(none)|Optional object with fields to include in the message
+
+You can add any number of fields (with type `integer` or `utf8`) to the log using the `meta` field. Current user and session_id will automatically be added.
+
+
+**Sample**
+
+```js
+{
+	class: "core",
+	subclass: "session",
+	cmd: "log",
+	data: {
+		host: "my host",
+		message: "my message",
+		meta: {
+			key1: "val1",
+			key2: 2
+		}
+	},
+	tid: 1
+}
+```
+
+this request will generate the following GELF message:
+
+```js
+{
+	version: "1.1",
+	host: "my host",
+	short_message: "my message",
+	level: 1,
+	_key1: "val1",
+	_key2: 2,
+	_user: "user@domain.com",
+	_session_id: "275a94a7-36fb-8fce-1f4b-28f07603cda8"
 }
 ```
 
