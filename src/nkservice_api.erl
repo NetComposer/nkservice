@@ -209,7 +209,7 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
 
 cmd(<<"session">>, <<"log">>, Req, State) ->
     #api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
-    #{host:=Host, short_message:=Short, level:=Level} = Data,
+    #{host:=Host, message:=Short, level:=Level} = Data,
     Msg1 = [
         {version, <<"1.1">>},
         {host, Host},
@@ -305,13 +305,13 @@ syntax(<<"session">>, <<"log">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             host => binary,
-            short_message => binary,
+            message => binary,
             full_message => binary,
             level => {integer, 1, 7},
             meta => any
         },
         Defaults#{level=>1},
-        [host, short_message|Mandatory]
+        [host, message|Mandatory]
     };
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
