@@ -208,40 +208,17 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
     end;
 
 cmd(<<"session">>, <<"log">>, Req, State) ->
-    #api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
-    #{host:=Host, message:=Short, level:=Level} = Data,
-    Msg1 = [
-        {version, <<"1.1">>},
-        {host, Host},
-        {short_message, Short},
-        {level, Level},
-        {<<"_srv_id">>, SrvId},
-        {<<"_user">>, User},
-        {<<"_session_id">>, Session},
-        case maps:get(full_message, Data, <<>>) of
-            <<>> -> [];
-            Full -> [{full_message, Full}]
-        end
-        |
-        case maps:get(meta, Data, #{}) of
-            Meta when is_map(Meta) ->
-                [{<<$_, Key/binary>>, Val} || {Key, Val}<- maps:to_list(Meta)];
-            _ ->
-                []
-        end
-    ],
-    Msg2 = nklib_json:encode_pretty(maps:from_list(lists:flatten(Msg1))),
-    if
-        Level < 4 ->  lager:error("Ext API Session Log: ~s", [Msg2]);
-        Level == 4 -> lager:warning("Ext API Session Log: ~s", [Msg2]);
-        Level == 5 -> lager:notice("Ext API Session Log: ~s", [Msg2]);
-        Level == 6 -> lager:info("Ext API Session Log: ~s", [Msg2]);
-        Level == 7 -> lager:debuf("Ext API Session Log: ~s", [Msg2])
-    end,
+    Msg = get_log_msg(Req),
+    lager:info("Ext API Session Log: ~p", [Msg]),
     {ok, #{}, State};
 
 cmd(_Sub, _Cmd, _Data, State) ->
     {error, unknown_command, State}.
+
+
+%% ===================================================================
+%% Syntax
+%% ===================================================================
 
 
 %% @private
@@ -304,14 +281,14 @@ syntax(<<"session">>, <<"cmd">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"session">>, <<"log">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            host => binary,
+            source => binary,
             message => binary,
             full_message => binary,
             level => {integer, 1, 7},
             meta => any
         },
         Defaults#{level=>1},
-        [host, message|Mandatory]
+        [source, message|Mandatory]
     };
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
@@ -364,5 +341,31 @@ parse_service(Service) ->
                     end
             end
     end.
+
+
+%% @private
+get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session=Session}) ->
+    #{source:=Source, message:=Short, level:=Level} = Data,
+    Msg = [
+        {version, <<"1.1">>},
+        {host, Source},
+        {message, Short},
+        {level, Level},
+        {<<"_srv_id">>, SrvId},
+        {<<"_user">>, User},
+        {<<"_session_id">>, Session},
+        case maps:get(full_message, Data, <<>>) of
+            <<>> -> [];
+            Full -> [{full_message, Full}]
+        end
+        |
+        case maps:get(meta, Data, #{}) of
+            Meta when is_map(Meta) ->
+                [{<<$_, Key/binary>>, Val} || {Key, Val}<- maps:to_list(Meta)];
+            _ ->
+                []
+        end
+    ],
+    maps:from_list(lists:flatten(Msg)).
 
 

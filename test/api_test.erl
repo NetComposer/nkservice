@@ -184,6 +184,12 @@ api_4(C) ->
     nkservice_api_client:cmd(C, core, send_event, Data).
 
 
+log(C, Source, Msg, Data) ->
+    nkservice_api_client:cmd(C, core, session, log, Data#{source=>Source, message=>Msg}).
+
+
+
+
 
 
 %% ===================================================================
