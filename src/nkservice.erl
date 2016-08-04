@@ -117,6 +117,10 @@ start(Name, UserSpec) ->
             not_found -> 
                 ok
         end,
+        case nkservice_srv_sup:pre_start_service(Id) of
+            ok -> ok;
+            {error, PreError} -> throw(PreError)
+        end,
         Service = #{
             id => Id,
             name => Name,
@@ -135,7 +139,12 @@ start(Name, UserSpec) ->
                 throw(Error)
         end
     catch
-        throw:Throw -> {error, Throw}
+        error:EError -> 
+            nkservice_srv_sup:stop_service(Id),
+            {error, EError};
+        throw:Throw -> 
+            nkservice_srv_sup:stop_service(Id),
+            {error, Throw}
     end.
 
 

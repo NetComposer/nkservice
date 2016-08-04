@@ -160,7 +160,7 @@ find_started([_|Rest], Conn) ->
     pid() | undefined.
 
 get_pid(SrvId) ->
-    nklib_proc:whereis_name({nkservice_srv_listen_sup, SrvId}).
+    nklib_proc:whereis_name({?MODULE, SrvId}).
 
 
 
