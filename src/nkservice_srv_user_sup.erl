@@ -40,7 +40,6 @@ start_link(Id) ->
 
 %% @private
 init({Id, ChildSpecs}) ->
-    lager:error("REG: ~p", [Id]),
     yes = nklib_proc:register_name({?MODULE, Id}, self()),
     {ok, ChildSpecs}.
 

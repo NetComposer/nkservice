@@ -330,12 +330,12 @@ the calling session will receive as response:
 
 ## Send Logs
 
-Allows to send a log to the configured logging facility. The format of the log
-follows the [GELF 1.1 format](http://docs.graylog.org/en/2.0/pages/gelf.html)
+Allows to send a log to the configured logging facility. 
+NkSERVICE includes a plugin that can send this messages to a [GELF 1.1 server](http://docs.graylog.org/en/2.0/pages/gelf.html).
 
 Field|Default|Description
 ---|---|---|---
-host|(mandatory)|Host or application
+source|(mandatory)|Host or application
 message|(mandatory)|Short message
 level|1|Syslog-compatible error level (1: Alert)
 full_message|(none)|Optional full messafe
@@ -352,7 +352,7 @@ You can add any number of fields (with type `integer` or `utf8`) to the log usin
 	subclass: "session",
 	cmd: "log",
 	data: {
-		host: "my host",
+		source: "my host",
 		message: "my message",
 		meta: {
 			key1: "val1",
