@@ -118,7 +118,7 @@ cmd(<<"event">>, <<"subscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     case SrvId:api_subscribe_allow(EvSrvId, Class, Sub, Type, State) of
         {true, State2} ->
             Body = maps:get(body, Data, #{}),
-            nkservice_api_server:register(self(), RegId, Body),
+            nkservice_api_server:register_events(self(), RegId, Body),
             {ok, #{}, State2};
         {false, State2} ->
             {error, unauthorized, State2}
@@ -128,7 +128,7 @@ cmd(<<"event">>, <<"unsubscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    nkservice_api_server:unregister(self(), RegId),
+    nkservice_api_server:unregister_events(self(), RegId),
     {ok, #{}, State};
 
 %% Gets [#{class=>...}]

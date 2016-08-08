@@ -24,7 +24,8 @@
 
 -export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([stop/1, start_ping/2, stop_ping/1]).
--export([register/3, unregister/2]).
+-export([register/2, unregister/2]).
+-export([register_events/3, unregister_events/2]).
 -export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -108,14 +109,6 @@ reply_ack(Pid, TId) ->
     gen_server:cast(Pid, {reply_ack, TId}).
 
 
-% %% @doc Sends an event asynchronously
-% -spec send_event(pid(), nkservice_event:reg_id(), nkservice_event:body()) ->
-%     ok.
-
-% send_event(Pid, RegId, Body) when is_map(Body) ->
-%     gen_server:cast(Pid, {nkservice_send_event, RegId, Body}).
-
-
 %% @doc Start sending pings
 -spec start_ping(pid(), integer()) ->
     ok.
@@ -138,20 +131,36 @@ stop(Pid) ->
     gen_server:cast(Pid, nkservice_stop).
 
 
+%% @doc Registers a process with the session
+-spec register(pid(), nklib:link()) ->
+    {ok, pid()} | {error, nkservice:error()}.
+
+register(Pid, Link) ->
+    gen_server:cast(Pid, {nkservice_register, Link}).
+
+
+%% @doc Unregisters a process with the session
+-spec unregister(pid(), nklib:link()) ->
+    ok | {error, nkservice:error()}.
+
+unregister(Pid, Link) ->
+    gen_server:cast(Pid, {nkservice_unregister, Link}).
+
+
 %% @doc Registers with the Events system
--spec register(pid(), nkservice_events:reg_id(), nkservice_events:body()) ->
+-spec register_events(pid(), nkservice_events:reg_id(), nkservice_events:body()) ->
     ok.
 
-register(Pid, RegId, Body) ->
-    gen_server:cast(Pid, {nkservice_register, RegId, Body}).
+register_events(Pid, RegId, Body) ->
+    gen_server:cast(Pid, {nkservice_register_events, RegId, Body}).
 
 
 %% @doc Registers with the Events system
--spec unregister(pid(),  nkservice_events:reg_id()) ->
+-spec unregister_events(pid(),  nkservice_events:reg_id()) ->
     ok.
 
-unregister(Pid, RegId) ->
-    gen_server:cast(Pid, {nkservice_unregister, RegId}).
+unregister_events(Pid, RegId) ->
+    gen_server:cast(Pid, {nkservice_unregister_events, RegId}).
 
 
 %% @private
@@ -209,6 +218,7 @@ find_session(SessId) ->
     tid = 1 :: integer(),
     ping :: integer() | undefined,
     regs = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
+    links :: nklib_links:links(),
     retry_time = 100 :: integer(),
     user_state :: user_state()
 }).
@@ -236,7 +246,11 @@ conn_init(NkPort) ->
     {ok, {nkservice_api_server, SrvId}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     UserState = #{type=>api_server, srv_id=>SrvId, remote=>Remote},
-    State1 = #state{srv_id = SrvId, user_state = UserState},
+    State1 = #state{
+        srv_id = SrvId, 
+        user_state = UserState,
+        links = nklib_links:new()
+    },
     nklib_proc:put(?MODULE, <<>>),
     ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
     {ok, State2} = handle(api_server_init, [NkPort], State1),
@@ -433,13 +447,13 @@ conn_handle_cast({nkservice_start_ping, Time}, _NkPort, #state{ping=Ping}=State)
 conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
-conn_handle_cast({nkservice_register, RegId, Body}, _NkPort, State) ->
+conn_handle_cast({nkservice_register_events, RegId, Body}, _NkPort, State) ->
     {ok, Pid} = nkservice_events:reg(RegId, Body),
     #state{regs=Regs} = State,
     Mon = monitor(process, Pid),
     {ok, State#state{regs=[{RegId, Body, Mon}|Regs]}};
 
-conn_handle_cast({nkservice_unregister, RegId}, _NkPort, State) ->
+conn_handle_cast({nkservice_unregister_events, RegId}, _NkPort, State) ->
     ok = nkservice_events:unreg(RegId),
     #state{regs=Regs} = State,
     case lists:keytake(RegId, 1, Regs) of
@@ -449,6 +463,12 @@ conn_handle_cast({nkservice_unregister, RegId}, _NkPort, State) ->
             Regs2 = Regs
     end,
     {ok, State#state{regs=Regs2}};
+
+conn_handle_cast({nkservice_register, Link}, _NkPort, State) ->
+    {ok, links_add(Link, State)};
+
+conn_handle_cast({nkservice_unregister, Link}, _NkPort, State) ->
+    {ok, links_remove(Link, State)};
 
 conn_handle_cast(Msg, _NkPort, State) ->
     handle(api_server_handle_cast, [Msg], State).
@@ -475,14 +495,19 @@ conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
             {ok, State}
     end;
 
-conn_handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, _NkPort, State) ->
+conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     #state{regs=Regs} = State,
     case lists:keytake(Ref, 3, Regs) of
         {value, {RegId, Body, Ref}, Regs2} ->
             gen_server:cast(self(), {nkservice_register, RegId, Body}),
             {ok, State#state{regs=Regs2}};
         false ->
-            handle(api_server_handle_info, [Info], State)
+            case links_down(Ref, State) of
+                {ok, Link, State2} ->
+                    handle(api_server_reg_down, [Link, Reason], State2);
+                not_found ->
+                    handle(api_server_handle_info, [Info], State)
+            end
     end;
 
 %% nkservice_events send this message to all registered to this RegId
@@ -552,12 +577,12 @@ process_client_req(
                 subclass = <<"user_event">>,
                 obj_id = User
             },
-            register(self(), RegId1, #{}),
+            register_events(self(), RegId1, #{}),
             RegId2 = RegId1#reg_id{
                 subclass = <<"session_event">>,
                 obj_id = SessId
             },
-            register(self(), RegId2, #{}),
+            register_events(self(), RegId2, #{}),
             send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
     end;
 
@@ -786,6 +811,31 @@ send(Msg, NkPort) ->
 handle(Fun, Args, State) ->
     nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.user_state).
     
+
+%% @private
+links_add(Link, #state{links=Links}=State) ->
+    State#state{links=nklib_links:add(Link, Links)}.
+
+
+%% @private
+links_remove(Link, #state{links=Links}=State) ->
+    State#state{links=nklib_links:remove(Link, Links)}.
+
+
+%% @private
+links_down(Mon, #state{links=Links}=State) ->
+    case nklib_links:down(Mon, Links) of
+        {ok, Link, _Data, Links2} -> 
+            {ok, Link, State#state{links=Links2}};
+        not_found -> 
+            not_found
+    end.
+
+
+% %% @private
+% links_fold(Fun, Acc, #state{links=Links}) ->
+%     nklib_links:fold(Fun, Acc, Links).
+
 
 %% @private
 print(_Txt, [#{cmd:=<<"ping">>}], _State) ->

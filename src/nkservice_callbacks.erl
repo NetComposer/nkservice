@@ -29,6 +29,7 @@
 -export([api_server_init/2, api_server_terminate/2, 
 		 api_server_login/3, api_server_cmd/2, api_server_event/3,
 		 api_server_forward_event/3, api_server_get_user_data/1,
+		 api_server_reg_down/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
 -export([api_allow/2, api_subscribe_allow/5, api_cmd/2, api_syntax/4]).
@@ -236,6 +237,14 @@ api_server_forward_event(_RegId, _Body, State) ->
 
 api_server_get_user_data(State) ->
 	{ok, State}.
+
+
+%% @doc Called when the xzservice process receives a handle_call/3.
+-spec api_server_reg_down(nklib:link(), Reason::term(), state()) ->
+	{ok, state()} | continue().
+
+api_server_reg_down(_Link, _Reason, State) ->
+    {ok, State}.
 
 
 %% @doc Called when the xzservice process receives a handle_call/3.
