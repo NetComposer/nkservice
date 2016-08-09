@@ -22,7 +22,7 @@
 -module(nkservice_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
--export([send/1, send/2]).
+-export([send/1, send/2, send/3]).
 -export([call/1, call/2]).
 -export([reg/1, reg/2, reg/3, unreg/1, unreg/2]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
@@ -58,24 +58,29 @@
     ok | not_found.
 
 send(RegId) ->
-    send(RegId, {}).
+    send(RegId, {}, all).
 
 
 %% @doc
 -spec send(reg_id(), body()) ->
     ok | not_found.
 
-send(#reg_id{}=RegId, Body) ->
-    lager:info("EVENT: ~p ~p", [RegId, Body]),
+send(RegId, Body) ->
+    send(RegId, Body, all).
+
+%% @doc Send to an specific pid() if registered
+-spec send(reg_id(), body(), pid()|all) ->
+    ok | not_found.
+
+send(#reg_id{}=RegId, Body, Pid) ->
+    % lager:info("EVENT: ~p ~p", [RegId, Body]),
     #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = RegId,
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),
     ObjId2 = check_wildcard(ObjId),
-    do_send(Class, Sub2, Type2, SrvId, ObjId2, Body),
-    do_send(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body),
-    do_send(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body).
-
-
+    do_send(Class, Sub2, Type2, SrvId, ObjId2, Body, Pid),
+    do_send(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body, Pid),
+    do_send(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body, Pid).
 
 
 %% @doc
@@ -235,7 +240,7 @@ handle_call({call, Sub, Type, SrvId, ObjId, Body}, _From, State) ->
         _ ->
             Pos = nklib_util:l_timestamp() rem length(PidTerms) + 1,
             {Pid, RegBody} = lists:nth(Pos, PidTerms),
-            send_event(RegId, Body, Pid, RegBody),
+            send_events([{Pid, RegBody}], RegId, Body, all),
             {reply, ok, State}
     end;
 
@@ -251,26 +256,17 @@ handle_call(Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}}.
 
-handle_cast({send, Sub, Type, SrvId, ObjId, Body}, State) ->
+handle_cast({send, Sub, Type, SrvId, ObjId, Body, PidSpec}, State) ->
     #state{class=Class, regs=Regs} = State,
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId},
     % lager:error("Event all: ~p (~p:~p)", 
     %             [lager:pr(RegId, ?MODULE), State#state.sub, State#state.type]),
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
-    lists:foreach(
-        fun({Pid, RegBody}) -> 
-            send_event(RegId, Body, Pid, RegBody) end,
-        PidTerms1),
+    send_events(PidTerms1, RegId, Body, PidSpec),
     PidTerms2 = maps:get({SrvId, '*'}, Regs, []) -- PidTerms1,
-    lists:foreach(
-        fun({Pid, RegBody}) -> 
-            send_event(RegId, Body, Pid, RegBody) end,
-        PidTerms2),
+    send_events(PidTerms2, RegId, Body, PidSpec),
     PidTerms3 = maps:get({'*', '*'}, Regs, []) -- PidTerms1 -- PidTerms2,
-    lists:foreach(
-        fun({Pid, RegBody}) -> 
-            send_event(RegId, Body, Pid, RegBody) end,
-        PidTerms3),
+    send_events(PidTerms3, RegId, Body, PidSpec),
     {noreply, State};
 
 handle_cast({reg, SrvId, ObjId, Body, Pid}, #state{regs=Regs, pids=Pids}=State) ->
@@ -354,7 +350,7 @@ do_call(Class, Sub, Type, SrvId, ObjId, Body) ->
 
 
 %% @private
-do_send(Class, Sub, Type, SrvId, ObjId, Body) ->
+do_send(Class, Sub, Type, SrvId, ObjId, Body, Pid) ->
     case Sub of
         {SubC, SubS} -> ok;
         SubC -> SubS = SubC
@@ -365,7 +361,7 @@ do_send(Class, Sub, Type, SrvId, ObjId, Body) ->
     end,
     case find_server(Class, SubS, TypeS) of
         {ok, Server} -> 
-            gen_server:cast(Server, {send, SubC, TypeC, SrvId, ObjId, Body});
+            gen_server:cast(Server, {send, SubC, TypeC, SrvId, ObjId, Body, Pid});
         not_found -> 
             ok
     end.
@@ -452,15 +448,24 @@ do_unreg([Key|Rest], Pid, Regs, Pids) ->
 
 
 %% @private
-send_event(#reg_id{}=RegId, Body, Pid, RegBody) ->
-    lager:info("Sending event ~p to ~p (~p)",
-               [lager:pr(RegId, ?MODULE), Pid, Body]),
-    Body2 = case is_map(Body) andalso is_map(RegBody) of
-        true -> maps:merge(RegBody, Body);
-        false when map_size(Body)==0 -> RegBody;
-        false -> RegBody
+send_events([], _RegId, _Body, _PidSpec) ->
+    ok;
+
+send_events([{Pid, RegBody}|Rest], #reg_id{}=RegId, Body, PidSpec) ->
+    case PidSpec==all orelse Pid==PidSpec of
+        true ->
+            % lager:info("Sending event ~p to ~p (~p)", 
+            %            [lager:pr(RegId, ?MODULE), Pid, Body]),
+            Body2 = case is_map(Body) andalso is_map(RegBody) of
+                true -> maps:merge(RegBody, Body);
+                false when map_size(Body)==0 -> RegBody;
+                false -> RegBody
+            end,
+            Pid ! {nkservice_event, RegId, Body2};
+        false ->
+            ok
     end,
-    Pid ! {nkservice_event, RegId, Body2}.
+    send_events(Rest, RegId, Body, PidSpec).
 
 
 
