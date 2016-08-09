@@ -72,6 +72,7 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
             Data = #{
                 user => nklib_util:to_binary(User), 
                 pass => nklib_util:to_binary(Pass)
+                % session_id => <<"sess1">>
             },
             case cmd(Pid, core, user, login, Data) of
                 {ok, #{<<"session_id">>:=SessId}} ->

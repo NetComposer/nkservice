@@ -548,7 +548,10 @@ process_client_req(
         NkPort, State) ->
     #api_req{tid=TId, data=Data} = Req,
     _ = send_ack(TId, NkPort, State),
-    SessId = nklib_util:uuid_4122(),
+    SessId = case Data of
+        #{<<"session_id">>:=UserSessId0} -> UserSessId0;
+        _ -> nklib_util:uuid_4122()
+    end,
     case handle(api_server_login, [Data, SessId], State) of
         {true, User, State2} ->
             SessId2 = SessId;
@@ -570,20 +573,24 @@ process_client_req(
             nklib_proc:put(?MODULE, {User, SessId2}),
             nklib_proc:put({?MODULE, SrvId}, {User, SessId2}),
             nklib_proc:put({?MODULE, user, User}, SessId2),
-            true = nklib_proc:reg({?MODULE, session, SessId2}, User),
-            RegId1 = #reg_id{
-                srv_id = SrvId,
-                class = <<"core">>,
-                subclass = <<"user_event">>,
-                obj_id = User
-            },
-            register_events(self(), RegId1, #{}),
-            RegId2 = RegId1#reg_id{
-                subclass = <<"session_event">>,
-                obj_id = SessId
-            },
-            register_events(self(), RegId2, #{}),
-            send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3)
+            case nklib_proc:reg({?MODULE, session, SessId2}, User) of
+                true ->
+                    RegId1 = #reg_id{
+                        srv_id = SrvId,
+                        class = <<"core">>,
+                        subclass = <<"user_event">>,
+                        obj_id = User
+                    },
+                    register_events(self(), RegId1, #{}),
+                    RegId2 = RegId1#reg_id{
+                        subclass = <<"session_event">>,
+                        obj_id = SessId
+                    },
+                    register_events(self(), RegId2, #{}),
+                    send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3);
+                {false, _} ->
+                    send_reply_error(duplicated_session_id, TId, NkPort, State3)
+            end
     end;
 
 process_client_req(
