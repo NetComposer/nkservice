@@ -21,7 +21,8 @@
 %% @doc Default callbacks
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
+-export([plugin_deps/0, plugin_group/0, 
+	     plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
@@ -57,6 +58,16 @@
 
 plugin_deps() ->
 	[].
+
+
+%% @doc Optionally set the plugin 'group'
+%% All plugins within a group are added a dependency on the previous defined plugins
+%% in the same group.
+-spec plugin_group() ->
+    term() | undefined.
+
+plugin_group() ->
+	undefined.
 
 
 %% @doc This function, if implemented, can offer a nklib_config:syntax()

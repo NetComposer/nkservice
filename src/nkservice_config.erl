@@ -220,13 +220,14 @@ get_callback(Plugin) ->
 
 expand_plugins(ModuleList, CallBack) ->
     try
-        List2 = case CallBack of
+        List1 = case CallBack of
             none -> ModuleList;
             _ -> [{CallBack, ModuleList}|ModuleList]
         end,
-        List3 = do_expand_plugins(List2, []),
+        List2 = add_group_deps(List1),
+        List3 = add_all_deps(List2, []),
         case nklib_sort:top_sort(List3) of
-            {ok, List} -> {ok, List};
+            {ok, Sorted} -> {ok, Sorted};
             {error, Error} -> {error, Error}
         end
     catch
@@ -235,22 +236,60 @@ expand_plugins(ModuleList, CallBack) ->
 
 
 %% @private
-do_expand_plugins([], Acc) ->
+%% All plugins belonging to the same 'group' are added a dependency on the 
+%% previous plugin in the same group
+add_group_deps(Plugins) ->
+    add_group_deps(Plugins, [], #{}).
+
+
+%% @private
+add_group_deps([], Acc, _Groups) ->
     Acc;
 
-do_expand_plugins([Name|Rest], Acc) when is_atom(Name) ->
-    do_expand_plugins([{Name, []}|Rest], Acc);
+add_group_deps([Name|Rest], Acc, Groups) when is_atom(Name) ->
+    add_group_deps([{Name, []}|Rest], Acc, Groups);
 
-do_expand_plugins([{Name, List}|Rest], Acc) when is_atom(Name), is_list(List) ->
+add_group_deps([{Name, Deps}|Rest], Acc, Groups) ->
+    Group = case get_callback(Name) of
+        {ok, Mod} ->
+            case nklib_util:apply(Mod, plugin_group, []) of
+                not_exported -> undefined;
+                Group0 -> Group0
+            end;
+        error ->
+            throw({unknown_plugin, Name})
+    end,
+    case Group of
+        undefined ->
+            add_group_deps(Rest, [{Name, Deps}|Acc], Groups);
+        _ ->
+            Groups2 = maps:put(Group, Name, Groups),
+            case maps:find(Group, Groups) of
+                error ->
+                    add_group_deps(Rest, [{Name, Deps}|Acc], Groups2);
+                {ok, Last} ->
+                    add_group_deps(Rest, [{Name, [Last|Deps]}|Acc], Groups2)
+            end
+    end.
+
+
+%% @private
+add_all_deps([], Acc) ->
+    Acc;
+
+add_all_deps([Name|Rest], Acc) when is_atom(Name) ->
+    add_all_deps([{Name, []}|Rest], Acc);
+
+add_all_deps([{Name, List}|Rest], Acc) when is_atom(Name) ->
     case lists:keymember(Name, 1, Acc) of
         true ->
-            do_expand_plugins(Rest, Acc);
+            add_all_deps(Rest, Acc);
         false ->
             Deps = get_plugin_deps(Name, List),
-            do_expand_plugins(Deps++Rest, [{Name, Deps}|Acc])
+            add_all_deps(Deps++Rest, [{Name, Deps}|Acc])
     end;
 
-do_expand_plugins([Other|_], _Acc) ->
+add_all_deps([Other|_], _Acc) ->
     throw({invalid_plugin_name, Other}).
 
 
@@ -268,7 +307,6 @@ get_plugin_deps(Name, BaseDeps) ->
             throw({unknown_plugin, Name})
     end,
     lists:usort(BaseDeps ++ [nkservice|Deps]) -- [Name].
-
 
 
 %% @private
