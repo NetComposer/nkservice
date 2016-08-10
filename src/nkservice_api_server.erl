@@ -276,17 +276,18 @@ conn_parse({text, Text}, NkPort, State) ->
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
             ?PRINT("received ~s", [Msg], State),
             #state{srv_id=SrvId, user=User, session_id=Session} = State,
+            Sub = maps:get(<<"subclass">>, Msg, <<"core">>),
             Req = #api_req{
                 srv_id = SrvId,
                 class = Class,
-                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
+                subclass = Sub,
                 cmd = Cmd,
                 tid = TId,
                 data = maps:get(<<"data">>, Msg, #{}),
                 user = User,
                 session = Session
             },
-            process_client_req(Req, NkPort, State);
+            process_client_req(Class, Sub, Cmd, Req, NkPort, State);
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
@@ -543,62 +544,36 @@ conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
 %% ===================================================================
 
 %% @private
-process_client_req(
-        #api_req{class = <<"core">>, subclass = <<"user">>, cmd = <<"login">>} = Req,
-        NkPort, State) ->
-    #api_req{tid=TId, data=Data} = Req,
-    _ = send_ack(TId, NkPort, State),
+process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, 
+                   #state{session_id = <<>>} = State) ->
+    _ = send_ack(Req, NkPort, State),
+    #api_req{data=Data} = Req,
     SessId = case Data of
-        #{<<"session_id">>:=UserSessId0} -> UserSessId0;
+        #{<<"session_id">>:=UserSessId} -> UserSessId;
         _ -> nklib_util:uuid_4122()
     end,
     case handle(api_server_login, [Data, SessId], State) of
         {true, User, State2} ->
-            SessId2 = SessId;
-        {true, User, SessId2, State2} ->
-            ok;
+            process_login(User, SessId, Req, NkPort, State2);
+        {true, User, NewSessId, State2} ->
+            process_login(User, NewSessId, Req, NkPort, State2);
         {false, Error, State2} ->
-            User = SessId2 = {error, Error}
-    end,
-    case SessId2 of
-        {error, ReplyError} ->
             #state{retry_time=Time} = State2,
             timer:sleep(Time),
             State3 = State2#state{retry_time=2*Time},
-            send_reply_error(ReplyError, TId, NkPort, State3); 
-        _ ->
-            #state{srv_id=SrvId, user_state=UserState2} = State2,
-            UserState3 = UserState2#{user=>User, session_id=>SessId2},
-            State3 = State2#state{user_state=UserState3, user=User, session_id=SessId2},
-            nklib_proc:put(?MODULE, {User, SessId2}),
-            nklib_proc:put({?MODULE, SrvId}, {User, SessId2}),
-            nklib_proc:put({?MODULE, user, User}, SessId2),
-            case nklib_proc:reg({?MODULE, session, SessId2}, User) of
-                true ->
-                    RegId1 = #reg_id{
-                        srv_id = SrvId,
-                        class = <<"core">>,
-                        subclass = <<"user_event">>,
-                        obj_id = User
-                    },
-                    register_events(self(), RegId1, #{}),
-                    RegId2 = RegId1#reg_id{
-                        subclass = <<"session_event">>,
-                        obj_id = SessId
-                    },
-                    register_events(self(), RegId2, #{}),
-                    send_reply_ok(#{session_id=>SessId}, TId, NkPort, State3);
-                {false, _} ->
-                    send_reply_error(duplicated_session_id, TId, NkPort, State3)
-            end
+            send_reply_error(Error, Req, NkPort, State3)
     end;
 
-process_client_req(
-        #api_req{class = <<"core">>, subclass = <<"core">>, cmd = <<"event">>} = Req,
-        NkPort, State) ->
-    #api_req{tid=TId, data=#{<<"class">>:=Class}=Data} = Req, 
+process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, State) ->
+    send_reply_error(already_authenticated, Req, NkPort, State);
+
+process_client_req(_Class, _Sub, _Cmd, Req, NkPort, #state{session_id = <<>>}=State) ->
+    send_reply_error(not_authenticated, Req, NkPort, State);
+
+process_client_req(<<"core">>, <<"core">>, <<"event">>, Req, NkPort, State) ->
+    #api_req{data=#{<<"class">>:=Class}=Data} = Req, 
     #state{srv_id=SrvId} = State,
-    case send_reply_ok(#{}, TId, NkPort, State) of
+    case send_reply_ok(#{}, Req, NkPort, State) of
         {ok, State2} ->
             RegId = #reg_id{
                 srv_id = maps:get(<<"service">>, Data, SrvId),
@@ -614,18 +589,15 @@ process_client_req(
             Other
     end;
 
-process_client_req(#api_req{tid=TId}, NkPort, #state{session_id = <<>>}=State) ->
-    send_reply_error(not_authenticated, TId, NkPort, State);
-
-process_client_req(#api_req{tid=TId}=Req, NkPort, State) ->
+process_client_req(_Class, _Sub, _Cmd, #api_req{tid=TId}=Req, NkPort, State) ->
     case handle(api_server_cmd, [Req], State) of
         {ok, Reply, State2} when is_map(Reply); is_list(Reply) ->
-            send_reply_ok(Reply, TId, NkPort, State2);
+            send_reply_ok(Reply, Req, NkPort, State2);
         {ack, State2} ->
             State3 = insert_ack(TId, State2),
-            send_ack(TId, NkPort, State3);
+            send_ack(Req, NkPort, State3);
         {error, Error, State2} ->
-            send_reply_error(Error, TId, NkPort, State2)
+            send_reply_error(Error, Req, NkPort, State2)
     end.
 
 
@@ -639,6 +611,38 @@ process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+%% @private
+process_login(User, SessId, Req, NkPort, State) when is_binary(SessId), SessId /= <<>> ->
+    case nklib_proc:reg({?MODULE, session, SessId}, User) of
+        true ->
+            #state{srv_id=SrvId, user_state=UserState} = State,
+            UserState2 = UserState#{user=>User, session_id=>SessId},
+            State2 = State#state{user_state=UserState2, user=User, session_id=SessId},
+            nklib_proc:put(?MODULE, {User, SessId}),
+            nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
+            nklib_proc:put({?MODULE, user, User}, SessId),
+            RegId1 = #reg_id{
+                srv_id = SrvId,
+                class = <<"core">>,
+                subclass = <<"user_event">>,
+                obj_id = User
+            },
+            register_events(self(), RegId1, #{}),
+            RegId2 = RegId1#reg_id{
+                subclass = <<"session_event">>,
+                obj_id = SessId
+            },
+            register_events(self(), RegId2, #{}),
+            send_reply_ok(#{session_id=>SessId}, Req, NkPort, State2);
+        {false, _} -> 
+            stop(self()),
+            send_reply_error(duplicated_session_id, Req, NkPort, State)
+end;
+
+process_login(_User, _SessId, Req, NkPort, State) ->
+    stop(self()),
+    send_reply_error(invalid_session_id, Req, NkPort, State).
 
 
 %% @private
@@ -763,6 +767,9 @@ send_request(Req, From, NkPort, #state{tid=TId}=State) ->
 
 
 %% @private
+send_reply_ok(Data, #api_req{tid=TId}, NkPort, State) ->
+    send_reply_ok(Data, TId, NkPort, State);
+
 send_reply_ok(Data, TId, NkPort, State) ->
     Msg1 = #{
         result => ok,
@@ -778,6 +785,9 @@ send_reply_ok(Data, TId, NkPort, State) ->
 
 
 %% @private
+send_reply_error(Error, #api_req{tid=TId}, NkPort, State) ->
+    send_reply_error(Error, TId, NkPort, State);
+
 send_reply_error(Error, TId, NkPort, #state{srv_id=SrvId}=State) ->
     {Code, Text} = nkservice_util:error_code(SrvId, Error),
     Msg = #{
@@ -792,6 +802,9 @@ send_reply_error(Error, TId, NkPort, #state{srv_id=SrvId}=State) ->
 
 
 %% @private
+send_ack(#api_req{tid=TId}, NkPort, State) ->
+    send_ack(TId, NkPort, State);
+
 send_ack(TId, NkPort, State) ->
     Msg = #{ack => TId},
     send(Msg, NkPort, State).
