@@ -152,7 +152,7 @@ error_code(not_implemented) 		-> {1006, <<"Not implemented">>};
 error_code(process_not_found) 		-> {1010, <<"Process not found">>};
 error_code(process_down)  			-> {1011, <<"Process failed">>};
 error_code(registered_down) 	    -> {1012, <<"Registered process stopped">>};
-error_code(user_stop) 				-> {101, <<"User stop">>};
+error_code(user_stop) 				-> {1013, <<"User stop">>};
 
 error_code(service_not_found) 		-> {1020, <<"Service not found">>};
 
@@ -182,7 +182,7 @@ error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};
 
 error_code(Other) -> 
-	{9999, <<"Unknown Error: ", (nklib_util:to_binary(Other))/binary>>}.
+	{9999, nklib_util:to_binary(Other)}.
 
 
 

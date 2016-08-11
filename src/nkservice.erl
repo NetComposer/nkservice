@@ -139,12 +139,14 @@ start(Name, UserSpec) ->
                 throw(Error)
         end
     catch
-        error:EError -> 
-            nkservice_srv_sup:stop_service(Id),
-            {error, EError};
+        throw:already_started ->
+            {error, already_started};
         throw:Throw -> 
             nkservice_srv_sup:stop_service(Id),
-            {error, Throw}
+            {error, Throw};
+        error:EError -> 
+            nkservice_srv_sup:stop_service(Id),
+            {error, EError}
     end.
 
 
