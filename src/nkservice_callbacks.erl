@@ -134,9 +134,6 @@ plugin_stop(Config, _Service) ->
 	{ok, Config}.
 
 
-
-
-
 %% ===================================================================
 %% Error Codes
 %% ===================================================================
@@ -145,38 +142,41 @@ plugin_stop(Config, _Service) ->
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(normal) 					-> {1000, <<"Normal termination">>};
-error_code(anormal) 				-> {1000, <<"Anormal termination">>};
-error_code(not_implemented) 		-> {1000, <<"Not implemented">>};
-error_code(unauthorized) 			-> {1000, <<"Unauthorized">>};
-error_code(not_authenticated)		-> {1000, <<"Not authenticated">>};
-error_code(already_authenticated)	-> {1000, <<"Already authenticated">>};
-error_code(user_not_found)			-> {1000, <<"User not found">>};
-error_code(duplicated_session_id)	-> {1000, <<"Duplicated session id">>};
-error_code(invalid_session_id)		-> {1000, <<"Invalid session id">>};
-error_code(internal_error)			-> {1000, <<"Internal error">>};
-error_code(operation_error) 		-> {1000, <<"Operation error">>};
-error_code(unknown_command)			-> {1000, <<"Unknown command">>};
-error_code(unknown_class)			-> {1000, <<"Unknown class">>};
-error_code(incompatible_operation) 	-> {1000, <<"Incompatible operation">>};
-error_code(unknown_operation) 		-> {1000, <<"Unknown operation">>};
-error_code(invalid_operation) 		-> {1000, <<"Invalid operation">>};
-error_code(no_event_listener)		-> {1000, <<"No event listener">>};
-error_code({syntax_error, Txt})		-> {1000, <<"Syntax error: ", Txt/binary>>};
-error_code(invalid_parameters) 		-> {1000, <<"Invalid parameters">>};
-error_code(missing_parameters) 		-> {1000, <<"Missing parameters">>};
-error_code(invalid_reply) 			-> {1000, <<"Invalid reply">>};
-error_code(invalid_state) 			-> {1000, <<"Invalid state">>};
-error_code({missing_field, Txt})	-> {1000, <<"Missing field: ", Txt/binary>>};
-error_code(session_timeout) 		-> {1000, <<"Session timeout">>};
-error_code(session_stop) 			-> {1000, <<"Session stop">>};
-error_code(session_not_found) 		-> {1000, <<"Session not found">>};
-error_code(service_not_found) 		-> {1000, <<"Service not found">>};
-error_code(timeout) 				-> {1000, <<"Timeout">>};
-error_code(noproc) 					-> {1000, <<"No process">>};
-error_code(user_stop) 				-> {1000, <<"User stop">>};
-error_code(process_down)  			-> {1000, <<"Process failed">>};
-error_code(api_command)		    	->  {0, <<"API command">>};
+error_code(internal_error)			-> {1001, <<"Internal error">>};
+error_code(normal) 					-> {1002, <<"Normal termination">>};	% CHANGE
+error_code(anormal_termination)     -> {1003, <<"Anormal termination">>};
+error_code(invalid_state) 			-> {1004, <<"Invalid state">>};
+error_code(timeout) 				-> {1005, <<"Timeout">>};
+error_code(not_implemented) 		-> {1006, <<"Not implemented">>};
+
+error_code(process_not_found) 		-> {1010, <<"Process not found">>};
+error_code(process_down)  			-> {1011, <<"Process failed">>};
+error_code(registered_down) 	    -> {1012, <<"Registered process stopped">>};
+error_code(user_stop) 				-> {101, <<"User stop">>};
+
+error_code(service_not_found) 		-> {1020, <<"Service not found">>};
+
+error_code(unauthorized) 			-> {1030, <<"Unauthorized">>};
+error_code(not_authenticated)		-> {1031, <<"Not authenticated">>};
+error_code(already_authenticated)	-> {1032, <<"Already authenticated">>};
+error_code(user_not_found)			-> {1033, <<"User not found">>};
+error_code(duplicated_session_id)	-> {1034, <<"Duplicated session id">>};
+error_code(invalid_session_id)		-> {1035, <<"Invalid session id">>};
+
+error_code(operation_error) 		-> {1040, <<"Operation error">>};
+error_code(unknown_command)			-> {1041, <<"Unknown command">>};
+error_code(unknown_class)			-> {1042, <<"Unknown class">>};
+error_code(incompatible_operation) 	-> {1043, <<"Incompatible operation">>};
+error_code(unknown_operation) 		-> {1044, <<"Unknown operation">>};
+error_code(invalid_operation) 		-> {1045, <<"Invalid operation">>};
+error_code({syntax_error, Txt})		-> {1046, <<"Syntax error: ", Txt/binary>>};
+error_code({missing_field, Txt})	-> {1047, <<"Missing field: ", Txt/binary>>};
+error_code(invalid_parameters) 		-> {1048, <<"Invalid parameters">>};
+error_code(missing_parameters) 		-> {1049, <<"Missing parameters">>};
+
+error_code(session_timeout) 		-> {1060, <<"Session timeout">>};
+error_code(session_stop) 			-> {1061, <<"Session stop">>};
+error_code(session_not_found) 		-> {1062, <<"Session not found">>};
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};

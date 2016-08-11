@@ -197,7 +197,7 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
                             nkservice_api_server:reply_error(Self, TId, {Code, Error});
                         {ok, _Res, _ResData} ->
                             lager:error("Invalid reply: ~p", [_Res]),
-                            nkservice_api_server:reply_error(Self, TId, invalid_reply);
+                            nkservice_api_server:reply_error(Self, TId, operation_error);
                         {error, Error} ->
                             nkservice_api_server:reply_error(Self, TId, Error)
                     end
