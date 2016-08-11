@@ -239,7 +239,8 @@ expand_plugins(ModuleList, CallBack) ->
 %% All plugins belonging to the same 'group' are added a dependency on the 
 %% previous plugin in the same group
 add_group_deps(Plugins) ->
-    add_group_deps(Plugins, [], #{}).
+    lager:error("P: ~p", [Plugins]),
+    add_group_deps(lists:reverse(Plugins), [], #{}).
 
 
 %% @private
@@ -281,9 +282,11 @@ add_all_deps([Name|Rest], Acc) when is_atom(Name) ->
     add_all_deps([{Name, []}|Rest], Acc);
 
 add_all_deps([{Name, List}|Rest], Acc) when is_atom(Name) ->
-    case lists:keymember(Name, 1, Acc) of
-        true ->
-            add_all_deps(Rest, Acc);
+    case lists:keyfind(Name, 1, Acc) of
+        {Name, OldList} ->
+            List2 = lists:usort(OldList++List),
+            Acc2 = lists:keystore(Name, 1, Acc, {Name, List2}),
+            add_all_deps(Rest, Acc2);
         false ->
             Deps = get_plugin_deps(Name, List),
             add_all_deps(Deps++Rest, [{Name, Deps}|Acc])
