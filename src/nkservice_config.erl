@@ -239,7 +239,6 @@ expand_plugins(ModuleList, CallBack) ->
 %% All plugins belonging to the same 'group' are added a dependency on the 
 %% previous plugin in the same group
 add_group_deps(Plugins) ->
-    lager:error("P: ~p", [Plugins]),
     add_group_deps(lists:reverse(Plugins), [], #{}).
 
 
