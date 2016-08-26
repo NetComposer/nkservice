@@ -169,14 +169,16 @@ error_code(unknown_class)			-> {1042, <<"Unknown class">>};
 error_code(incompatible_operation) 	-> {1043, <<"Incompatible operation">>};
 error_code(unknown_operation) 		-> {1044, <<"Unknown operation">>};
 error_code(invalid_operation) 		-> {1045, <<"Invalid operation">>};
-error_code({syntax_error, Txt})		-> {1046, <<"Syntax error: ", Txt/binary>>};
-error_code({missing_field, Txt})	-> {1047, <<"Missing field: ", Txt/binary>>};
+error_code({syntax_error, Txt})		-> {1046, {"Syntax error: ~s", [Txt]}};
+error_code({missing_field, Txt})	-> {1047, {"Missing field: ~s", [Txt]}};
 error_code(invalid_parameters) 		-> {1048, <<"Invalid parameters">>};
-error_code(missing_parameters) 		-> {1049, <<"Missing parameters">>};
+error_code({invalid_value, V}) 		-> {1049, {"Invalid value: ~s", [V]}};
 
 error_code(session_timeout) 		-> {1060, <<"Session timeout">>};
 error_code(session_stop) 			-> {1061, <<"Session stop">>};
 error_code(session_not_found) 		-> {1062, <<"Session not found">>};
+
+error_code(invalid_uri) 			-> {1070, <<"Invalid Uri">>};
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};

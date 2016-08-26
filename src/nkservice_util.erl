@@ -162,8 +162,17 @@ save_uuid(Path, Name, UUID) ->
 error_code(SrvId, Error) ->
     {Code, Text} = SrvId:error_code(Error),
     if
-        is_binary(Text) -> {Code, Text};
-        is_list(Text) -> {Code, list_to_binary(Text)}
+        is_binary(Text) -> 
+            {Code, Text};
+        is_list(Text) -> 
+            {Code, list_to_binary(Text)};
+        is_tuple(Text) -> 
+            case catch io_lib:format(element(1,Text), element(2,Text)) of
+                {'EXIT', _} ->
+                    {Code, nklib_util:to_binary(text)};
+                Val ->
+                    {Code, list_to_binary(Val)}
+            end
     end.
 
 
