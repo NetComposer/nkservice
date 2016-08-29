@@ -148,6 +148,7 @@ error_code(anormal_termination)     -> {1003, <<"Anormal termination">>};
 error_code(invalid_state) 			-> {1004, <<"Invalid state">>};
 error_code(timeout) 				-> {1005, <<"Timeout">>};
 error_code(not_implemented) 		-> {1006, <<"Not implemented">>};
+error_code({exit, _Exit}) 			-> {1007, <<"Internal error">>};
 
 error_code(process_not_found) 		-> {1010, <<"Process not found">>};
 error_code(process_down)  			-> {1011, <<"Process failed">>};
@@ -179,6 +180,7 @@ error_code(session_stop) 			-> {1061, <<"Session stop">>};
 error_code(session_not_found) 		-> {1062, <<"Session not found">>};
 
 error_code(invalid_uri) 			-> {1070, <<"Invalid Uri">>};
+
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};
