@@ -22,10 +22,47 @@
 -module(nkservice_api_gelf).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([send/3, send/6]).
 -export([plugin_deps/0, plugin_syntax/0, plugin_start/2, plugin_stop/2]).
 -export([api_cmd/2]).
 
 -include("../../include/nkservice.hrl").
+
+
+
+%% ===================================================================
+%% Public
+%% ===================================================================
+
+send(Srv, Source, Short) ->
+    send(Srv, Source, Short, <<>>, 1, #{}).
+
+
+send(Srv, Source, Short, Long, Level, Meta) ->
+    case nkservice_srv:get_srv_id(Srv) of
+        {ok, SrvId} ->
+            case nklib_log:find({?MODULE, SrvId}) of
+                {ok, Pid} ->
+                    Meta2 = Meta#{srv_id=>SrvId},
+                    Msg1 = #{
+                        host => Source,
+                        message => Short,
+                        level => Level,
+                        meta => Meta2
+                    },
+                    Msg2 = case Long of
+                        <<>> -> Msg1;
+                        _ -> Msg1#{full_message=>Long}
+                    end,
+                    nklib_log:message(Pid, Msg2);
+                not_found ->
+                    {error, log_server_not_found}
+            end;
+        not_found ->
+            {error, service_not_found}
+    end.
+
+
 
 
 %% ===================================================================
@@ -44,6 +81,13 @@ plugin_syntax() ->
     }.
 
 
+%% @private
+%% When the plugin starts, it adds a user process to the service (named api_gelf)
+%% that starts with nklib_log:start_link({?MODULE, SrvId}, nklib_log_gelf, Opts),
+%% and it is registered under {?MODULE, SrvId}
+
+
+
 plugin_start(Config, #{id:=Id, name:=Name}) ->
     case Config of
         #{api_gelf_server:=Server} ->
@@ -51,7 +95,7 @@ plugin_start(Config, #{id:=Id, name:=Name}) ->
                        [Name, Server]),
             Port = maps:get(api_gelf_port, Config, 12201),
             Opts = #{server=>Server, port=>Port},
-            Args = [{nkservice_api_gelf, Id}, nklib_log_gelf, Opts],
+            Args = [{?MODULE, Id}, nklib_log_gelf, Opts],
             case nkservice_srv_user_sup:start_proc(Id, api_gelf, nklib_log, Args) of
                 {ok, _} ->
                     {ok, Config};
@@ -65,7 +109,7 @@ plugin_start(Config, #{id:=Id, name:=Name}) ->
 
 plugin_stop(Config, #{id:=Id, name:=Name}) ->
     lager:info("Plugin NkSERVICE GELF (~s) stopping", [Name]),
-    nklib_log:stop({nkservice_api_gelf, Id}),
+    nklib_log:stop({?MODULE, Id}),
     {ok, Config}.
 
 
@@ -77,16 +121,14 @@ plugin_stop(Config, #{id:=Id, name:=Name}) ->
 
 
 api_cmd(#api_req{class = <<"core">>, subclass = <<"session">>, cmd = <<"log">>} =Req,
-        _State) ->
-    #api_req{srv_id=SrvId} = Req,
-    case nklib_log:find({?MODULE, SrvId}) of
-        {ok, Pid} ->
-            Msg = get_log_msg(Req),
-            ok = nklib_log:message(Pid, Msg),
-            continue;
-        not_found ->
-            continue
-    end;
+        State) ->
+    #api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
+    #{source:=Source, message:=Short, level:=Level} = Data,
+    Long = maps:get(full_message, Data, <<>>),
+    Meta1 = maps:get(meta, Data, #{}),
+    Meta2 = Meta1#{user=>User, session_id=>Session},
+    _Res = send(SrvId, Source, Short, Long, Level, Meta2),
+    {ok, #{}, State};
 
 api_cmd(_Req, _State) ->
     continue.
@@ -99,21 +141,21 @@ api_cmd(_Req, _State) ->
 %% ===================================================================
 
 
-get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session=Session}) ->
-    #{source:=Source, message:=Short, level:=Level} = Data,
-    Meta1 = maps:get(meta, Data, #{}),
-    Meta2 = Meta1#{
-        srv_id => SrvId,
-        user => User,
-        session_id => Session
-    },
-    Msg1 = #{
-        host => Source,
-        message => Short,
-        level => Level,
-        meta => Meta2
-    },
-    case maps:get(full_message, Data, <<>>) of
-        <<>> -> Msg1;
-        Full -> Msg1#{full_message=>Full}
-    end.
+% get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session=Session}) ->
+%     #{source:=Source, message:=Short, level:=Level} = Data,
+%     Meta1 = maps:get(meta, Data, #{}),
+%     Meta2 = Meta1#{
+%         srv_id => SrvId,
+%         user => User,
+%         session_id => Session
+%     },
+%     Msg1 = #{
+%         host => Source,
+%         message => Short,
+%         level => Level,
+%         meta => Meta2
+%     },
+%     case maps:get(full_message, Data, <<>>) of
+%         <<>> -> Msg1;
+%         Full -> Msg1#{full_message=>Full}
+%     end.
