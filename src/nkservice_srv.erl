@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([find_name/1, get_srv_id/1, get_item/2]).
+-export([find_name/1, get_srv_id/1, get_item/2, has_plugin/2]).
 -export([start_link/1, stop_all/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
@@ -77,6 +77,20 @@ get_item(Srv, Field) ->
         not_found ->
             error({service_not_found, Srv})
     end.
+
+
+%% @doc 
+-spec has_plugin(service_select(), atom()) ->
+    boolean().
+
+has_plugin(Srv, Plugin) ->
+    case get_srv_id(Srv) of
+        {ok, SrvId} ->
+            lists:member(Plugin, SrvId:plugins());
+        not_found ->
+            error({service_not_found, Srv})
+    end.
+
 
 
 
