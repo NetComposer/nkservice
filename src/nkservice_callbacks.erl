@@ -63,6 +63,8 @@ plugin_deps() ->
 %% @doc Optionally set the plugin 'group'
 %% All plugins within a group are added a dependency on the previous defined plugins
 %% in the same group.
+%% This way, the order of callbacks is the same as the order plugins are defined
+%% in this group.
 -spec plugin_group() ->
     term() | undefined.
 
