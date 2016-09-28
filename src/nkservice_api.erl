@@ -58,31 +58,22 @@ launch(#api_req{srv_id=SrvId, data=Data}=Req, State) ->
         defaults => Defaults,
         mandatory => Mandatory
     },
-    lager:error("Syntax for ~p: ~p, ~p ~p", 
-                [lager:pr(Req, ?MODULE), Syntax, Defaults, Mandatory]),
+    % lager:info("Syntax for ~p: ~p, ~p ~p", 
+    %             [lager:pr(Req, ?MODULE), Syntax, Defaults, Mandatory]),
     case nklib_config:parse_config(Data, Syntax, Opts) of
         {ok, Parsed, Other} ->
-            case maps:size(Other) of
-                0 -> 
-                    ok;
-                _ -> 
-                    #api_req{class=Class, subclass=Sub, cmd=Cmd, session=SessId} = Req,
-                    RegId = #reg_id{
-                        class = <<"core">>,
-                        subclass = <<"session_event">>,
-                        type = <<"unrecognized_fields">>,
-                        srv_id = SrvId, 
-                        obj_id = SessId
-                    },
-                    Body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>maps:keys(Other)},
-                    nkservice_events:send(RegId, Body),
-                    lager:notice("NkSERVICE API: Unknown keys in service launch "
-                                 "~s:~s:~s: ~p", [Class, Sub, Cmd, maps:keys(Other)])
-            end,
             Req2 = Req#api_req{data=Parsed},
             case SrvId:api_allow(Req2, State) of
                 {true, State2} ->
-                    SrvId:api_cmd(Req2, State2);
+                    case SrvId:api_cmd(Req2, State2) of
+                        {ok, Reply, State3} when map_size(Other)==0 ->
+                            {ok, Reply, State3};
+                        {ok, Reply, State3} ->
+                            send_unrecognized_fields(Req, maps:keys(Other)),
+                            {ok, Reply, State3};
+                        {error, Error, State3} ->
+                            {error, Error, State3}
+                    end;
                 {false, State2} ->
                     {error, unauthorized, State2}
             end;
@@ -91,6 +82,25 @@ launch(#api_req{srv_id=SrvId, data=Data}=Req, State) ->
         {error, {missing_mandatory_field, Field}} ->
             {error, {missing_field, Field}, State}
     end.
+
+
+
+%% @private
+send_unrecognized_fields(Req, Fields) ->
+    #api_req{srv_id=SrvId, class=Class, subclass=Sub, cmd=Cmd, session=SessId} = Req,
+    RegId = #reg_id{
+        class = <<"core">>,
+        subclass = <<"session_event">>,
+        type = <<"unrecognized_fields">>,
+        srv_id = SrvId, 
+        obj_id = SessId
+    },
+    Body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>Fields},
+    nkservice_events:send(RegId, Body),
+    lager:notice("NkSERVICE API: Unknown keys in service launch "
+                 "~s:~s:~s: ~p", [Class, Sub, Cmd, Fields]).
+
+
 
 
 

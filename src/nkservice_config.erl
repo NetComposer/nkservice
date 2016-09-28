@@ -226,6 +226,7 @@ expand_plugins(ModuleList, CallBack) ->
         end,
         List2 = add_group_deps(List1),
         List3 = add_all_deps(List2, []),
+        % lager:warning("LIST: ~p", [List3]),
         case nklib_sort:top_sort(List3) of
             {ok, Sorted} -> {ok, Sorted};
             {error, Error} -> {error, Error}

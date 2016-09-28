@@ -155,7 +155,8 @@ error_code({exit, _Exit}) 			-> {1007, <<"Internal error">>};
 error_code(process_not_found) 		-> {1010, <<"Process not found">>};
 error_code(process_down)  			-> {1011, <<"Process failed">>};
 error_code(registered_down) 	    -> {1012, <<"Registered process stopped">>};
-error_code(user_stop) 				-> {1013, <<"User stop">>};
+error_code(user_stop) 				-> {1013, <<"User stop received">>};
+error_code(api_stop) 				-> {1013, <<"API stop received">>};
 
 error_code(service_not_found) 		-> {1020, <<"Service not found">>};
 

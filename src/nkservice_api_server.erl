@@ -778,7 +778,7 @@ send_reply_ok(Data, TId, NkPort, State) ->
     Msg2 = case Data of
         #{} when map_size(Data)==0 -> Msg1;
         #{} -> Msg1#{data=>Data};
-        List when is_list(List), length(List)==0 -> Msg1;
+        % List when is_list(List), length(List)==0 -> Msg1;
         List when is_list(List) -> Msg1#{data=>Data}
     end,
     send(Msg2, NkPort, State).
@@ -863,6 +863,6 @@ print(_Txt, [#{cmd:=<<"ping">>}], _State) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
-    ?LLOG(notice, Txt, Args, State).
+    ?LLOG(info, Txt, Args, State).
 
  
