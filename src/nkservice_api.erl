@@ -24,7 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([class/0, cmd/0]).
 -export([launch/2]).
--export([cmd/4, syntax/5]).
+-export([cmd/4]).
 -export([parse_service/1]).
 
 %% ===================================================================
@@ -58,14 +58,24 @@ launch(#api_req{srv_id=SrvId, data=Data}=Req, State) ->
         defaults => Defaults,
         mandatory => Mandatory
     },
-    % lager:error("Syntax for ~p: ~p, ~p ~p", [Cmd, Syntax, Defaults, Mandatory]),
+    lager:error("Syntax for ~p: ~p, ~p ~p", 
+                [lager:pr(Req, ?MODULE), Syntax, Defaults, Mandatory]),
     case nklib_config:parse_config(Data, Syntax, Opts) of
         {ok, Parsed, Other} ->
             case maps:size(Other) of
                 0 -> 
                     ok;
                 _ -> 
-                    #api_req{class=Class, subclass=Sub, cmd=Cmd} = Req,
+                    #api_req{class=Class, subclass=Sub, cmd=Cmd, session=SessId} = Req,
+                    RegId = #reg_id{
+                        class = <<"core">>,
+                        subclass = <<"session_event">>,
+                        type = <<"unrecognized_fields">>,
+                        srv_id = SrvId, 
+                        obj_id = SessId
+                    },
+                    Body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>maps:keys(Other)},
+                    nkservice_events:send(RegId, Body),
                     lager:notice("NkSERVICE API: Unknown keys in service launch "
                                  "~s:~s:~s: ~p", [Class, Sub, Cmd, maps:keys(Other)])
             end,
@@ -137,7 +147,6 @@ cmd(<<"event">>, <<"get_subscriptions">>, #api_req{tid=TId}, State) ->
     {ack, State};
 
 cmd(<<"event">>, <<"send">>, #api_req{srv_id=SrvId, data=Data}, State) ->
-
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
@@ -214,108 +223,6 @@ cmd(<<"session">>, <<"log">>, Req, State) ->
 
 cmd(_Sub, _Cmd, _Data, State) ->
     {error, unknown_command, State}.
-
-
-%% ===================================================================
-%% Syntax
-%% ===================================================================
-
-
-%% @private
-syntax(<<"user">>, <<"get">>, Syntax, Defaults, Mandatory) ->
-    {Syntax#{user=>binary}, Defaults, [user|Mandatory]};
-
-syntax(<<"event">>, <<"subscribe">>, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
-    {S#{body => any}, D, M};
-
-syntax(<<"event">>, <<"unsubscribe">>, Syntax, Defaults, Mandatory) ->
-    syntax_events(Syntax, Defaults, Mandatory);
-  
-syntax(<<"event">>, <<"send">>, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
-    {S#{body => any}, D, M};
-
-syntax(<<"user">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            user => binary,
-            type => binary,
-            body => any
-        },
-        Defaults#{
-            type => <<"*">>
-        },
-        [user|Mandatory]
-    };
-
-syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
-    {Syntax#{session_id=>binary}, Defaults, [session_id|Mandatory]};
-
-syntax(<<"session">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            session_id => binary,
-            type => binary,
-            body => any
-        },
-        Defaults#{
-            type => <<"*">>
-        },
-        [session_id|Mandatory]
-    };
-
-syntax(<<"session">>, <<"cmd">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            session_id => binary,
-            class => binary,
-            subclass => binary,
-            cmd => binary,
-            data => any
-        },
-        Defaults#{subclass => <<"core">>},
-        [session_id, class, cmd|Mandatory]
-    };
-
-syntax(<<"session">>, <<"log">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            source => binary,
-            message => binary,
-            full_message => binary,
-            level => {integer, 1, 7},
-            meta => any
-        },
-        Defaults#{level=>1},
-        [source, message|Mandatory]
-    };
-
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
-    {Syntax, Defaults, Mandatory}.
-
-
-%% @private
-syntax_events(Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            class => binary,
-            subclass => binary,
-            type => binary,
-            obj_id => binary,
-            service => fun ?MODULE:parse_service/1
-        },
-        Defaults#{
-            subclass => <<"*">>,
-            type => <<"*">>,
-            obj_id => <<"*">>
-        },
-        [class|Mandatory]
-    }.
-
-
-
-
 
 
 %% ===================================================================

@@ -325,7 +325,7 @@ api_server_terminate(_Reason, State) ->
 
 api_syntax(#api_req{class = <<"core">>}=Req, Syntax, Defaults, Mandatory) ->
 	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkservice_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
+	nkservice_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
 	
 api_syntax(_Req, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
