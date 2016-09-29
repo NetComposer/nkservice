@@ -159,17 +159,19 @@ save_uuid(Path, Name, UUID) ->
 
 
 %% @private
+-spec error_code(nkservice:id(), nkservice:error()) ->
+    {integer(), binary()}.
+
 error_code(SrvId, Error) ->
-    {Code, Text} = SrvId:error_code(Error),
-    if
-        is_binary(Text) -> 
+    case SrvId:error_code(Error) of
+        {Code, Text} when is_binary(Text) ->
             {Code, Text};
-        is_list(Text) -> 
+        {Code, Text} when is_list(Text) ->
             {Code, list_to_binary(Text)};
-        is_tuple(Text) -> 
-            case catch io_lib:format(element(1,Text), element(2,Text)) of
+        {Code, Fmt, List} ->
+            case catch io_lib:format(nklib_util:to_list(Fmt), List) of
                 {'EXIT', _} ->
-                    {Code, nklib_util:to_binary(text)};
+                    {0, <<"Invalid format: ", (nklib_util:to_binary(Fmt))/binary>>};
                 Val ->
                     {Code, list_to_binary(Val)}
             end

@@ -140,56 +140,70 @@ plugin_stop(Config, _Service) ->
 %% Error Codes
 %% ===================================================================
 
-%% @docd
+%% Code ranges
+%% NkService:		100XXX
+%%
+%% NkSIP:			200XXX
+%%
+%% NkMEDIA:			300XXX
+%% 		Janus		301XXX
+%% 		FS         	302XXX
+%% 		KMS			303XXX
+%% 		Room		3040XX
+%%   		Msglog	3041XX
+%% 		Call		305XXX
+%% 		Verto		306XXX
+%% 		JanusProto: 307XXX
+%% 		SIP:		308XXX
+
+
+%% @doc
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(internal_error)			-> {1001, <<"Internal error">>};
-error_code(normal) 					-> {1002, <<"Normal termination">>};	% CHANGE
-error_code(anormal_termination)     -> {1003, <<"Anormal termination">>};
-error_code(invalid_state) 			-> {1004, <<"Invalid state">>};
-error_code(timeout) 				-> {1005, <<"Timeout">>};
-error_code(not_implemented) 		-> {1006, <<"Not implemented">>};
-error_code({exit, _Exit}) 			-> {1007, <<"Internal error">>};
+error_code(normal_termination) 		-> {100001, "Normal termination"};	
+error_code(internal_error)			-> {100002, "Internal error"};
+error_code({internal_error, Ref})	-> {100003, "Internal error: ~s", [Ref]};
+error_code(invalid_state) 			-> {100004, "Invalid state"};
+error_code(timeout) 				-> {100005, "Timeout"};
+error_code(not_implemented) 		-> {100006, "Not implemented"};
+error_code({exit, _Exit}) 			-> {100007, "Internal error"};
+error_code(process_not_found) 		-> {100008, "Process not found"};
+error_code(process_down)  			-> {100009, "Process failed"};
+error_code(registered_down) 	    -> {100010, "Registered process stopped"};
+error_code(user_stop) 				-> {100011, "User stop received"};
+error_code(api_stop) 				-> {100012, "API stop received"};
 
-error_code(process_not_found) 		-> {1010, <<"Process not found">>};
-error_code(process_down)  			-> {1011, <<"Process failed">>};
-error_code(registered_down) 	    -> {1012, <<"Registered process stopped">>};
-error_code(user_stop) 				-> {1013, <<"User stop received">>};
-error_code(api_stop) 				-> {1013, <<"API stop received">>};
+error_code(service_not_found) 		-> {100020, "Service not found"};
 
-error_code(service_not_found) 		-> {1020, <<"Service not found">>};
+error_code(unauthorized) 			-> {100030, "Unauthorized"};
+error_code(not_authenticated)		-> {100031, "Not authenticated"};
+error_code(already_authenticated)	-> {100032, "Already authenticated"};
+error_code(user_not_found)			-> {100033, "User not found"};
+error_code(duplicated_session_id)	-> {100034, "Duplicated session id"};
+error_code(invalid_session_id)		-> {100035, "Invalid session id"};
 
-error_code(unauthorized) 			-> {1030, <<"Unauthorized">>};
-error_code(not_authenticated)		-> {1031, <<"Not authenticated">>};
-error_code(already_authenticated)	-> {1032, <<"Already authenticated">>};
-error_code(user_not_found)			-> {1033, <<"User not found">>};
-error_code(duplicated_session_id)	-> {1034, <<"Duplicated session id">>};
-error_code(invalid_session_id)		-> {1035, <<"Invalid session id">>};
+error_code(invalid_operation) 		-> {100040, "Invalid operation"};
+error_code(invalid_parameters) 		-> {100041, "Invalid parameters"};
+error_code({unknown_command, Txt})	-> {100042, "Unknown command '~s'", [Txt]};
+error_code({invalid_action, Txt})   -> {100043, "Invalid action '~s'", [Txt]};
+error_code({syntax_error, Txt})		-> {100044, "Syntax error: ~s", [Txt]};
+error_code({missing_field, Txt})	-> {100045, "Missing field: ~s", [Txt]};
+error_code({invalid_value, V}) 		-> {100046, "Invalid value: ~s", [V]};
+error_code({invalid_format, F, L})	-> {100046, "Invalid value: ~s", [V]};
 
-error_code(operation_error) 		-> {1040, <<"Operation error">>};
-error_code(unknown_command)			-> {1041, <<"Unknown command">>};
-error_code(unknown_class)			-> {1042, <<"Unknown class">>};
-error_code(incompatible_operation) 	-> {1043, <<"Incompatible operation">>};
-error_code(unknown_operation) 		-> {1044, <<"Unknown operation">>};
-error_code(invalid_operation) 		-> {1045, <<"Invalid operation">>};
-error_code({syntax_error, Txt})		-> {1046, {"Syntax error: ~s", [Txt]}};
-error_code({missing_field, Txt})	-> {1047, {"Missing field: ~s", [Txt]}};
-error_code(invalid_parameters) 		-> {1048, <<"Invalid parameters">>};
-error_code({invalid_value, V}) 		-> {1049, {"Invalid value: ~s", [V]}};
+error_code(session_timeout) 		-> {100060, "Session timeout"};
+error_code(session_stop) 			-> {100061, "Session stop"};
+error_code(session_not_found) 		-> {100062, "Session not found"};
 
-error_code(session_timeout) 		-> {1060, <<"Session timeout">>};
-error_code(session_stop) 			-> {1061, <<"Session stop">>};
-error_code(session_not_found) 		-> {1062, <<"Session not found">>};
-
-error_code(invalid_uri) 			-> {1070, <<"Invalid Uri">>};
+error_code(invalid_uri) 			-> {100070, "Invalid Uri"};
 
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};
 
 error_code(Other) -> 
-	{9999, nklib_util:to_binary(Other)}.
+	{100999, nklib_util:to_binary(Other)}.
 
 
 

@@ -214,9 +214,12 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
                             nkservice_api_server:reply_ok(Self, TId, ResData);
                         {ok, <<"error">>, #{<<"code">>:=Code, <<"error">>:=Error}} ->
                             nkservice_api_server:reply_error(Self, TId, {Code, Error});
-                        {ok, _Res, _ResData} ->
-                            lager:error("Invalid reply: ~p", [_Res]),
-                            nkservice_api_server:reply_error(Self, TId, operation_error);
+                        {ok, Res, _ResData} ->
+                            Ref = nklib_util:uid(),
+                            lager:error("Internal error ~s: Invalid reply: ~p", 
+                                        [Ref, Res]),
+                            nkservice_api_server:reply_error(Self, TId, 
+                                                             {internal_error, Ref});
                         {error, Error} ->
                             nkservice_api_server:reply_error(Self, TId, Error)
                     end
@@ -231,8 +234,8 @@ cmd(<<"session">>, <<"log">>, Req, State) ->
     lager:info("Ext API Session Log: ~p", [Msg]),
     {ok, #{}, State};
 
-cmd(_Sub, _Cmd, _Data, State) ->
-    {error, unknown_command, State}.
+cmd(_Sub, Cmd, _Data, State) ->
+    {error, {unknown_command, Cmd}, State}.
 
 
 %% ===================================================================
