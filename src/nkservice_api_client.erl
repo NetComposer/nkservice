@@ -209,13 +209,7 @@ conn_parse({text, Text}, NkPort, #state{srv_id=SrvId}=State) ->
                 tid = TId,
                 data = maps:get(<<"data">>, Msg, #{})
             },
-            case process_server_req(Req, NkPort, State) of
-                {ok, State2} ->
-                    {ok, State2};
-                unrecognized ->
-                    ?LLOG(warning, "unrecognized server request ~p", [Req], State),
-                    send_reply_error(unknown_command, TId, NkPort, State)
-            end;
+            process_server_req(Req, NkPort, State);
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
@@ -454,7 +448,7 @@ send_reply_error(Error, TId, NkPort, #state{srv_id=SrvId}=State) ->
 send_ack(TId, NkPort, State) ->
     Msg = #{ack => TId},
     _ = send(Msg, NkPort, State),
-    ok.
+    {ok, State}.
 
 
 %% @private
