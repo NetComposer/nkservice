@@ -190,7 +190,6 @@ error_code({invalid_action, Txt})   -> {100043, "Invalid action '~s'", [Txt]};
 error_code({syntax_error, Txt})		-> {100044, "Syntax error: ~s", [Txt]};
 error_code({missing_field, Txt})	-> {100045, "Missing field: ~s", [Txt]};
 error_code({invalid_value, V}) 		-> {100046, "Invalid value: ~s", [V]};
-error_code({invalid_format, F, L})	-> {100046, "Invalid value: ~s", [V]};
 
 error_code(session_timeout) 		-> {100060, "Session timeout"};
 error_code(session_stop) 			-> {100061, "Session stop"};
