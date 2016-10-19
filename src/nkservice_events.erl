@@ -259,13 +259,14 @@ handle_call(Msg, _From, State) ->
 handle_cast({send, Sub, Type, SrvId, ObjId, Body, PidSpec}, State) ->
     #state{class=Class, regs=Regs} = State,
     RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId},
-    % lager:error("Event all: ~p (~p:~p)", 
-    %             [lager:pr(RegId, ?MODULE), State#state.sub, State#state.type]),
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
-    send_events(PidTerms1, RegId, Body, PidSpec),
     PidTerms2 = maps:get({SrvId, '*'}, Regs, []) -- PidTerms1,
-    send_events(PidTerms2, RegId, Body, PidSpec),
     PidTerms3 = maps:get({'*', '*'}, Regs, []) -- PidTerms1 -- PidTerms2,
+    lager:error("Event all: ~p (~p:~p): ~p,~p,~p", 
+                [lager:pr(RegId, ?MODULE), State#state.sub, State#state.type,
+                PidTerms1, PidTerms2, PidTerms3]),
+    send_events(PidTerms1, RegId, Body, PidSpec),
+    send_events(PidTerms2, RegId, Body, PidSpec),
     send_events(PidTerms3, RegId, Body, PidSpec),
     {noreply, State};
 

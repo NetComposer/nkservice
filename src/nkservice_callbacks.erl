@@ -155,6 +155,10 @@ plugin_stop(Config, _Service) ->
 %% 		Verto		306XXX
 %% 		JanusProto: 307XXX
 %% 		SIP:		308XXX
+%%
+%% NkCOLLAB			400XXX
+%%		Room		401XXX
+%% 		Call		402XXX
 
 
 %% @doc
@@ -182,6 +186,8 @@ error_code(already_authenticated)	-> {100032, "Already authenticated"};
 error_code(user_not_found)			-> {100033, "User not found"};
 error_code(duplicated_session_id)	-> {100034, "Duplicated session id"};
 error_code(invalid_session_id)		-> {100035, "Invalid session id"};
+error_code(member_not_found)		-> {100036, "Invalid role"};
+error_code(invalid_role)			-> {100037, "Member not found"};
 
 error_code(invalid_operation) 		-> {100040, "Invalid operation"};
 error_code(invalid_parameters) 		-> {100041, "Invalid parameters"};
@@ -196,13 +202,14 @@ error_code(session_stop) 			-> {100061, "Session stop"};
 error_code(session_not_found) 		-> {100062, "Session not found"};
 
 error_code(invalid_uri) 			-> {100070, "Invalid Uri"};
+error_code(unknown_peer) 			-> {100071, "Unknown peer"};
 
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 	{Code, Txt};
 
 error_code(Other) -> 
-	{100999, nklib_util:to_binary(Other)}.
+	{999999, nklib_util:to_binary(Other)}.
 
 
 
@@ -432,4 +439,3 @@ service_code_change(OldVsn, State, Extra) ->
 
 service_terminate(_Reason, State) ->
 	{ok, State}.
-
