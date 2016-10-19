@@ -31,7 +31,7 @@
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
 -export([list_users/2, get_user/4, get_subscriptions/2]).
--export([get_all/0, get_all/1, print/3]).
+-export([get_all/0, get_all/1, print/3, get_data/1]).
 
 
 -define(LLOG(Type, Txt, Args, State),
@@ -54,6 +54,7 @@
 %% Types
 %% ===================================================================
 
+-type id() :: pid() | binary().
 -type user_state() :: map().
 -type class() :: atom() | binary().
 -type subclass() :: atom() | binary().
@@ -66,101 +67,101 @@
 %% ===================================================================
 
 %% @doc Send a command and wait a response
--spec cmd(pid(), class(), subclass(), cmd(), data()) ->
+-spec cmd(id(), class(), subclass(), cmd(), data()) ->
     {ok, Result::binary(), Data::map()} | {error, term()}.
 
-cmd(Pid, Class, SubClass, Cmd, Data) ->
+cmd(Id, Class, SubClass, Cmd, Data) ->
     Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
-    do_call(Pid, {nkservice_cmd, Req}).
+    do_call(Id, {nkservice_cmd, Req}).
 
 
 %% @doc Send a command and don't wait for a response
--spec cmd_async(pid(), class(), subclass(), cmd(), data()) ->
+-spec cmd_async(id(), class(), subclass(), cmd(), data()) ->
     ok.
 
-cmd_async(Pid, Class, SubClass, Cmd, Data) ->
+cmd_async(Id, Class, SubClass, Cmd, Data) ->
     Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
-    gen_server:cast(Pid, {nkservice_cmd, Req}).
+    do_cast(Id, {nkservice_cmd, Req}).
 
 
 %% @doc Sends an ok reply to a command (when you reply 'ack' in callbacks)
--spec reply_ok(pid(), term(), map()) ->
+-spec reply_ok(id(), term(), map()) ->
     ok.
 
-reply_ok(Pid, TId, Data) ->
-    gen_server:cast(Pid, {reply_ok, TId, Data}).
+reply_ok(Id, TId, Data) ->
+    do_cast(Id, {reply_ok, TId, Data}).
 
 
 %% @doc Sends an error reply to a command (when you reply 'ack' in callbacks)
--spec reply_error(pid(), term(), nkservice:error()) ->
+-spec reply_error(id(), term(), nkservice:error()) ->
     ok.
 
-reply_error(Pid, TId, Code) ->
-    gen_server:cast(Pid, {reply_error, TId, Code}).
+reply_error(Id, TId, Code) ->
+    do_cast(Id, {reply_error, TId, Code}).
 
 
 %% @doc Sends another ACK to a command (when you reply 'ack' in callbacks)
 %% to extend timeout
--spec reply_ack(pid(), term()) ->
+-spec reply_ack(id(), term()) ->
     ok.
 
 %% @doc Send to extend the timeout for the transaction 
-reply_ack(Pid, TId) ->
-    gen_server:cast(Pid, {reply_ack, TId}).
+reply_ack(Id, TId) ->
+    do_cast(Id, {reply_ack, TId}).
 
 
 %% @doc Start sending pings
--spec start_ping(pid(), integer()) ->
+-spec start_ping(id(), integer()) ->
     ok.
 
-start_ping(Pid, Secs) ->
-    gen_server:cast(Pid, {nkservice_start_ping, Secs}).
+start_ping(Id, Secs) ->
+    do_cast(Id, {nkservice_start_ping, Secs}).
 
 
 %% @doc Stop sending pings
--spec stop_ping(pid()) ->
+-spec stop_ping(id()) ->
     ok.
 
 %% @doc 
-stop_ping(Pid) ->
-    gen_server:cast(Pid, nkservice_stop_ping).
+stop_ping(Id) ->
+    do_cast(Id, nkservice_stop_ping).
 
 
 %% @doc Stops the server
-stop(Pid) ->
-    gen_server:cast(Pid, nkservice_stop).
+stop(Id) ->
+    do_cast(Id, nkservice_stop).
 
 
 %% @doc Registers a process with the session
--spec register(pid(), nklib:link()) ->
+-spec register(id(), nklib:link()) ->
     {ok, pid()} | {error, nkservice:error()}.
 
-register(Pid, Link) ->
-    gen_server:cast(Pid, {nkservice_register, Link}).
+register(Id, Link) ->
+    do_cast(Id, {nkservice_register, Link}).
 
 
 %% @doc Unregisters a process with the session
--spec unregister(pid(), nklib:link()) ->
+-spec unregister(id(), nklib:link()) ->
     ok | {error, nkservice:error()}.
 
-unregister(Pid, Link) ->
-    gen_server:cast(Pid, {nkservice_unregister, Link}).
+unregister(Id, Link) ->
+    do_cast(Id, {nkservice_unregister, Link}).
 
 
 %% @doc Registers with the Events system
--spec register_events(pid(), nkservice_events:reg_id(), nkservice_events:body()) ->
+-spec register_events(id(), nkservice_events:reg_id(), nkservice_events:body()) ->
     ok.
 
-register_events(Pid, RegId, Body) ->
-    gen_server:cast(Pid, {nkservice_register_events, RegId, Body}).
+register_events(Id, RegId, Body) ->
+    do_cast(Id, {nkservice_register_events, RegId, Body}).
 
 
 %% @doc Registers with the Events system
--spec unregister_events(pid(),  nkservice_events:reg_id()) ->
+-spec unregister_events(id(),  nkservice_events:reg_id()) ->
     ok.
 
-unregister_events(Pid, RegId) ->
-    gen_server:cast(Pid, {nkservice_unregister_events, RegId}).
+unregister_events(Id, RegId) ->
+    do_cast(Id, {nkservice_unregister_events, RegId}).
 
 
 %% @private
@@ -195,6 +196,12 @@ find_session(SessId) ->
         [{User, Pid}] -> {ok, User, Pid};
         [] -> not_found
     end.
+
+
+%% @private
+get_data(Id) ->
+    do_call(Id, get_data).
+
 
 
 
@@ -363,6 +370,10 @@ conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs=Regs}=State) ->
     gen_server:reply(From, Data),
     {ok, State};
 
+conn_handle_call(get_data, From, _NkPort, #state{regs=Regs, links=Links}=State) ->
+    gen_server:reply(From, {ok, Regs, Links}),
+    {ok, State};
+
 conn_handle_call(get_state, From, _NkPort, State) ->
     gen_server:reply(From, {ok, State}),
     {ok, State};
@@ -449,12 +460,21 @@ conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
 conn_handle_cast({nkservice_register_events, RegId, Body}, _NkPort, State) ->
-    {ok, Pid} = nkservice_events:reg(RegId, Body),
     #state{regs=Regs} = State,
-    Mon = monitor(process, Pid),
-    {ok, State#state{regs=[{RegId, Body, Mon}|Regs]}};
+    Regs2 = case lists:keyfind(RegId, 1, Regs) of
+        false ->
+            ?LLOG(info, "registered event ~p", [RegId], State),
+            {ok, Pid} = nkservice_events:reg(RegId, Body),
+            Mon = monitor(process, Pid),
+            [{RegId, Body, Mon}|Regs];
+        {RegId, _OldBody, Mon} ->
+            ?LLOG(info, "event ~p already registered", [RegId], State),
+            lists:keystore(RegId, 1, Regs, {RegId, Body, Mon})
+    end,
+    {ok, State#state{regs=Regs2}};
 
 conn_handle_cast({nkservice_unregister_events, RegId}, _NkPort, State) ->
+    ?LLOG(info, "unregistered event ~p", [RegId], State),
     ok = nkservice_events:unreg(RegId),
     #state{regs=Regs} = State,
     case lists:keytake(RegId, 1, Regs) of
@@ -466,9 +486,11 @@ conn_handle_cast({nkservice_unregister_events, RegId}, _NkPort, State) ->
     {ok, State#state{regs=Regs2}};
 
 conn_handle_cast({nkservice_register, Link}, _NkPort, State) ->
+    ?LLOG(info, "registered ~p", [Link], State),
     {ok, links_add(Link, State)};
 
 conn_handle_cast({nkservice_unregister, Link}, _NkPort, State) ->
+    ?LLOG(info, "unregistered ~p", [Link], State),
     {ok, links_remove(Link, State)};
 
 conn_handle_cast(Msg, _NkPort, State) ->
@@ -500,7 +522,7 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     #state{regs=Regs} = State,
     case lists:keytake(Ref, 3, Regs) of
         {value, {RegId, Body, Ref}, Regs2} ->
-            gen_server:cast(self(), {nkservice_register, RegId, Body}),
+            do_cast(self(), {nkservice_register, RegId, Body}),
             {ok, State#state{regs=Regs2}};
         false ->
             case links_down(Ref, State) of
@@ -697,10 +719,43 @@ get_subscriptions(_TId, _) ->
 
 
 %% @private
-do_call(Pid, Msg) ->
-    case self() of
-        Pid -> {error, blocking_request};
-        _ -> nklib_util:call(Pid, Msg, 1000*?CALL_TIMEOUT)
+do_call(Id, Msg) ->
+    case find(Id) of
+        {ok, Pid} ->
+            case self() of
+                Pid -> {error, blocking_request};
+                _ -> nklib_util:call(Pid, Msg, 1000*?CALL_TIMEOUT)
+            end;
+        not_found ->
+            {error, not_found}
+    end.
+
+
+%% @private
+do_cast(Id, Msg) ->
+    case find(Id) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, Msg);
+        not_found ->
+            ok
+    end.
+
+
+%% @private
+find(Pid) when is_pid(Pid) ->
+    {ok, Pid};
+
+find(Id) ->
+    case find_user(Id) of
+        [{_, Pid}|_] ->
+            {ok, Pid};
+        [] ->
+            case find_session(Id) of
+                {ok, _, Pid} ->
+                    {ok, Pid};
+                not_found ->
+                    not_found
+            end
     end.
 
 

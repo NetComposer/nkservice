@@ -48,6 +48,7 @@
 %% Types
 %% ===================================================================
 
+-type id() :: pid() | binary().
 
 
 %% ===================================================================
@@ -85,24 +86,33 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
     end.
 
 
+%% @doc 
+stop(Id) ->
+    do_cast(Id, stop).
+
+
+%% @doc 
+stop_all() ->
+    [stop(Pid) || {_, Pid} <- get_all()].
+
+
 %% @doc
--spec cmd(pid(), atom(), atom(), atom(), map()) ->
+-spec cmd(id(), atom(), atom(), atom(), map()) ->
     {ok, map()} | {error, {integer(), binary()}} | {error, term()}.
 
-cmd(Pid, Class, Sub, Cmd, Data) ->
+cmd(Id, Class, Sub, Cmd, Data) ->
     Req = #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data},
-    nklib_util:call(Pid, {cmd, Req}, 6000).
-    % nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
+    do_call(Id, {cmd, Req}).
 
 
 %% @doc
-reply_ok(Pid, TId, Data) ->
-    gen_server:cast(Pid, {reply_ok, TId, Data}).
+reply_ok(Id, TId, Data) ->
+    do_cast(Id, {reply_ok, TId, Data}).
 
 
 %% @doc
-reply_error(Pid, TId, Code) ->
-    gen_server:cast(Pid, {reply_error, TId, Code}).
+reply_error(Id, TId, Code) ->
+    do_cast(Id, {reply_error, TId, Code}).
 
 
 %% @dodc
@@ -114,15 +124,6 @@ get_user(User) ->
     [Pid || {_, Pid}<- nklib_proc:values({?MODULE, nklib_util:to_binary(User)})].
 
 
-
-%% @doc 
-stop(Pid) ->
-    gen_server:cast(Pid, stop).
-
-
-%% @doc 
-stop_all() ->
-    [stop(Pid) || {_, Pid} <- get_all()].
 
 
 %% ===================================================================
@@ -255,11 +256,6 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
 
-% conn_handle_call({login, User, Pass}, From, NkPort, State) ->
-%     Data = #{user => nklib_util:to_binary(User), pass => nklib_util:to_binary(Pass)},
-%     Req = #api_req{class = <<"core">>, cmd = <<"login">>, data = Data},
-%     send_request(Req, From, NkPort, State);
-
 conn_handle_call({cmd, Req}, From, NkPort, State) ->
     send_request(Req, From, NkPort, State);
 
@@ -368,6 +364,40 @@ process_server_resp(<<"error">>, Data, #trans{from=From}, _NkPort, State) ->
 
 
 %% @private
+do_call(Id, Msg) ->
+    case find(Id) of
+        {ok, Pid} ->
+            nklib_util:call(Pid, Msg, 1000*?CALL_TIMEOUT);
+        not_found ->
+            {error, not_found}
+    end.
+
+
+%% @private
+do_cast(Id, Msg) ->
+    case find(Id) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, Msg);
+        not_found ->
+            ok
+    end.
+
+
+%% @private
+find(Pid) when is_pid(Pid) ->
+    {ok, Pid};
+
+find(Id) ->
+    case get_user(Id) of
+        [Pid|_] ->
+            {ok, Pid};
+        [] ->
+            not_found
+    end.
+
+
+
+%% @private
 insert_op(TId, Op, From, #state{trans=AllTrans}=State) ->
     Trans = #trans{
         op = Op,
@@ -473,4 +503,7 @@ print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
     ?LLOG(info, Txt, Args, State).
+
+
+
 
