@@ -107,6 +107,7 @@ call(#event{}=Event, Body) ->
 
 
 %% @doc
+%% body and pid are not used for registration index
 -spec reg(event()) ->
     {ok, pid()}.
 

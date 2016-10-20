@@ -25,7 +25,7 @@
 -export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([stop/1, start_ping/2, stop_ping/1]).
 -export([register/2, unregister/2]).
--export([register_event/2, unregister_event/2]).
+-export([register_event/2, register_event/3, unregister_event/2, unregister_event/3]).
 -export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -149,12 +149,23 @@ unregister(Id, Link) ->
 
 
 %% @doc Registers with the Events system
-%% You case use any field of the event to make it different (for example, "id")
+%% All fields except body and pid are used for index
+%% Id is not used for real registrations
 -spec register_event(id(), nkservice:event()) ->
     ok.
 
 register_event(Id, Event) ->
-    do_cast(Id, {nkservice_register_event, Event}).
+    register_event(Id, Event, none).
+
+
+%% @doc Registers with the Events system
+%% All fields except body and pid are used for index
+%% Id is not used for real registrations
+-spec register_event(id(), nkservice:event(), term()) ->
+    ok.
+
+register_event(Id, Event, Index) ->
+    do_cast(Id, {nkservice_register_event, Event, Index}).
 
 
 %% @doc Registers with the Events system
@@ -162,7 +173,15 @@ register_event(Id, Event) ->
     ok.
 
 unregister_event(Id, Event) ->
-    do_cast(Id, {nkservice_unregister_event, Event}).
+    unregister_event(Id, Event, none).
+
+
+%% @doc Registers with the Events system
+-spec unregister_event(id(),  nkservice:event(), term()) ->
+    ok.
+
+unregister_event(Id, Event, Index) ->
+    do_cast(Id, {nkservice_unregister_event, Event, Index}).
 
 
 %% @private
@@ -218,6 +237,14 @@ get_data(Id) ->
     from :: {pid(), term()} | {async, pid(), term()}
 }).
 
+-record(reg, {
+    index :: integer(),
+    event :: #event{},
+    ids :: [term()],
+    mon :: reference()
+}).
+
+
 -record(state, {
     srv_id :: nkservice:id(),
     user = <<>> :: binary(),
@@ -225,7 +252,7 @@ get_data(Id) ->
     trans = #{} :: #{tid() => #trans{}},
     tid = 1 :: integer(),
     ping :: integer() | undefined,
-    regs = [] :: [{nkservice:event(), reference()}],
+    regs2 = [] :: [#reg{}],
     links :: nklib_links:links(),
     retry_time = 100 :: integer(),
     user_state :: user_state()
@@ -353,10 +380,9 @@ conn_handle_call(nkservice_get_user_data, From, _NkPort, State) ->
     gen_server:reply(From, get_user_data(self(), UserState)),
     {ok, State};
 
-conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs=Regs}=State) ->
+conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs2=Regs}=State) ->
     Data = [
         #{
-            id => Id,
             class => Class,
             subclass => Sub,
             type => Type,
@@ -365,18 +391,16 @@ conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs=Regs}=State) ->
             body => Body
         }
         ||
-            {
-                #event{id=Id, srv_id=SrvId, class=Class, subclass=Sub, 
-                        type=Type, obj_id=ObjId, body=Body}, 
-                _Mon
-            }
+            #reg{event=#event{srv_id=SrvId, class=Class, subclass=Sub, 
+                              type=Type, obj_id=ObjId, body=Body}}
             <- Regs
     ],
     gen_server:reply(From, Data),
     {ok, State};
 
-conn_handle_call(get_data, From, _NkPort, #state{regs=Regs, links=Links}=State) ->
-    gen_server:reply(From, {ok, Regs, Links}),
+conn_handle_call(get_data, From, _NkPort, #state{regs2=Regs, links=Links}=State) ->
+    Events = [Event || #reg{event=Event} <-Regs],
+    gen_server:reply(From, {ok, Events, Links}),
     {ok, State};
 
 conn_handle_call(get_state, From, _NkPort, State) ->
@@ -464,27 +488,35 @@ conn_handle_cast({nkservice_start_ping, Time}, _NkPort, #state{ping=Ping}=State)
 conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
-conn_handle_cast({nkservice_register_event, Event}, _NkPort, State) ->
-    #state{regs=Regs} = State,
-    case lists:keymember(Event, 1, Regs) of
+conn_handle_cast({nkservice_register_event, Event, Id}, _NkPort, State) ->
+    #state{regs2=Regs} = State,
+    Index = event_index(Event),
+    {ok, Pid} = nkservice_events:reg(Event),
+    Regs2 = case lists:keyfind(Index, #reg.index, Regs) of
         false ->
             ?LLOG(info, "registered event ~p", [Event], State),
-            {ok, Pid} = nkservice_events:reg(Event),
             Mon = monitor(process, Pid),
-            {ok, State#state{regs=[{Event, Mon}|Regs]}};
-        true ->
+            [#reg{index=Index, event=Event, mon=Mon, ids=[Id]}|Regs];
+        #reg{ids=OldsIds}=Reg ->
             ?LLOG(info, "event ~p already registered", [Event], State),
-            {ok, State}
-    end;
+            Reg2 = Reg#reg{event=Event, ids=[Id|OldsIds]},
+            lists:keystore(Index, #reg.index, Regs, Reg2)
+    end,
+    {ok, State#state{regs2=Regs2}};
 
-conn_handle_cast({nkservice_unregister_event, Event}, _NkPort, State) ->
-    #state{regs=Regs} = State,
-    case lists:keytake(Event, 1, Regs) of
-        {value, {_,  Mon}, Regs2} ->
+conn_handle_cast({nkservice_unregister_event, Event, Id}, _NkPort, State) ->
+    #state{regs2=Regs} = State,
+    Index = event_index(Event),
+    case lists:keytake(Index, #reg.index, Regs) of
+        {value, #reg{ids=[Id], mon=Mon}, Regs2} ->
             demonitor(Mon),
             ?LLOG(info, "unregistered event ~p", [Event], State),
             ok = nkservice_events:unreg(Event),
-            {ok, State#state{regs=Regs2}};
+            {ok, State#state{regs2=Regs2}};
+        {value, #reg{ids=Ids}=Reg, Regs2} ->
+            Reg2 = Reg#reg{ids=Ids -- [Id]},
+            Regs2 = lists:keystore(Index, #reg.index, Regs, Reg2),
+            {ok, State#state{regs2=Regs2}};
         false ->
             {ok, State}
     end;
@@ -523,11 +555,11 @@ conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
     end;
 
 conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
-    #state{regs=Regs} = State,
+    #state{regs2=Regs} = State,
     case lists:keytake(Ref, 2, Regs) of
-        {value, {Event, Ref}, Regs2} ->
-            register_event(self(), Event),
-            {ok, State#state{regs=Regs2}};
+        {value, #reg{event=Event, ids=Ids}, Regs2} ->
+            lists:foreach(fun(Id) -> register_event(self(), Event, Id) end, Ids),
+            {ok, State#state{regs2=Regs2}};
         false ->
             case links_down(Ref, State) of
                 {ok, Link, State2} ->
@@ -889,7 +921,12 @@ send(Msg, NkPort) ->
 %% @private
 handle(Fun, Args, State) ->
     nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.user_state).
-    
+
+
+%% @private
+event_index(Event) ->
+    erlang:phash2(Event#event{body=undefined, pid=undefined}).
+
 
 %% @private
 links_add(Link, #state{links=Links}=State) ->

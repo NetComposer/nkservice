@@ -133,12 +133,18 @@ cmd(<<"user">>, <<"get">>, #api_req{srv_id=SrvId, data=#{user:=User}}, State) ->
 cmd(<<"event">>, <<"subscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    Event = #event{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
+    Event = #event{
+        class = Class, 
+        subclass = Sub, 
+        type = Type, 
+        srv_id = EvSrvId, 
+        obj_id = ObjId,
+        body = maps:get(body, Data, #{})
+    },
     % lager:warning("SUBS: ~p, ~p", [SrvId, Event]),
     case SrvId:api_subscribe_allow(EvSrvId, Class, Sub, Type, State) of
         {true, State2} ->
-            Body = maps:get(body, Data, #{}),
-            nkservice_api_server:register_events(self(), Event, Body),
+            nkservice_api_server:register_events(self(), Event),
             {ok, #{}, State2};
         {false, State2} ->
             {error, unauthorized, State2}
