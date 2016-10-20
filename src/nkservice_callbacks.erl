@@ -186,8 +186,8 @@ error_code(already_authenticated)	-> {100032, "Already authenticated"};
 error_code(user_not_found)			-> {100033, "User not found"};
 error_code(duplicated_session_id)	-> {100034, "Duplicated session id"};
 error_code(invalid_session_id)		-> {100035, "Invalid session id"};
-error_code(member_not_found)		-> {100036, "Invalid role"};
-error_code(invalid_role)			-> {100037, "Member not found"};
+error_code(member_not_found)		-> {100036, "Member not found"};
+error_code(invalid_role)			-> {100037, "Invalid role"};
 
 error_code(invalid_operation) 		-> {100040, "Invalid operation"};
 error_code(invalid_parameters) 		-> {100041, "Invalid parameters"};
