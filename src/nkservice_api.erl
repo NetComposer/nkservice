@@ -88,15 +88,15 @@ launch(#api_req{srv_id=SrvId, data=Data}=Req, State) ->
 %% @private
 send_unrecognized_fields(Req, Fields) ->
     #api_req{srv_id=SrvId, class=Class, subclass=Sub, cmd=Cmd, session=SessId} = Req,
-    RegId = #reg_id{
+    Event = #event{
         class = <<"core">>,
         subclass = <<"session_event">>,
         type = <<"unrecognized_fields">>,
         srv_id = SrvId, 
-        obj_id = SessId
+        obj_id = SessId,
+        body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>Fields}
     },
-    Body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>Fields},
-    nkservice_events:send(RegId, Body),
+    nkservice_events:send(Event),
     lager:notice("NkSERVICE API: Unknown keys in service launch "
                  "~s:~s:~s: ~p", [Class, Sub, Cmd, Fields]).
 
@@ -133,12 +133,12 @@ cmd(<<"user">>, <<"get">>, #api_req{srv_id=SrvId, data=#{user:=User}}, State) ->
 cmd(<<"event">>, <<"subscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    % lager:warning("SUBS: ~p, ~p", [SrvId, RegId]),
+    Event = #event{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
+    % lager:warning("SUBS: ~p, ~p", [SrvId, Event]),
     case SrvId:api_subscribe_allow(EvSrvId, Class, Sub, Type, State) of
         {true, State2} ->
             Body = maps:get(body, Data, #{}),
-            nkservice_api_server:register_events(self(), RegId, Body),
+            nkservice_api_server:register_events(self(), Event, Body),
             {ok, #{}, State2};
         {false, State2} ->
             {error, unauthorized, State2}
@@ -147,8 +147,8 @@ cmd(<<"event">>, <<"subscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
 cmd(<<"event">>, <<"unsubscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    nkservice_api_server:unregister_events(self(), RegId),
+    Event = #event{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
+    nkservice_api_server:unregister_events(self(), Event),
     {ok, #{}, State};
 
 %% Gets [#{class=>...}]
@@ -159,23 +159,29 @@ cmd(<<"event">>, <<"get_subscriptions">>, #api_req{tid=TId}, State) ->
 cmd(<<"event">>, <<"send">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    Body = maps:get(body, Data, #{}),
-    nkservice_events:send(RegId, Body),
+    Event = #event{
+        class = Class, 
+        subclass = Sub, 
+        type = Type, 
+        srv_id = EvSrvId, 
+        obj_id = ObjId,
+        body = maps:get(body, Data, undefined)
+    },
+    nkservice_events:send(Event),
     {ok, #{}, State};
 
 cmd(<<"user">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{type:=Type, user:=User} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{
+    Event = #event{
         class = <<"core">>,
         subclass = <<"user_event">>,
         type = Type, 
         srv_id = EvSrvId, 
-        obj_id = User
+        obj_id = User,
+        body = maps:get(body, Data, undefined)
     },
-    Body = maps:get(body, Data, #{}),
-    nkservice_events:send(RegId, Body),
+    nkservice_events:send(Event),
     {ok, #{}, State};
 
 cmd(<<"session">>, <<"stop">>, #api_req{data=#{session_id:=SessId}}, State) ->
@@ -190,15 +196,15 @@ cmd(<<"session">>, <<"stop">>, #api_req{data=#{session_id:=SessId}}, State) ->
 cmd(<<"session">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{type:=Type, session_id:=SessId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
-    RegId = #reg_id{
+    Event = #event{
         class = <<"core">>,
         subclass = <<"session_event">>,
         type = Type, 
         srv_id = EvSrvId, 
-        obj_id = SessId
+        obj_id = SessId,
+        body = maps:get(body, Data, undefined)
     },
-    Body = maps:get(body, Data, #{}),
-    nkservice_events:send(RegId, Body),
+    nkservice_events:send(Event),
     {ok, #{}, State};
 
 cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->

@@ -175,8 +175,9 @@ error_code({exit, _Exit}) 			-> {100007, "Internal error"};
 error_code(process_not_found) 		-> {100008, "Process not found"};
 error_code(process_down)  			-> {100009, "Process failed"};
 error_code(registered_down) 	    -> {100010, "Registered process stopped"};
-error_code(user_stop) 				-> {100011, "User stop received"};
-error_code(api_stop) 				-> {100012, "API stop received"};
+error_code(user_stop) 				-> {100011, "User stop"};
+error_code(member_stop)				-> {100012, "Member stop"};
+error_code(api_stop) 				-> {100013, "API stop received"};
 
 error_code(service_not_found) 		-> {100020, "Service not found"};
 
@@ -252,22 +253,22 @@ api_server_cmd(_Req, State) ->
 
 
 %% @doc Called when a new event has been received from the remote end
--spec api_server_event(nkservice_event:reg_id(), nkservice_event:body(), state()) ->
+-spec api_server_event(nkservice_event:event(), nkservice_event:body(), state()) ->
 	{ok, state()} | continue().
 
-api_server_event(_RegId, _Body, State) ->
+api_server_event(_Event, _Body, State) ->
 	{ok, State}.
 	
 
 %% @doc Called when the API server receives an event notification from 
 %% nkservice_events. We can send it to the remote side or ignore it.
--spec api_server_forward_event(nkservice_event:reg_id(), 
+-spec api_server_forward_event(nkservice_event:event(), 
 							   nkservice_event:body(), state()) ->
 	{ok, state()} | 
-	{ok, nkservice_event:reg_id(), nkservice_event:body(), continue()} |
+	{ok, nkservice_event:event(), nkservice_event:body(), continue()} |
 	{ignore, state()}.
 
-api_server_forward_event(_RegId, _Body, State) ->
+api_server_forward_event(_Event, _Body, State) ->
 	{ok, State}.
 
 

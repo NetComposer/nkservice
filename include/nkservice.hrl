@@ -72,12 +72,15 @@
 }).
 
 
--record(reg_id, {
+-record(event, {
+	id :: term(),									% Unique id for this event or reg
 	srv_id :: nkservice_events:srv_id(),
 	class :: nkservice_events:class(),
 	subclass = '*'  :: nkservice_events:subclass(),
 	type = '*' :: nkservice_events:type(),
-	obj_id = '*' :: nkservice_events:obj_id()
+	obj_id = '*' :: nkservice_events:obj_id(),
+	body = undefined :: term(),
+	pid = undefined :: undefined | pid()
 }).
 
 

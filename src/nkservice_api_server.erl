@@ -25,7 +25,7 @@
 -export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([stop/1, start_ping/2, stop_ping/1]).
 -export([register/2, unregister/2]).
--export([register_events/3, unregister_events/2]).
+-export([register_event/2, unregister_event/2]).
 -export([find_user/1, find_session/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -149,19 +149,20 @@ unregister(Id, Link) ->
 
 
 %% @doc Registers with the Events system
--spec register_events(id(), nkservice_events:reg_id(), nkservice_events:body()) ->
+%% You case use any field of the event to make it different (for example, "id")
+-spec register_event(id(), nkservice:event()) ->
     ok.
 
-register_events(Id, RegId, Body) ->
-    do_cast(Id, {nkservice_register_events, RegId, Body}).
+register_event(Id, Event) ->
+    do_cast(Id, {nkservice_register_event, Event}).
 
 
 %% @doc Registers with the Events system
--spec unregister_events(id(),  nkservice_events:reg_id()) ->
+-spec unregister_event(id(),  nkservice:event()) ->
     ok.
 
-unregister_events(Id, RegId) ->
-    do_cast(Id, {nkservice_unregister_events, RegId}).
+unregister_event(Id, Event) ->
+    do_cast(Id, {nkservice_unregister_event, Event}).
 
 
 %% @private
@@ -224,7 +225,7 @@ get_data(Id) ->
     trans = #{} :: #{tid() => #trans{}},
     tid = 1 :: integer(),
     ping :: integer() | undefined,
-    regs = [] :: [{nkservice_events:reg_id(), nkservice_event:body(), reference()}],
+    regs = [] :: [{nkservice:event(), reference()}],
     links :: nklib_links:links(),
     retry_time = 100 :: integer(),
     user_state :: user_state()
@@ -355,16 +356,20 @@ conn_handle_call(nkservice_get_user_data, From, _NkPort, State) ->
 conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs=Regs}=State) ->
     Data = [
         #{
+            id => Id,
             class => Class,
             subclass => Sub,
             type => Type,
             obj_id => ObjId,
-            service => SrvId
+            service => SrvId,
+            body => Body
         }
         ||
             {
-                #reg_id{srv_id=SrvId, class=Class, subclass=Sub, 
-                        type=Type, obj_id=ObjId}, _Body, _Mon}
+                #event{id=Id, srv_id=SrvId, class=Class, subclass=Sub, 
+                        type=Type, obj_id=ObjId, body=Body}, 
+                _Mon
+            }
             <- Regs
     ],
     gen_server:reply(From, Data),
@@ -416,9 +421,9 @@ conn_handle_cast({reply_ack, TId}, NkPort, State) ->
             {ok, State}
     end;
 
-conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State) ->
+conn_handle_cast({nkservice_send_event, Event, Body}, NkPort, State) ->
     #state{srv_id=SrvId} = State,
-    #reg_id{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId} = RegId,
+    #event{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId} = Event,
     Data1 = [
         {class, Class},
         case Sub of
@@ -459,31 +464,30 @@ conn_handle_cast({nkservice_start_ping, Time}, _NkPort, #state{ping=Ping}=State)
 conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
-conn_handle_cast({nkservice_register_events, RegId, Body}, _NkPort, State) ->
+conn_handle_cast({nkservice_register_event, Event}, _NkPort, State) ->
     #state{regs=Regs} = State,
-    Regs2 = case lists:keyfind(RegId, 1, Regs) of
+    case lists:keymember(Event, 1, Regs) of
         false ->
-            ?LLOG(info, "registered event ~p", [RegId], State),
-            {ok, Pid} = nkservice_events:reg(RegId, Body),
+            ?LLOG(info, "registered event ~p", [Event], State),
+            {ok, Pid} = nkservice_events:reg(Event),
             Mon = monitor(process, Pid),
-            [{RegId, Body, Mon}|Regs];
-        {RegId, _OldBody, Mon} ->
-            ?LLOG(info, "event ~p already registered", [RegId], State),
-            lists:keystore(RegId, 1, Regs, {RegId, Body, Mon})
-    end,
-    {ok, State#state{regs=Regs2}};
+            {ok, State#state{regs=[{Event, Mon}|Regs]}};
+        true ->
+            ?LLOG(info, "event ~p already registered", [Event], State),
+            {ok, State}
+    end;
 
-conn_handle_cast({nkservice_unregister_events, RegId}, _NkPort, State) ->
-    ?LLOG(info, "unregistered event ~p", [RegId], State),
-    ok = nkservice_events:unreg(RegId),
+conn_handle_cast({nkservice_unregister_event, Event}, _NkPort, State) ->
     #state{regs=Regs} = State,
-    case lists:keytake(RegId, 1, Regs) of
-        {value, {_, _Body, Mon}, Regs2} ->
-            demonitor(Mon);
+    case lists:keytake(Event, 1, Regs) of
+        {value, {_,  Mon}, Regs2} ->
+            demonitor(Mon),
+            ?LLOG(info, "unregistered event ~p", [Event], State),
+            ok = nkservice_events:unreg(Event),
+            {ok, State#state{regs=Regs2}};
         false ->
-            Regs2 = Regs
-    end,
-    {ok, State#state{regs=Regs2}};
+            {ok, State}
+    end;
 
 conn_handle_cast({nkservice_register, Link}, _NkPort, State) ->
     ?LLOG(info, "registered ~p", [Link], State),
@@ -520,9 +524,9 @@ conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
 
 conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     #state{regs=Regs} = State,
-    case lists:keytake(Ref, 3, Regs) of
-        {value, {RegId, Body, Ref}, Regs2} ->
-            do_cast(self(), {nkservice_register, RegId, Body}),
+    case lists:keytake(Ref, 2, Regs) of
+        {value, {Event, Ref}, Regs2} ->
+            register_event(self(), Event),
             {ok, State#state{regs=Regs2}};
         false ->
             case links_down(Ref, State) of
@@ -533,13 +537,13 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
             end
     end;
 
-%% nkservice_events send this message to all registered to this RegId
-conn_handle_info({nkservice_event, RegId, Body}, NkPort, State) ->
-    case handle(api_server_forward_event, [RegId, Body], State) of
+%% nkservice_events send this message to all registered to this Event
+conn_handle_info({nkservice_event, Event, Body}, NkPort, State) ->
+    case handle(api_server_forward_event, [Event, Body], State) of
         {ok, State2} ->
-            conn_handle_cast({nkservice_send_event, RegId, Body}, NkPort, State2);
-        {ok, RegId2, Body2, State2} ->
-            conn_handle_cast({nkservice_send_event, RegId2, Body2}, NkPort, State2);
+            conn_handle_cast({nkservice_send_event, Event, Body}, NkPort, State2);
+        {ok, Event2, Body2, State2} ->
+            conn_handle_cast({nkservice_send_event, Event2, Body2}, NkPort, State2);
         {ignore, State2} ->
             {ok, State2}
     end;
@@ -597,7 +601,7 @@ process_client_req(<<"core">>, <<"core">>, <<"event">>, Req, NkPort, State) ->
     #state{srv_id=SrvId} = State,
     case send_reply_ok(#{}, Req, NkPort, State) of
         {ok, State2} ->
-            RegId = #reg_id{
+            Event = #event{
                 srv_id = maps:get(<<"service">>, Data, SrvId),
                 class = Class, 
                 subclass = maps:get(<<"subclass">>, Data, <<"*">>),
@@ -605,7 +609,7 @@ process_client_req(<<"core">>, <<"core">>, <<"event">>, Req, NkPort, State) ->
                 obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
             },
             Body = maps:get(<<"body">>, Data, #{}),
-            {ok, State3} = handle(api_server_event, [RegId, Body], State2),
+            {ok, State3} = handle(api_server_event, [Event, Body], State2),
             {ok, State3};
         Other ->
             Other
@@ -644,18 +648,18 @@ process_login(User, SessId, Req, NkPort, State) when is_binary(SessId), SessId /
             nklib_proc:put(?MODULE, {User, SessId}),
             nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
             nklib_proc:put({?MODULE, user, User}, SessId),
-            RegId1 = #reg_id{
+            Event1 = #event{
                 srv_id = SrvId,
                 class = <<"core">>,
                 subclass = <<"user_event">>,
                 obj_id = User
             },
-            register_events(self(), RegId1, #{}),
-            RegId2 = RegId1#reg_id{
+            register_event(self(), Event1),
+            Event2 = Event1#event{
                 subclass = <<"session_event">>,
                 obj_id = SessId
             },
-            register_events(self(), RegId2, #{}),
+            register_event(self(), Event2),
             send_reply_ok(#{session_id=>SessId}, Req, NkPort, State2);
         {false, _} -> 
             stop(self()),
