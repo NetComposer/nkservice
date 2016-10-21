@@ -66,7 +66,7 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
         class => {?MODULE, SrvId},
         monitor => self(),
         idle_timeout => ?WS_TIMEOUT,
-        user => {Fun, UserData}
+        user => {Fun, UserData#{user=>User}}
     },
     case nkpacket:connect(Url, ConnOpts) of
         {ok, Pid} -> 
