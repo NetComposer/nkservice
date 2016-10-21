@@ -155,33 +155,31 @@ unregister(Id, Link) ->
     ok.
 
 register_event(Id, Event) ->
-    register_event(Id, Event, none).
+    register_event(Id, Event, single).
 
 
-%% @doc Registers with the Events system
-%% All fields except body and pid are used for index
-%% Id is not used for real registrations
+%% @doc Registers with and index
 -spec register_event(id(), nkservice:event(), term()) ->
     ok.
 
-register_event(Id, Event, Index) ->
-    do_cast(Id, {nkservice_register_event, Event, Index}).
+register_event(Id, Event, InstanceId) ->
+    do_cast(Id, {nkservice_register_event, Event, InstanceId}).
 
 
-%% @doc Registers with the Events system
+%% @doc Unregisters with the Events systtem
 -spec unregister_event(id(),  nkservice:event()) ->
     ok.
 
 unregister_event(Id, Event) ->
-    unregister_event(Id, Event, none).
+    unregister_event(Id, Event, single).
 
 
-%% @doc Registers with the Events system
--spec unregister_event(id(),  nkservice:event(), term()) ->
+%% @doc 
+-spec unregister_event(id(),  nkservice:event(), term()|all) ->
     ok.
 
-unregister_event(Id, Event, Index) ->
-    do_cast(Id, {nkservice_unregister_event, Event, Index}).
+unregister_event(Id, Event, InstanceId) ->
+    do_cast(Id, {nkservice_unregister_event, Event, InstanceId}).
 
 
 %% @private
@@ -333,7 +331,8 @@ conn_parse({text, Text}, NkPort, State) ->
                     Data = maps:get(<<"data">>, Msg, #{}),
                     process_client_resp(Result, Data, Trans, NkPort, State2);
                 not_found ->
-                    ?LLOG(warning, "received client response for unknown req: ~p, ~p, ~p", 
+                    ?LLOG(warning, 
+                          "received client response for unknown req: ~p, ~p, ~p", 
                           [Msg, TId, State#state.trans], State),
                     {ok, State}
             end;
@@ -343,7 +342,7 @@ conn_parse({text, Text}, NkPort, State) ->
                 {Trans, State2} ->
                     {ok, extend_op(TId, Trans, State2)};
                 not_found ->
-                    ?LLOG(warning, "received client response for unknown req: ~p", 
+                    ?LLOG(warning, "received client ack for unknown req: ~p", 
                           [Msg], State),
                     {ok, State}
             end;
@@ -399,7 +398,7 @@ conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs2=Regs}=State) ->
     {ok, State};
 
 conn_handle_call(get_data, From, _NkPort, #state{regs2=Regs, links=Links}=State) ->
-    Events = [Event || #reg{event=Event} <-Regs],
+    Events = [{Event, Ids} || #reg{event=Event, ids=Ids} <-Regs],
     gen_server:reply(From, {ok, Events, Links}),
     {ok, State};
 
@@ -466,7 +465,8 @@ conn_handle_cast({nkservice_send_event, Event, Body}, NkPort, State) ->
             SrvId -> [];
             _ -> {service, nkservice_srv:get_item(EvSrvId, name)}
         end,
-        case map_size(Body) of
+        case is_map(Body) andalso map_size(Body) of
+            false -> [];
             0 -> [];
             _ -> {body, Body}
         end
@@ -499,7 +499,7 @@ conn_handle_cast({nkservice_register_event, Event, Id}, _NkPort, State) ->
             [#reg{index=Index, event=Event, mon=Mon, ids=[Id]}|Regs];
         #reg{ids=OldsIds}=Reg ->
             ?LLOG(info, "event ~p already registered", [Event], State),
-            Reg2 = Reg#reg{event=Event, ids=[Id|OldsIds]},
+            Reg2 = Reg#reg{event=Event, ids=nklib_util:store_value(Id, OldsIds)},
             lists:keystore(Index, #reg.index, Regs, Reg2)
     end,
     {ok, State#state{regs2=Regs2}};
@@ -513,10 +513,14 @@ conn_handle_cast({nkservice_unregister_event, Event, Id}, _NkPort, State) ->
             ?LLOG(info, "unregistered event ~p", [Event], State),
             ok = nkservice_events:unreg(Event),
             {ok, State#state{regs2=Regs2}};
+        {value, #reg{mon=Mon}, Regs2} when Id==all ->
+            demonitor(Mon),
+            ?LLOG(info, "unregistered event ~p", [Event], State),
+            ok = nkservice_events:unreg(Event),
+            {ok, State#state{regs2=Regs2}};
         {value, #reg{ids=Ids}=Reg, Regs2} ->
             Reg2 = Reg#reg{ids=Ids -- [Id]},
-            Regs2 = lists:keystore(Index, #reg.index, Regs, Reg2),
-            {ok, State#state{regs2=Regs2}};
+            {ok, State#state{regs2=[Reg2|Regs2]}};
         false ->
             {ok, State}
     end;
@@ -904,10 +908,10 @@ send_ack(TId, NkPort, State) ->
 %% @private
 send(Msg, NkPort, State) ->
     ?PRINT("sending ~s", [Msg], State),
-    case send(Msg, NkPort) of
+    case catch send(Msg, NkPort) of
         ok -> 
             {ok, State};
-        error -> 
+        _ -> 
             ?LLOG(notice, "error sending reply:", [], State),
             {stop, normal, State}
     end.
@@ -925,7 +929,7 @@ handle(Fun, Args, State) ->
 
 %% @private
 event_index(Event) ->
-    erlang:phash2(Event#event{body=undefined, pid=undefined}).
+    erlang:phash2(Event#event{body=undefined}).
 
 
 %% @private

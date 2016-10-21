@@ -26,7 +26,7 @@
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
--export([print/3, get_all/0, get_user/1]).
+-export([print/3, get_all/0, get_user_pids/1, find/1]).
 
 
 -define(LLOG(Type, Txt, Args, State),
@@ -120,7 +120,7 @@ get_all() ->
     nklib_proc:values(?MODULE).
 
 
-get_user(User) ->
+get_user_pids(User) ->
     [Pid || {_, Pid}<- nklib_proc:values({?MODULE, nklib_util:to_binary(User)})].
 
 
@@ -388,7 +388,7 @@ find(Pid) when is_pid(Pid) ->
     {ok, Pid};
 
 find(Id) ->
-    case get_user(Id) of
+    case get_user_pids(Id) of
         [Pid|_] ->
             {ok, Pid};
         [] ->
