@@ -56,6 +56,32 @@
 %         false -> ok
 %     end).
 
+%% ===================================================================
+%% Records
+%% ===================================================================
+
+-record(api_req, {
+	srv_id :: nkservice_events:srv_id(),
+	class :: nkservice_api:class(),
+	subclass = <<"core">> :: nkservice_api:subclass(),
+	cmd :: nkservice_api:cmd(),
+	data = #{} :: term(),
+	tid :: term(),
+	user :: binary(),
+	session :: binary()
+}).
+
+
+-record(event, {
+	srv_id :: nkservice_events:srv_id(),
+	class :: nkservice_events:class(),
+	subclass = '*'  :: nkservice_events:subclass(),
+	type = '*' :: nkservice_events:type(),
+	obj_id = '*' :: nkservice_events:obj_id(),
+	body = undefined :: term(),
+	pid = undefined :: undefined | pid()
+}).
+
 
 -endif.
 

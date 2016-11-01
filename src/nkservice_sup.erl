@@ -18,11 +18,16 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Main supervisor
+%% This main supervisor starts a single supervisor, 
+%% registered as 'nkservice_all_srvs_sup'
+%% Each started service will be placed a supervisor here (see nkservice_srv_sup) 
+
 -module(nkservice_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([init/1, start_link/0, start_services_sup/0]).
+-export([init/1, start_link/0, start_services_sup/0, start_events_sup/0]).
 
 -include("nkservice.hrl").
 
@@ -31,8 +36,14 @@
 %% @private
 start_link() ->
     ChildsSpec = [
-        {nkservice_all_services_sup,
+        {nkservice_all_srvs_sup,
             {?MODULE, start_services_sup, []},
+            permanent,
+            infinity,
+            supervisor,
+            [?MODULE]},
+        {nkservice_events_sup,
+            {?MODULE, start_events_sup, []},
             permanent,
             infinity,
             supervisor,
@@ -44,7 +55,12 @@ start_link() ->
 
 %% @private
 start_services_sup() ->
-    supervisor:start_link({local, nkservice_all_services_sup}, 
+    supervisor:start_link({local, nkservice_all_srvs_sup}, 
+                            ?MODULE, {{one_for_one, 10, 60}, []}).
+
+%% @private
+start_events_sup() ->
+    supervisor:start_link({local, nkservice_events_sup}, 
                             ?MODULE, {{one_for_one, 10, 60}, []}).
 
 

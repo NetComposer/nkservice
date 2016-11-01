@@ -1,5 +1,4 @@
 REPO ?= nkservice
-RELOADER ?= -s nkreloader
 
 .PHONY: deps release dev
 
@@ -13,8 +12,6 @@ cnodeps:
 
 deps:
 	./rebar get-deps
-	find deps -name "rebar.config" | xargs perl -pi -e 's/lager, "2.0.3"/lager, ".*"/g'
-	(cd deps/lager && git checkout 2.1.1)
 
 clean: 
 	./rebar clean
@@ -25,11 +22,10 @@ distclean: clean
 tests: compile eunit
 
 eunit:
-	export ERL_FLAGS="-config test/app.config -args_file test/vm.args"; \
 	./rebar eunit skip_deps=true
 
 shell:
-	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkservice_app $(RELOADER)
+	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkservice_app -s nklib_reloader
 
 
 docs:
@@ -59,6 +55,9 @@ cleanplt:
 	sleep 5
 	rm $(COMBO_PLT)
 
+
+
+	#export ERL_FLAGS="-config test/app.config -args_file test/vm.args"; \
 
 build_tests:
 	erlc -pa ebin -pa deps/lager/ebin -o ebin -I include -pa deps/nklib \

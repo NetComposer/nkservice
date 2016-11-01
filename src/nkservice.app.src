@@ -1,6 +1,6 @@
 {application, nkservice, [
-    {description, "NkCORE Service Framework"},
-    {vsn, "master"},
+    {description, "NetComposer Service Framework"},
+    {vsn, "v0.2.0"},
     {modules, []},
     {registered, []},
     {mod, {nkservice_app, []}},
@@ -10,6 +10,7 @@
         crypto,
         sasl,
         ssl,
+        luerl,
         lager,
         nkpacket
         % nkdocker

@@ -18,30 +18,36 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_service_sup).
+%% @doc Service main supervisor
+%% Each service starts a supervisor named after the service, under
+%% 'nkservice_all_srvs_sup'
+%% Inside this supervisor, a supervisor for transports and a
+%% gen_server (nkservice_srv) is started
+%% Also, an ets table is started with the name of the service
+-module(nkservice_srv_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_service/1, stop_service/1]).
+-export([pre_start_service/1, start_service/1, stop_service/1]).
 -export([get_pid/1, init/1, start_link/1]).
 
 -include("nkservice.hrl").
 
 
 %% @private Starts a new service supervisor
--spec start_service(nkservice:spec()) ->
+-spec pre_start_service(nkservice:id()) ->
     ok | {error, term()}.
 
-start_service(#{id:=Id}=Spec) ->
+pre_start_service(Id) ->
     SupSpec = {
         Id,
-            {nkservice_service_sup, start_link, [Spec]},
-            permanent,
-            infinity,
-            supervisor,
-            [nkservice_service_sup]
+        {?MODULE, start_link, [Id]},
+        permanent,
+        infinity,
+        supervisor,
+        [?MODULE]
     },
-    case supervisor:start_child(nkservice_all_services_sup, SupSpec) of
+    case supervisor:start_child(nkservice_all_srvs_sup, SupSpec) of
         {ok, _SupPid} -> 
             ok;
         {error, {{shutdown, {failed_to_start_child,server, Error}}, _Desc}} ->
@@ -56,9 +62,9 @@ start_service(#{id:=Id}=Spec) ->
     ok | error.
 
 stop_service(Id) ->
-    case supervisor:terminate_child(nkservice_all_services_sup, Id) of
+    case supervisor:terminate_child(nkservice_all_srvs_sup, Id) of
         ok -> 
-            ok = supervisor:delete_child(nkservice_all_services_sup, Id);
+            ok = supervisor:delete_child(nkservice_all_srvs_sup, Id);
         {error, _} -> 
             error
     end.
@@ -73,24 +79,17 @@ get_pid(Id) ->
 
 
 %% @private
--spec start_link(nkservice:spec()) ->
+-spec start_link(nkservice:service()) ->
     {ok, pid()}.
 
-start_link(#{id:=Id}=Spec) ->
+start_link(Id) ->
     Childs = [     
-        {server,
-            {nkservice_server, start_link, [Spec]},
-            permanent,
-            30000,
-            worker,
-            [nkservice_server]
-        },
-        {transports,
-            {nkservice_transport_sup, start_link, [Id]},
+        {user,
+            {nkservice_srv_user_sup, start_link, [Id]},
             permanent,
             infinity,
             supervisor,
-            [nkservice_transport_sup]
+            [nkservice_srv_user_sup]
         }
     ],
     ChildSpec = {Id, {{one_for_one, 10, 60}, Childs}},
@@ -104,5 +103,58 @@ init({Id, ChildsSpec}) ->
     ets:new(Id, [named_table, public]),
     yes = nklib_proc:register_name({?MODULE, Id}, self()),
     {ok, ChildsSpec}.
+
+
+%% @doc
+start_service(#{id:=Id}=Service) ->
+    ListenSup = {
+        listen,
+        {nkservice_srv_listen_sup, start_link, [Service]},
+        permanent,
+        infinity,
+        supervisor,
+        [nkservice_srv_listen_sup]
+    },
+    Server = {
+        server,
+        {nkservice_srv, start_link, [Service]},
+        permanent,
+        30000,
+        worker,
+        [nkservice_srv]
+    },
+    case start_child(Id, ListenSup) of
+        ok ->
+            case start_child(Id, Server) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+start_child(Id, Spec) ->
+    SupPid = get_pid(Id),
+    case supervisor:start_child(SupPid, Spec) of
+        {ok, _Pid} ->
+            ok;
+        {error, {Error, _}} -> 
+            stop_service(Id),
+            {error, Error};
+        {error, Error} -> 
+            stop_service(Id),
+            {error, Error}
+    end.
+
+
+
+
+
+
+
 
 

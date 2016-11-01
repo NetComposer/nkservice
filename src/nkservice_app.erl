@@ -59,6 +59,8 @@ start(Type) ->
 
 %% @private OTP standard start callback
 start(_Type, _Args) ->
+    nkpacket:register_protocol(nkapi, nkservice_api_server),
+    nkpacket:register_protocol(nkapic, nkservice_api_client),
     Syntax = nkservice_syntax:app_syntax(),
     Defaults = nkservice_syntax:app_defaults(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of
@@ -66,13 +68,12 @@ start(_Type, _Args) ->
             file:make_dir(get(log_path)),
             {ok, Pid} = nkservice_sup:start_link(),
             {ok, Vsn} = application:get_key(nkservice, vsn),
-            lager:notice("NkSERVICE v~s has started.", [Vsn]),
+            lager:info("NkSERVICE v~s has started.", [Vsn]),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),
             error(Error)
     end.
-
 
 
 %% @private OTP standard stop callback
