@@ -223,7 +223,7 @@ handle_cast(Msg, State) ->
     nklib_util:gen_server_info(nkservice:service()).
 
 handle_info(Msg, State) ->
-    nklib_gen_server:handle_cast(service_handle_info, Msg, State, ?P1, ?P2).
+    nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2).
     
 
 %% @private
