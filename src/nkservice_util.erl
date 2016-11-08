@@ -79,28 +79,12 @@ parse_transports(Spec) ->
 
 %% @private
 get_core_listeners(SrvId, Config) ->
-    Web1 = maps:get(web_server, Config, []),
-    WebPath = case Config of
-        #{web_server_path:=UserPath} -> 
-            UserPath;
-        _ ->
-            Priv = list_to_binary(code:priv_dir(nkservice)),
-            <<Priv/binary, "/www">>
-    end,
-    WebOpts2 = #{
-        class => {nkservice_web_server, SrvId},
-        http_proto => {static, #{path=>WebPath, index_file=><<"index.html">>}}
-    },
-    Web2 = [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- Web1],
-    Api1 = maps:get(api_server, Config, []),
-    ApiTimeout = maps:get(api_server_timeout, Config, ?API_TIMEOUT),
-    ApiOpts = #{
-        class => {nkservice_api_server, SrvId},
-        get_headers => [<<"user-agent">>],
-        idle_timeout => 1000 * ApiTimeout
-    },
-    Api2 = [{Conns, maps:merge(ConnOpts, ApiOpts)} || {Conns, ConnOpts} <- Api1],
-    Web2 ++ Api2.
+    {multi, WebSrv} = maps:get(web_server, Config, {multi, []}),
+    WebSrvs = get_web_servers(SrvId, WebSrv, Config),
+    {multi, ApiSrv} = maps:get(api_server, Config, {multi, []}),
+    ApiSrvs1 = get_api_webs(SrvId, ApiSrv, []),
+    ApiSrvs2 = get_api_sockets(SrvId, ApiSrv, Config, []),
+    WebSrvs ++ ApiSrvs1 ++ ApiSrvs2.
 
 
 %% @doc Generates the service id from any name
@@ -176,6 +160,75 @@ error_code(SrvId, Error) ->
                     {Code, list_to_binary(Val)}
             end
     end.
+
+
+
+
+%% ===================================================================
+%% internal
+%% ===================================================================
+
+
+
+%% @private
+get_web_servers(SrvId, List, Config) ->
+    WebPath = case Config of
+        #{web_server_path:=UserPath} -> 
+            UserPath;
+        _ ->
+            Priv = list_to_binary(code:priv_dir(nkservice)),
+            <<Priv/binary, "/www">>
+    end,
+    WebOpts2 = #{
+        class => {nkservice_web_server, SrvId},
+        http_proto => {static, #{path=>WebPath, index_file=><<"index.html">>}}
+    },
+    [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- List].
+
+
+
+%% @private
+get_api_webs(_SrvId, [], Acc) ->
+    Acc;
+
+get_api_webs(SrvId, [{List, Opts}|Rest], Acc) ->
+    List2 = [
+        {nkpacket_protocol_http, Proto, Ip, Port}
+        ||
+        {nkservice_api_server, Proto, Ip, Port} <- List, 
+        Proto==http orelse Proto==https
+    ],
+    Path = nklib_util:to_list(maps:get(path, Opts, <<"/rpc">>)),
+    CowPath = Path ++ "/[...]",
+    Routes = [{'_', [{CowPath, nkservice_api_server_http, [{srv_id, SrvId}]}]}],
+    Opts2 = #{
+        class => {nkservice_api_server, SrvId},
+        http_proto => {dispatch, #{routes => Routes}}
+    },
+    get_api_webs(SrvId, Rest, [{List2, Opts2}|Acc]).
+
+
+%% @private
+get_api_sockets(_SrvId,[], _Config, Acc) ->
+    Acc;
+
+get_api_sockets(SrvId, [{List, Opts}|Rest], Config, Acc) ->
+    List2 = [
+        {nkservice_api_server, Proto, Ip, Port}
+        ||
+        {nkservice_api_server, Proto, Ip, Port} <- List, 
+        Proto==ws orelse Proto==wss orelse Proto==tcp orelse Proto==tls
+    ],
+    Timeout = maps:get(api_server_tiemout, Config, 180),
+    Opts2 = #{
+        class => {nkservice_api_server, SrvId},
+        get_headers => [<<"user-agent">>],
+        idle_timeout => 1000 * Timeout
+    },
+    get_api_sockets(SrvId, Rest, Config, [{List2, maps:merge(Opts, Opts2)}|Acc]).
+
+
+
 
 
 

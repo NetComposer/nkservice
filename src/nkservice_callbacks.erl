@@ -330,11 +330,30 @@ api_server_code_change(OldVsn, State, Extra) ->
 
 
 %% @doc Called when a service is stopped
--spec api_server_terminate(term(), service()) ->
+-spec api_server_terminate(term(), state()) ->
 	{ok, service()}.
 
 api_server_terminate(_Reason, State) ->
 	{ok, State}.
+
+
+%% @Doc called when a new download request has been received
+-spec api_server_http_download(Mod::atom(), ObjId::term(), Name::term(), state()) ->
+	{ok, CT::binary(), Bin::binary(), state()} |
+	{error, nkservice:error(), state()}.
+
+api_server_http_download(_Mod, _ObjId, _Name, State) ->
+	{error, not_found, State}.
+
+
+%% @Doc called when a new upload request has been received
+-spec api_server_http_download(Mod::atom(), ObjId::term(), Name::term(), 
+							   CT::binary(), Bin::binary(), state()) ->
+	{ok, state()} |
+	{error, nkservice:error(), state()}.
+
+api_server_http_download(Mod, ObjId, Name, CT, Bin, State) ->
+	{error, not_found, State}.
 
 
 

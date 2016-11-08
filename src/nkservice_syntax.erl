@@ -57,6 +57,7 @@ syntax() ->
         api_server_timeout => {integer, 5, none},
         web_server => fun parse_web_server/3,
         web_server_path => binary,
+        rest_server => fun parse_api_server/3,
 
         service_idle_timeout => pos_integer,
         service_connect_timeout => nat_integer,
@@ -84,23 +85,23 @@ parse_fun_listen(_Key, Multi, _Ctx) ->
 
 
 
-parse_web_server(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
-    {ok, Multi};
+parse_web_server(_Key, {multi, Multi}, _Ctx) ->
+    {ok, {multi, Multi}};
 
 parse_web_server(web_server, Url, _Ctx) ->
     Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
-        {ok, List} -> {ok, List};
+        {ok, List} -> {ok, {multi, List}};
         _ -> error
     end.
 
 
 
     %% @private
-parse_api_server(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
-    {ok, Multi};
+parse_api_server(api_server, {multi, Multi}, _Ctx) ->
+    {ok, {multi, Multi}};
 
-parse_api_server(_Key, Url, _Ctx) ->
+parse_api_server(api_server, Url, _Ctx) ->
     case nklib_parse:uris(Url) of
         error ->
             error;
@@ -109,9 +110,11 @@ parse_api_server(_Key, Url, _Ctx) ->
                 error ->
                     error;
                 List2 ->
-                    case nkpacket:multi_resolve(List2, #{}) of
-                        {ok, List3} -> {ok, List3};
-                        _ -> error
+                    case nkpacket:multi_resolve(List2, #{resolve_type=>listen}) of
+                        {ok, List3} -> 
+                            {ok, {multi, List3}};
+                        _ -> 
+                            error
                     end
             end
     end.
@@ -125,10 +128,12 @@ make_api_listen([#uri{scheme=nkapi}=Uri|Rest], Acc) ->
     make_api_listen(Rest, [Uri|Acc]);
 
 make_api_listen([#uri{scheme=Sc, ext_opts=Opts}=Uri|Rest], Acc)
-        when Sc==tcp; Sc==tls; Sc==ws; Sc==wss ->
+        when Sc==tcp; Sc==tls; Sc==ws; Sc==wss; Sc==http; Sc==https ->
     Uri2 = Uri#uri{scheme=nkapi, opts=[{<<"transport">>, Sc}|Opts]},
-    make_api_listen(Rest, [Uri2|Acc]).
+    make_api_listen(Rest, [Uri2|Acc]);
 
+make_api_listen(_D, _Acc) ->
+    error.
 
 
 %% @private

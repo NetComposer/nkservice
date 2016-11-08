@@ -27,6 +27,7 @@
 -export([register/2, unregister/2]).
 -export([register_event/2, register_event/3, unregister_event/2, unregister_event/3]).
 -export([find_user/1, find_session/1]).
+-export([do_register_http/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
@@ -89,7 +90,17 @@ cmd_async(Id, Class, SubClass, Cmd, Data) ->
     ok.
 
 reply_ok(Id, TId, Data) ->
-    do_cast(Id, {reply_ok, TId, Data}).
+    case find(Id) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, {reply_ok, TId, Data});
+        not_found ->
+            case find_session_http(Id) of
+                {ok, Pid} ->
+                    gen_server:cast(Pid, {nkservice_api_server, ok, Data});
+                _ ->
+                    ok
+            end
+    end.
 
 
 %% @doc Sends an error reply to a command (when you reply 'ack' in callbacks)
@@ -97,7 +108,17 @@ reply_ok(Id, TId, Data) ->
     ok.
 
 reply_error(Id, TId, Code) ->
-    do_cast(Id, {reply_error, TId, Code}).
+    case find(Id) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, {reply_error, TId, Code});
+        not_found ->
+            case find_session_http(Id) of
+                {ok, Pid} ->
+                    gen_server:cast(Pid, {nkservice_api_server, error, Code});
+                _ ->
+                    ok
+            end
+    end.
 
 
 %% @doc Sends another ACK to a command (when you reply 'ack' in callbacks)
@@ -216,10 +237,43 @@ find_session(SessId) ->
     end.
 
 
+-spec find_session_http(binary()) ->
+    {ok, pid()} | not_found.
+
+find_session_http(SessId) ->
+    case nklib_proc:values({?MODULE, session, SessId}) of
+        [{_, Pid}] -> {ok, Pid};
+        [] -> not_found
+    end.
+
+
+
 %% @private
 get_data(Id) ->
     do_call(Id, get_data).
 
+
+%% @private
+do_register(SrvId, User, SessId) ->
+    case nklib_proc:reg({?MODULE, session, SessId}, User) of
+        true ->
+            nklib_proc:put(?MODULE, {User, SessId}),
+            nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
+            nklib_proc:put({?MODULE, user, User}, {SessId}),
+            true;
+        {false, _} ->
+            false
+    end.
+    
+
+%% @private
+do_register_http(SessId) ->
+    case nklib_proc:reg({?MODULE, http, SessId}) of
+        true ->
+            true;
+        {false, _} ->
+            false
+    end.
 
 
 
@@ -261,7 +315,7 @@ get_data(Id) ->
 -spec transports(nklib:scheme()) ->
     [nkpacket:transport()].
 
-transports(_) -> [wss, tls, ws, tcp].
+transports(_) -> [wss, tls, ws, tcp, http, https].
 
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
@@ -269,7 +323,9 @@ transports(_) -> [wss, tls, ws, tcp].
 default_port(ws) -> 9010;
 default_port(wss) -> 9011;
 default_port(tcp) -> 9010;
-default_port(tls) -> 9011.
+default_port(tls) -> 9011;
+default_port(http) -> 9010;
+default_port(https) -> 9011.
 
 
 -spec conn_init(nkpacket:nkport()) ->
@@ -676,14 +732,14 @@ process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
 
 %% @private
 process_login(User, SessId, Req, NkPort, State) when is_binary(SessId), SessId /= <<>> ->
-    case nklib_proc:reg({?MODULE, session, SessId}, User) of
+    #state{srv_id=SrvId, user_state=UserState} = State,
+    case do_register(SrvId, User, SessId) of
         true ->
-            #state{srv_id=SrvId, user_state=UserState} = State,
             UserState2 = UserState#{user=>User, session_id=>SessId},
             State2 = State#state{user_state=UserState2, user=User, session_id=SessId},
-            nklib_proc:put(?MODULE, {User, SessId}),
-            nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
-            nklib_proc:put({?MODULE, user, User}, SessId),
+            nklib_proc:put(?MODULE, {socket, User, SessId}),
+            nklib_proc:put({?MODULE, SrvId}, {socket, User, SessId}),
+            nklib_proc:put({?MODULE, user, User}, {socket, SessId}),
             Event1 = #event{
                 srv_id = SrvId,
                 class = <<"core">>,
