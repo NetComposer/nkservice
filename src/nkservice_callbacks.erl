@@ -33,6 +33,7 @@
 		 api_server_reg_down/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
+-export([api_server_http_download/4, api_server_http_upload/6]).
 -export([api_allow/2, api_subscribe_allow/5, api_cmd/2, api_syntax/4]).
 
 -export_type([continue/0]).
@@ -337,7 +338,7 @@ api_server_terminate(_Reason, State) ->
 	{ok, State}.
 
 
-%% @Doc called when a new download request has been received
+%% @doc called when a new download request has been received
 -spec api_server_http_download(Mod::atom(), ObjId::term(), Name::term(), state()) ->
 	{ok, CT::binary(), Bin::binary(), state()} |
 	{error, nkservice:error(), state()}.
@@ -346,13 +347,13 @@ api_server_http_download(_Mod, _ObjId, _Name, State) ->
 	{error, not_found, State}.
 
 
-%% @Doc called when a new upload request has been received
--spec api_server_http_download(Mod::atom(), ObjId::term(), Name::term(), 
-							   CT::binary(), Bin::binary(), state()) ->
+%% @doc called when a new upload request has been received
+-spec api_server_http_upload(Mod::atom(), ObjId::term(), Name::term(), 
+							 CT::binary(), Bin::binary(), state()) ->
 	{ok, state()} |
 	{error, nkservice:error(), state()}.
 
-api_server_http_download(Mod, ObjId, Name, CT, Bin, State) ->
+api_server_http_upload(_Mod, _ObjId, _Name, _CT, _Bin, State) ->
 	{error, not_found, State}.
 
 
