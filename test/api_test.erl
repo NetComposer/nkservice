@@ -40,7 +40,8 @@ api_start(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
     % Url = "nkapic://media2.netcomposer.io:9010",
     Url = "nkapic://localhost:9010",
-    {ok, _, C} = nkservice_api_client:start(test, Url, User, "p1", Fun, #{}),
+    Login = #{user_id => nklib_util:to_binary(User), password=><<"p1">>},
+    {ok, _, C} = nkservice_api_client:start(test, Url, Login, Fun, #{}),
     C.
  
 
@@ -224,7 +225,7 @@ api_server_terminate(Reason, State) ->
 
 
 %% @doc Called on login
-api_server_login(#{<<"user">>:=User, <<"pass">>:=_Pass}=Data, _SessId, State) ->
+api_server_login(#{<<"user_id">>:=User, <<"password">>:=_Pass}=Data, _SessId, State) ->
 	Meta = maps:get(<<"meta">>, Data, #{}),
     nkservice_api_server:start_ping(self(), 60),
     {true, User, State#{ws_test_meta=>Meta}};

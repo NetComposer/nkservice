@@ -22,7 +22,7 @@
 -module(nkservice_api_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/6, cmd/5, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
+-export([start/5, cmd/5, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
@@ -57,10 +57,10 @@
 
 
 %% @doc Starts a new verto session to FS
--spec start(term(), binary(), binary(), binary(), function(), term()) ->
+-spec start(term(), binary(), map(), function(), term()) ->
     {ok, SessId::binary(), pid()} | {error, term()}.
 
-start(Serv, Url, User, Pass, Fun, UserData) ->
+start(Serv, Url, #{user_id:=User}=Login, Fun, UserData) ->
     {ok, SrvId} = nkservice_srv:get_srv_id(Serv),
     ConnOpts = #{
         class => {?MODULE, SrvId},
@@ -70,12 +70,7 @@ start(Serv, Url, User, Pass, Fun, UserData) ->
     },
     case nkpacket:connect(Url, ConnOpts) of
         {ok, Pid} -> 
-            Data = #{
-                user => nklib_util:to_binary(User), 
-                pass => nklib_util:to_binary(Pass)
-                % session_id => <<"sess1">>
-            },
-            case cmd(Pid, core, user, login, Data) of
+            case cmd(Pid, core, user, login, Login) of
                 {ok, #{<<"session_id">>:=SessId}} ->
                     {ok, SessId, Pid};
                 {error, Error} ->
