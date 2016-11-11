@@ -190,6 +190,7 @@ error_code(duplicated_session_id)	-> {100034, "Duplicated session id"};
 error_code(invalid_session_id)		-> {100035, "Invalid session id"};
 error_code(member_not_found)		-> {100036, "Member not found"};
 error_code(invalid_role)			-> {100037, "Invalid role"};
+error_code(invalid_password) 		-> {100038, "Invalid password"};
 
 error_code(invalid_operation) 		-> {100040, "Invalid operation"};
 error_code(invalid_parameters) 		-> {100041, "Invalid parameters"};
@@ -206,6 +207,7 @@ error_code(session_not_found) 		-> {100062, "Session not found"};
 
 error_code(invalid_uri) 			-> {100070, "Invalid Uri"};
 error_code(unknown_peer) 			-> {100071, "Unknown peer"};
+error_code(invalid_json) 			-> {100070, "Invalid JSON"};
 
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
