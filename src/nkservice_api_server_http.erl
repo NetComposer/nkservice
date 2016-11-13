@@ -93,21 +93,22 @@ terminate(_Reason, _Req, _Opts) ->
 incoming(SrvId, <<"POST">>, [], _CT, Msg, Req, State) when is_map(Msg) ->
     case Msg of
         #{<<"class">> := Class, <<"cmd">> := Cmd} ->
-            SessId = maps:get(session_id, State),
-            ApiReq = #api_req{
+            #{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
+            Req = #api_req{
                 srv_id = SrvId,
-                class = Class,
-                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
-                cmd = Cmd,
+                class1 = Class,
+                subclass1 = maps:get(<<"subclass">>, Msg, <<"core">>),
+                cmd1 = Cmd,
                 tid = 0,
-                data = maps:get(<<"data">>, Msg, #{}),
-                user = maps:get(user, State),
-                session = SessId
+                data = maps:get(<<"data">>, Msg, #{}), 
+                user = User,
+                session_id = SessId
             },
-            case handle(api_server_cmd, [ApiReq], State) of
+            case nkservice_api_lib:process_req(Req, State) of
                 {ok, Reply, _State2} when is_map(Reply); is_list(Reply) ->
                     send_msg_ok(SrvId, Reply, Req);
                 {ack, _State2} ->
+                    #{session_id:=SessId} = State,
                     nkservice_api_server:do_register_http(SessId),
                     wait_ack(SrvId, Req);
                 {error, Error, _State2} ->
@@ -260,8 +261,5 @@ send_http_error(SrvId, Error, Req) ->
 %% @private
 handle(Fun, Args, #{srv_id:=SrvId}=State) ->
     apply(SrvId, Fun, Args++[State]).
-
-
-
 
 

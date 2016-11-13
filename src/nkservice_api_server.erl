@@ -72,7 +72,7 @@
     {ok, Result::binary(), Data::map()} | {error, term()}.
 
 cmd(Id, Class, SubClass, Cmd, Data) ->
-    Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
+    Req = #api_req{class1=Class, subclass1=SubClass, cmd1=Cmd, data=Data},
     do_call(Id, {nkservice_cmd, Req}).
 
 
@@ -81,7 +81,7 @@ cmd(Id, Class, SubClass, Cmd, Data) ->
     ok.
 
 cmd_async(Id, Class, SubClass, Cmd, Data) ->
-    Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
+    Req = #api_req{class1=Class, subclass1=SubClass, cmd1=Cmd, data=Data},
     do_cast(Id, {nkservice_cmd, Req}).
 
 
@@ -247,7 +247,6 @@ find_session_http(SessId) ->
     end.
 
 
-
 %% @private
 get_data(Id) ->
     do_call(Id, get_data).
@@ -306,7 +305,7 @@ do_register_http(SessId) ->
     ping :: integer() | undefined,
     regs2 = [] :: [#reg{}],
     links :: nklib_links:links(),
-    retry_time = 100 :: integer(),
+    % retry_time = 100 :: integer(),
     user_state :: user_state()
 }).
 
@@ -336,7 +335,8 @@ conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     UserState = #{type=>api_server, srv_id=>SrvId, remote=>Remote},
     State1 = #state{
-        srv_id = SrvId, 
+        srv_id = SrvId,
+        session_id = nklib_util:luid(),
         user_state = UserState,
         links = nklib_links:new()
     },
@@ -365,18 +365,17 @@ conn_parse({text, Text}, NkPort, State) ->
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
             ?PRINT("received ~s", [Msg], State),
             #state{srv_id=SrvId, user=User, session_id=Session} = State,
-            Sub = maps:get(<<"subclass">>, Msg, <<"core">>),
             Req = #api_req{
                 srv_id = SrvId,
-                class = Class,
-                subclass = Sub,
-                cmd = Cmd,
+                class1 = Class,
+                subclass1 = maps:get(<<"subclass">>, Msg, <<"core">>),
+                cmd1 = Cmd,
                 tid = TId,
-                data = maps:get(<<"data">>, Msg, #{}),
+                data = maps:get(<<"data">>, Msg, #{}), 
                 user = User,
-                session = Session
+                session_id = Session
             },
-            process_client_req(Class, Sub, Cmd, Req, NkPort, State);
+            process_client_req(Req, NkPort, State);
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
@@ -528,7 +527,7 @@ conn_handle_cast({nkservice_send_event, Event, Body}, NkPort, State) ->
         end
     ],
     Data2 = maps:from_list(lists:flatten(Data1)),
-    Req = #api_req{class = <<"core">>, cmd = <<"event">>, data=Data2},
+    Req = #api_req{class1=core, cmd1=event, data=Data2},
     send_request(Req, undefined, NkPort, State);
 
 conn_handle_cast(nkservice_stop, _NkPort, State) ->
@@ -601,7 +600,7 @@ conn_handle_info(nkservice_send_ping, _NkPort, #state{ping=undefined}=State) ->
 
 conn_handle_info(nkservice_send_ping, NkPort, #state{ping=Time}=State) ->
     erlang:send_after(1000*Time, self(), nkservice_send_ping),
-    Req = #api_req{class = <<"core">>, cmd = <<"ping">>, data = #{time=>Time}},
+    Req = #api_req{class1=core, cmd1=ping, data = #{time=>Time}},
     send_request(Req, undefined, NkPort, State);
 
 conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
@@ -662,61 +661,84 @@ conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
 %% ===================================================================
 
 %% @private
-process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, 
-                   #state{session_id = <<>>} = State) ->
-    _ = send_ack(Req, NkPort, State),
-    #api_req{data=Data} = Req,
-    SessId = case Data of
-        #{<<"session_id">>:=UserSessId} -> UserSessId;
-        _ -> nklib_util:uuid_4122()
-    end,
-    case handle(api_server_login, [Data, SessId], State) of
-        {true, User, State2} ->
-            process_login(User, SessId, Req, NkPort, State2);
-        {true, User, NewSessId, State2} ->
-            process_login(User, NewSessId, Req, NkPort, State2);
-        {false, Error, State2} ->
-            #state{retry_time=Time} = State2,
-            timer:sleep(Time),
-            State3 = State2#state{retry_time=2*Time},
-            send_reply_error(Error, Req, NkPort, State3)
-    end;
-
-process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, State) ->
-    send_reply_error(already_authenticated, Req, NkPort, State);
-
-process_client_req(_Class, _Sub, _Cmd, Req, NkPort, #state{session_id = <<>>}=State) ->
-    send_reply_error(not_authenticated, Req, NkPort, State);
-
-process_client_req(<<"core">>, <<"core">>, <<"event">>, Req, NkPort, State) ->
-    #api_req{data=#{<<"class">>:=Class}=Data} = Req, 
-    #state{srv_id=SrvId} = State,
-    case send_reply_ok(#{}, Req, NkPort, State) of
-        {ok, State2} ->
-            Event = #event{
-                srv_id = maps:get(<<"service">>, Data, SrvId),
-                class = Class, 
-                subclass = maps:get(<<"subclass">>, Data, <<"*">>),
-                type = maps:get(<<"type">>, Data, <<"*">>),
-                obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
-            },
-            Body = maps:get(<<"body">>, Data, #{}),
-            {ok, State3} = handle(api_server_event, [Event, Body], State2),
-            {ok, State3};
-        Other ->
-            Other
-    end;
-
-process_client_req(_Class, _Sub, _Cmd, #api_req{tid=TId}=Req, NkPort, State) ->
-    case handle(api_server_cmd, [Req], State) of
-        {ok, Reply, State2} when is_map(Reply); is_list(Reply) ->
+process_client_req(Req, NkPort, #state{user=User} = State) ->
+    case nkservice_api_lib:process_req(Req, State) of
+        {ok, Reply, State2} ->
             send_reply_ok(Reply, Req, NkPort, State2);
         {ack, State2} ->
-            State3 = insert_ack(TId, State2),
+            State3 = insert_ack(Req, State2),
             send_ack(Req, NkPort, State3);
+        {login, User2, State2} when User == <<>> ->
+            process_login(User2, Req, NkPort, State2);
+        {login, _User, State2} ->
+            send_reply_error(already_authenticated, Req, NkPort, State2);
         {error, Error, State2} ->
             send_reply_error(Error, Req, NkPort, State2)
     end.
+
+
+
+
+
+
+
+
+
+% process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, 
+%                    #state{session_id = <<>>} = State) ->
+%     _ = send_ack(Req, NkPort, State),
+%     #api_req{data=Data} = Req,
+%     SessId = case Data of
+%         #{<<"session_id">>:=UserSessId} -> UserSessId;
+%         _ -> nklib_util:uuid_4122()
+%     end,
+%     case handle(api_server_login, [Data, SessId], State) of
+%         {true, User, State2} ->
+%             process_login(User, SessId, Req, NkPort, State2);
+%         {true, User, NewSessId, State2} ->
+%             process_login(User, NewSessId, Req, NkPort, State2);
+%         {false, Error, State2} ->
+%             #state{retry_time=Time} = State2,
+%             timer:sleep(Time),
+%             State3 = State2#state{retry_time=2*Time},
+%             send_reply_error(Error, Req, NkPort, State3)
+%     end;
+
+% process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, State) ->
+%     send_reply_error(already_authenticated, Req, NkPort, State);
+
+% process_client_req(_Class, _Sub, _Cmd, Req, NkPort, #state{session_id = <<>>}=State) ->
+%     send_reply_error(not_authenticated, Req, NkPort, State);
+
+% process_client_req(<<"core">>, <<"core">>, <<"event">>, Req, NkPort, State) ->
+%     #api_req{data=#{<<"class">>:=Class}=Data} = Req, 
+%     #state{srv_id=SrvId} = State,
+%     case send_reply_ok(#{}, Req, NkPort, State) of
+%         {ok, State2} ->
+%             Event = #event{
+%                 srv_id = maps:get(<<"service">>, Data, SrvId),
+%                 class = Class, 
+%                 subclass = maps:get(<<"subclass">>, Data, <<"*">>),
+%                 type = maps:get(<<"type">>, Data, <<"*">>),
+%                 obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
+%             },
+%             Body = maps:get(<<"body">>, Data, #{}),
+%             {ok, State3} = handle(api_server_event, [Event, Body], State2),
+%             {ok, State3};
+%         Other ->
+%             Other
+%     end;
+
+% process_client_req(_Class, _Sub, _Cmd, #api_req{tid=TId}=Req, NkPort, State) ->
+%     case handle(api_server_cmd, [Req], State) of
+%         {ok, Reply, State2} when is_map(Reply); is_list(Reply) ->
+%             send_reply_ok(Reply, Req, NkPort, State2);
+%         {ack, State2} ->
+%             State3 = insert_ack(TId, State2),
+%             send_ack(Req, NkPort, State3);
+%         {error, Error, State2} ->
+%             send_reply_error(Error, Req, NkPort, State2)
+%     end.
 
 
 %% @private
@@ -731,12 +753,12 @@ process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-process_login(User, SessId, Req, NkPort, State) when is_binary(SessId), SessId /= <<>> ->
-    #state{srv_id=SrvId, user_state=UserState} = State,
+process_login(User, Req, NkPort, State) ->
+    #state{srv_id=SrvId, session_id=SessId, user_state=UserState} = State,
     case do_register(SrvId, User, SessId) of
         true ->
             UserState2 = UserState#{user=>User, session_id=>SessId},
-            State2 = State#state{user_state=UserState2, user=User, session_id=SessId},
+            State2 = State#state{user_state=UserState2, user=User},
             nklib_proc:put(?MODULE, {socket, User, SessId}),
             nklib_proc:put({?MODULE, SrvId}, {socket, User, SessId}),
             nklib_proc:put({?MODULE, user, User}, {socket, SessId}),
@@ -756,11 +778,8 @@ process_login(User, SessId, Req, NkPort, State) when is_binary(SessId), SessId /
         {false, _} -> 
             stop(self()),
             send_reply_error(duplicated_session_id, Req, NkPort, State)
-end;
+end.
 
-process_login(_User, _SessId, Req, NkPort, State) ->
-    stop(self()),
-    send_reply_error(invalid_session_id, Req, NkPort, State).
 
 
 %% @private
@@ -866,6 +885,9 @@ insert_op(TId, Op, From, #state{trans=AllTrans}=State) ->
 
 
 %% @private
+insert_ack(#api_req{tid=TId}, State) ->
+    insert_ack(TId, State);
+
 insert_ack(TId, #state{trans=AllTrans}=State) ->
     Trans = #trans{
         op = ack,
@@ -898,7 +920,7 @@ extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
 
 %% @private
 send_request(Req, From, NkPort, #state{tid=TId}=State) ->
-    #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data} = Req,
+    #api_req{class1=Class, subclass1=Sub, cmd1=Cmd, data=Data} = Req,
     Msg1 = #{
         class => Class,
         cmd => Cmd,

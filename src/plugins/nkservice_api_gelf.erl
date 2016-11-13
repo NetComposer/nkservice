@@ -120,9 +120,8 @@ plugin_stop(Config, #{id:=Id, name:=Name}) ->
 %% ===================================================================
 
 
-api_cmd(#api_req{class = <<"core">>, subclass = <<"session">>, cmd = <<"log">>} =Req,
-        State) ->
-    #api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
+api_cmd(#api_req{class1=core, subclass1=session, cmd1=log}=Req, State) ->
+    #api_req{srv_id=SrvId, data=Data, user=User, session_id=Session} = Req,
     #{source:=Source, message:=Short, level:=Level} = Data,
     Long = maps:get(full_message, Data, <<>>),
     Meta1 = maps:get(meta, Data, #{}),

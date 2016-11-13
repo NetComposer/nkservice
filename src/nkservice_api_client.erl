@@ -96,7 +96,7 @@ stop_all() ->
     {ok, map()} | {error, {integer(), binary()}} | {error, term()}.
 
 cmd(Id, Class, Sub, Cmd, Data) ->
-    Req = #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data},
+    Req = #api_req{class1=Class, subclass1=Sub, cmd1=Cmd, data=Data},
     do_call(Id, {cmd, Req}).
 
 
@@ -184,7 +184,7 @@ conn_init(NkPort) ->
 conn_parse(close, _NkPort, State) ->
     {ok, State};
 
-conn_parse({text, Text}, NkPort, #state{srv_id=SrvId}=State) ->
+conn_parse({text, Text}, NkPort, State) ->
     Msg = case nklib_json:decode(Text) of
         error ->
             ?LLOG(warning, "JSON decode error: ~p", [Text], State),
@@ -197,15 +197,14 @@ conn_parse({text, Text}, NkPort, #state{srv_id=SrvId}=State) ->
         #{<<"class">> := <<"core">>, <<"cmd">> := <<"ping">>, <<"tid">> := TId} ->
             send_reply_ok(#{}, TId, NkPort, State);
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
-            Req = #api_req{
-                srv_id = SrvId,
-                class = Class,
-                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
-                cmd = Cmd,
-                tid = TId,
-                data = maps:get(<<"data">>, Msg, #{})
-            },
-            process_server_req(Req, NkPort, State);
+            Sub = maps:get(<<"subclass">>, Msg, <<"core">>),
+            Data = maps:get(<<"data">>, Msg, #{}),
+            case make_req(Class, Sub, Cmd, Data, TId, State) of
+                {ok, Req} ->
+                    process_server_req(Req, NkPort, State);
+                error ->
+                    send_reply_error(not_implemented, TId, NkPort, State)
+            end;
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
@@ -321,7 +320,7 @@ conn_stop(Reason, _NkPort, State) ->
 %% @private
 process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
     #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
-    case CB(Req#api_req{user=User, session=SessId}, UserData) of
+    case CB(Req#api_req{user=User, session_id=SessId}, UserData) of
         {ok, Reply, UserData2} ->
             send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
         {ack, UserData2} ->
@@ -423,8 +422,31 @@ extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
 
 
 %% @private
+make_req(Class, Sub, Cmd, Data, TId, State) ->
+    try
+        Class2 = nklib_util:to_existing_atom(Class),
+        Sub2 = nklib_util:to_existing_atom(Sub),
+        Cmd2 = nklib_util:to_existing_atom(Cmd),
+        #state{srv_id=SrvId, user=User, session_id=Session} = State,
+        Req = #api_req{
+            srv_id = SrvId,
+            class1 = Class,
+            subclass1 = Sub,
+            cmd1 = Cmd,
+            tid = TId,
+            data = Data, 
+            user = User,
+            session_id = Session
+        },
+        {ok, Req}
+    catch
+        _:_ -> error
+    end.
+
+
+%% @private
 send_request(Req, From, NkPort, #state{tid=TId}=State) ->
-    #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data} = Req,
+    #api_req{class1=Class, subclass1=Sub, cmd1=Cmd, data=Data} = Req,
     Msg1 = #{
         class => Class,
         cmd => Cmd,

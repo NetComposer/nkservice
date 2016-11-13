@@ -23,7 +23,6 @@
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export_type([class/0, cmd/0]).
--export([launch/2]).
 -export([cmd/4]).
 -export([parse_service/1]).
 
@@ -31,76 +30,12 @@
 %% Types
 %% ===================================================================
 
--type class() :: binary().
--type subclass() :: binary().
--type cmd() :: binary().
+-type class() :: atom().
+-type subclass() :: atom().
+-type cmd() :: atom().
 -type state() :: map().
 
 -include("nkservice.hrl").
-
-
-%% ===================================================================
-%% Public
-%% ===================================================================
-
-%% @doc Starts the processing of an external API request
-%% It parses the request, getting the syntax calling SrvId:api_syntax()
-%% If it is valid, calls SrvId:api_allow() to authorized the request
-%% If is is authorized, calls SrvId:api_cmd() to process the request.
-%% It received some state (usually from api_server_cmd/5) that can be updated
--spec launch(#api_req{}, state()) ->
-    {ok, term(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
-
-launch(#api_req{srv_id=SrvId, data=Data}=Req, State) ->
-    {Syntax, Defaults, Mandatory} = SrvId:api_syntax(Req, #{}, #{}, []),
-    Opts = #{
-        return => map, 
-        defaults => Defaults,
-        mandatory => Mandatory
-    },
-    % lager:info("Syntax for ~p: ~p, ~p ~p", 
-    %             [lager:pr(Req, ?MODULE), Syntax, Defaults, Mandatory]),
-    case nklib_config:parse_config(Data, Syntax, Opts) of
-        {ok, Parsed, Other} ->
-            Req2 = Req#api_req{data=Parsed},
-            case SrvId:api_allow(Req2, State) of
-                {true, State2} ->
-                    case SrvId:api_cmd(Req2, State2) of
-                        {ok, Reply, State3} when map_size(Other)==0 ->
-                            {ok, Reply, State3};
-                        {ok, Reply, State3} ->
-                            send_unrecognized_fields(Req, maps:keys(Other)),
-                            {ok, Reply, State3};
-                        {error, Error, State3} ->
-                            {error, Error, State3}
-                    end;
-                {false, State2} ->
-                    {error, unauthorized, State2}
-            end;
-        {error, {syntax_error, Error}} ->
-            {error, {syntax_error, Error}, State};
-        {error, {missing_mandatory_field, Field}} ->
-            {error, {missing_field, Field}, State}
-    end.
-
-
-
-%% @private
-send_unrecognized_fields(Req, Fields) ->
-    #api_req{srv_id=SrvId, class=Class, subclass=Sub, cmd=Cmd, session=SessId} = Req,
-    Event = #event{
-        class = <<"core">>,
-        subclass = <<"session_event">>,
-        type = <<"unrecognized_fields">>,
-        srv_id = SrvId, 
-        obj_id = SessId,
-        body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>Fields}
-    },
-    nkservice_events:send(Event),
-    lager:notice("NkSERVICE API: Unknown keys in service launch "
-                 "~s:~s:~s: ~p", [Class, Sub, Cmd, Fields]).
-
-
 
 
 
@@ -114,13 +49,32 @@ send_unrecognized_fields(Req, Fields) ->
     {ok, map(), state()} | {error, nkservice:error(), state()}.
 
 
-%% Gets #{User::binary() => [SessId::binary()]}
+cmd(<<"user">>, <<"login">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+    case SrvId:api_server_login(Data, State) of
+        {true, User, State2} ->
+            {login, User, State2};
+        {false, Error, State2} ->
+            timer:sleep(1000),
+            {error, Error, State2}
+    end;
+
+cmd(<<"core">>, <<"event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+    #{<<"class">>:=Class} = Data,
+    Event = #event{
+        srv_id = maps:get(<<"service">>, Data, SrvId),
+        class = Class, 
+        subclass = maps:get(<<"subclass">>, Data, <<"*">>),
+        type = maps:get(<<"type">>, Data, <<"*">>),
+        obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
+    },
+    Body = maps:get(<<"body">>, Data, #{}),
+    {ok, State2} = SrvId:api_server_event(Event, Body, State),
+    {ok, #{}, State2};
+
 cmd(<<"user">>, <<"list">>, #api_req{srv_id=SrvId}, State) ->
     Map = nkservice_api_server:list_users(SrvId, #{}),
     {ok, Map, State};
 
-
-%% Gets #{SessId::binary() => UserData::term()}
 cmd(<<"user">>, <<"get">>, #api_req{srv_id=SrvId, data=#{user:=User}}, State) ->
     Map = nkservice_api_server:get_user(SrvId, User, State, #{}),
     case maps:size(Map) of
@@ -276,7 +230,7 @@ parse_service(Service) ->
 
 
 %% @private
-get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session=Session}) ->
+get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session_id=Session}) ->
     #{source:=Source, message:=Short, level:=Level} = Data,
     Msg = [
         {version, <<"1.1">>},
