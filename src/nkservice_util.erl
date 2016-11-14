@@ -21,6 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([http/3, http_upload/7, http_download/6]).
 -export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
 -export([get_core_listeners/2, make_id/1, update_uuid/2]).
@@ -31,11 +32,85 @@
 
 -define(API_TIMEOUT, 30).
 
+-define(CONNECT_TIMEOUT, 5000).
+-define(RECV_TIMEOUT, 3000).
 
 
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @private
+http(Method, Url, Opts) ->
+    Headers1 = maps:get(headers, Opts, []),
+    {Headers2, Body2} = case Opts of
+        #{body:=Body} when is_map(Body) ->
+            {
+                [{<<"Content-Type">>, <<"application/json">>}|Headers1],
+                nklib_json:encode(Body)
+
+            };
+        #{body:=Body} ->
+            {
+                [{<<"Content-Type">>, <<"application/octet-stream">>}|Headers1],
+                nklib_util:to_binary(Body)                
+            };
+        _ ->
+            {[{<<"Content-Length">>, <<"0">>}|Headers1], <<>>}
+    end,
+    Headers3 = case Opts of
+        #{user:=User, pass:=Pass} ->
+            Auth = base64:encode(list_to_binary([User, ":", Pass])),
+            [{<<"Authorization">>, <<"Basic ", Auth/binary>>}|Headers2];
+        _ ->
+            Headers2
+    end,
+    Ciphers = ssl:cipher_suites(),
+    % Hackney fails with its default set of ciphers
+    % See hackney.ssl#44
+    HttpOpts = [
+        {connect_timeout, ?CONNECT_TIMEOUT},
+        {recv_timeout, ?RECV_TIMEOUT},
+        insecure,
+        with_body,
+        {ssl_options, [{ciphers, Ciphers}]}
+    ],
+    Start = nklib_util:l_timestamp(),
+    case hackney:request(Method, Url, Headers3, Body2, HttpOpts) of
+        {ok, 200, Headers, RespBody} ->
+            Time = nklib_util:l_timestamp() - Start,
+            {ok, Headers, RespBody, Time div 1000};
+        {ok, Code, Headers, RespBody} ->
+            {error, {http_code, Code, Headers, RespBody}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
+http_upload(Url, User, Pass, Class, ObjId, Name, Body) ->
+    Id = nkservice_api_server_http:filename_encode(Class, ObjId, Name),
+    <<"/", Base/binary>> = nklib_parse:path(Url),
+    Url2 = list_to_binary([Base, "/upload/", Id]),
+    Opts = #{
+        user => nklib_util:to_binary(User),
+        pass => nklib_util:to_binary(Pass),
+        body => Body
+    },
+    http(post, Url2, Opts).
+
+
+%% @doc
+http_download(Url, User, Pass, Class, ObjId, Name) ->
+    Id = nkservice_api_server_http:filename_encode(Class, ObjId, Name),
+    <<"/", Base/binary>> = nklib_parse:path(Url),
+    Url2 = list_to_binary([Base, "/download/", Id]),
+    Opts = #{
+        user => nklib_util:to_binary(User),
+        pass => nklib_util:to_binary(Pass)
+    },
+    http(get, Url2, Opts).
 
 
 %% @doc Safe call (no exceptions)

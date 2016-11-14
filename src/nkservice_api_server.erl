@@ -96,7 +96,7 @@ reply_ok(Id, TId, Data) ->
         not_found ->
             case find_session_http(Id) of
                 {ok, Pid} ->
-                    gen_server:cast(Pid, {nkservice_api_server, ok, Data});
+                    Pid ! {nkservice_reply_ok, Data};
                 _ ->
                     ok
             end
@@ -114,7 +114,7 @@ reply_error(Id, TId, Code) ->
         not_found ->
             case find_session_http(Id) of
                 {ok, Pid} ->
-                    gen_server:cast(Pid, {nkservice_api_server, error, Code});
+                    Pid ! {nkservice_reply_error, Code};
                 _ ->
                     ok
             end
@@ -220,6 +220,11 @@ get_all(SrvId) ->
 
 
 %% @private
+get_subscriptions(Id) ->
+    do_call(Id, nkservice_get_subscriptions).
+
+
+%% @private
 -spec find_user(string()|binary()) ->
     [{SessId::binary(), Meta::map(), pid()}].
 
@@ -247,25 +252,15 @@ find_session(SessId) ->
     {ok, pid()} | not_found.
 
 find_session_http(SessId) ->
-    case nklib_proc:values({?MODULE, session, SessId}) of
+    case nklib_proc:values({?MODULE, http, SessId}) of
         [{_, Pid}] -> {ok, Pid};
         [] -> not_found
     end.
 
 
 %% @private
-get_subscriptions(Id) ->
-    do_call(Id, nkservice_get_subscriptions).
-
-
-%% @private
 do_register_http(SessId) ->
-    case nklib_proc:reg({?MODULE, http, SessId}) of
-        true ->
-            true;
-        {false, _} ->
-            false
-    end.
+    true = nklib_proc:reg({?MODULE, http, SessId}).
 
 
 
@@ -325,8 +320,13 @@ default_port(https) -> 9011.
 conn_init(NkPort) ->
     {ok, {nkservice_api_server, SrvId}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
-    UserState = #{type=>api_server, srv_id=>SrvId, remote=>Remote},
     SessId = nklib_util:luid(),
+    UserState = #{
+        srv_id => SrvId, 
+        session_type => ?MODULE,
+        session_id => SessId,
+        remote => Remote
+    },
     true = nklib_proc:reg({?MODULE, session, SessId}, <<>>),
     State1 = #state{
         srv_id = SrvId,
@@ -811,15 +811,16 @@ send_reply_ok(Data, #api_req{tid=TId}, NkPort, State) ->
 send_reply_ok(Data, TId, NkPort, State) ->
     Msg1 = #{
         result => ok,
-        tid => TId
+        tid => TId,
+        data => Data
     },
-    Msg2 = case Data of
-        #{} when map_size(Data)==0 -> Msg1;
-        #{} -> Msg1#{data=>Data};
-        % List when is_list(List), length(List)==0 -> Msg1;
-        List when is_list(List) -> Msg1#{data=>Data}
-    end,
-    send(Msg2, NkPort, State).
+    % Msg2 = case Data of
+    %     #{} when map_size(Data)==0 -> Msg1;
+    %     #{} -> Msg1#{data=>Data};
+    %     % List when is_list(List), length(List)==0 -> Msg1;
+    %     List when is_list(List) -> Msg1#{data=>Data}
+    % end,
+    send(Msg1, NkPort, State).
 
 
 %% @private

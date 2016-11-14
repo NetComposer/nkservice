@@ -24,7 +24,7 @@
 
 -export([send/3, send/6]).
 -export([plugin_deps/0, plugin_syntax/0, plugin_start/2, plugin_stop/2]).
--export([api_cmd/2]).
+-export([api_server_cmd/2]).
 
 -include("../../include/nkservice.hrl").
 
@@ -85,9 +85,6 @@ plugin_syntax() ->
 %% When the plugin starts, it adds a user process to the service (named api_gelf)
 %% that starts with nklib_log:start_link({?MODULE, SrvId}, nklib_log_gelf, Opts),
 %% and it is registered under {?MODULE, SrvId}
-
-
-
 plugin_start(Config, #{id:=Id, name:=Name}) ->
     case Config of
         #{api_gelf_server:=Server} ->
@@ -120,7 +117,7 @@ plugin_stop(Config, #{id:=Id, name:=Name}) ->
 %% ===================================================================
 
 
-api_cmd(#api_req{class1=core, subclass1=session, cmd1=log}=Req, State) ->
+api_server_cmd(#api_req{class1=core, subclass1=session, cmd1=log}=Req, State) ->
     #api_req{srv_id=SrvId, data=Data, user=User, session_id=Session} = Req,
     #{source:=Source, message:=Short, level:=Level} = Data,
     Long = maps:get(full_message, Data, <<>>),
@@ -129,7 +126,7 @@ api_cmd(#api_req{class1=core, subclass1=session, cmd1=log}=Req, State) ->
     _Res = send(SrvId, Source, Short, Long, Level, Meta2),
     {ok, #{}, State};
 
-api_cmd(_Req, _State) ->
+api_server_cmd(_Req, _State) ->
     continue.
 
 
@@ -140,21 +137,29 @@ api_cmd(_Req, _State) ->
 %% ===================================================================
 
 
-% get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session=Session}) ->
+% %% @private
+% get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session_id=Session}) ->
 %     #{source:=Source, message:=Short, level:=Level} = Data,
-%     Meta1 = maps:get(meta, Data, #{}),
-%     Meta2 = Meta1#{
-%         srv_id => SrvId,
-%         user => User,
-%         session_id => Session
-%     },
-%     Msg1 = #{
-%         host => Source,
-%         message => Short,
-%         level => Level,
-%         meta => Meta2
-%     },
-%     case maps:get(full_message, Data, <<>>) of
-%         <<>> -> Msg1;
-%         Full -> Msg1#{full_message=>Full}
-%     end.
+%     Msg = [
+%         {version, <<"1.1">>},
+%         {host, Source},
+%         {message, Short},
+%         {level, Level},
+%         {<<"_srv_id">>, SrvId},
+%         {<<"_user">>, User},
+%         {<<"_session_id">>, Session},
+%         case maps:get(full_message, Data, <<>>) of
+%             <<>> -> [];
+%             Full -> [{full_message, Full}]
+%         end
+%         |
+%         case maps:get(meta, Data, #{}) of
+%             Meta when is_map(Meta) ->
+%                 [{<<$_, Key/binary>>, Val} || {Key, Val}<- maps:to_list(Meta)];
+%             _ ->
+%                 []
+%         end
+%     ],
+%     maps:from_list(lists:flatten(Msg)).
+
+

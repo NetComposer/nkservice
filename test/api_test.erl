@@ -16,7 +16,9 @@ start() ->
 		callback => ?MODULE,
         log_level => debug,
         api_server => "wss:all:9010, https://all:9010/rpc",
-        api_server_timeout => 300
+        api_server_timeout => 300,
+        plugins => [nkservice_api_gelf],
+        api_gelf_server => "c2.netc.io"
 	},
 	nkservice:start(test, Spec).
 
@@ -51,6 +53,9 @@ connect(User) ->
 user_list() ->
     cmd(core, user, list, #{}).
 
+user_list2() ->
+    cmd_http(core, user, list, #{}).
+
 
 user_get(User) ->
     cmd(core, user, get, #{user => User}).
@@ -60,11 +65,8 @@ user_event(User) ->
 
 
 
-
-
 event_get_subs() ->
     cmd(core, event, get_subscriptions, #{}).
-
 
 event_subscribe() ->
     cmd(core, event, subscribe, #{class=>class1, body=>#{k=>v}}),
@@ -91,8 +93,7 @@ event_send(T) ->
         s3b -> #{class=>class3, subclass=>s3, type=>t4, body=>#{k3=>v3}};
         s4a -> #{class=>class4, subclass=>s4, type=>t4, obj_id=>o4, body=>#{k4=>v4}};
         s4b -> #{class=>class4, subclass=>s4, type=>t4, obj_id=>o5, body=>#{k4=>v4}}
-    end,
-    cmd(core, event, send, Ev).
+    end, cmd(core, event, send, Ev).
 
 
 session_event(SessId) ->
@@ -110,9 +111,34 @@ session_call(SessId) ->
             #{session_id=>SessId, class=>class2, cmd=>cmd1, data=>#{k=>v}}),
     ok.
 
-
 session_log(Source, Msg, Data) ->
     cmd(core, session, log, Data#{source=>Source, message=>Msg}).
+
+
+http_async() ->
+    cmd_http(core, test, async, #{data=>#{a=>1}}).
+
+
+upload(File) ->
+    {ok, Bin} = file:read_file(File),
+    nkservice_util:http_upload(
+        "https://127.0.0.1:9010/rpc",
+        u1,
+        p1,
+        test,
+        my_obj_id,
+        File,
+        Bin).
+
+
+download(File) ->
+    nkservice_util:http_download(
+        "https://127.0.0.1:9010/rpc",
+        u1,
+        p1,
+        test,
+        my_obj_id,
+        File).
 
 
 get_client() ->
@@ -127,6 +153,24 @@ cmd(Class, Sub, Cmd, Data) ->
 cmd(Pid, Class, Sub, Cmd, Data) ->
     nkservice_api_client:cmd(Pid, Class, Sub, Cmd, Data).
 
+
+cmd_http(Class, Sub, Cmd, Data) ->
+    Opts = #{
+        user => <<"u1">>,
+        pass => <<"p1">>,
+        body => #{
+            class => Class,
+            subclass => Sub,
+            cmd => Cmd,
+            data => Data
+        }
+    },
+    case nkservice_util:http(post, "https://127.0.0.1:9010/rpc", Opts) of
+        {ok, _Hds, Json, _Time} ->
+            {ok, nklib_json:decode(Json)};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 
@@ -211,3 +255,20 @@ api_server_cmd(#api_req{class1=test, cmd1=op3, data=Data}, State) ->
 api_server_cmd(_Req, _State) ->
     continue.
 
+
+%% @private
+api_server_http_upload(test, ObjId, Name, CT, Bin, State) ->
+    lager:notice("Upload: ~p, ~p, ~s, ~s", [ObjId, Name, CT, Bin]),
+    {ok, State};
+
+api_server_http_upload(_Mod, _ObjId, _Name, _CT, _Bin, _State) ->
+    continue.
+
+
+%% @private
+api_server_http_download(test, ObjId, Name, State) ->
+    lager:notice("Download: ~p, ~p", [ObjId, Name]),
+    {ok, <<>>, <<"test">>, State};
+
+api_server_http_download(_Mod, _ObjId, _Name, _State) ->
+    continue.

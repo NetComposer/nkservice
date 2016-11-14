@@ -49,7 +49,8 @@
     {ok, map(), state()} | {error, nkservice:error(), state()}.
 
 
-cmd(user, login, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(user, login, #api_req{srv_id=SrvId, data=Data}, 
+        #{session_type:=nkservice_api_server}=State) ->
     case SrvId:api_server_login(Data, State) of
         {true, User, Meta, State2} ->
             {login, User, Meta, State2};
@@ -95,7 +96,8 @@ cmd(user, get, #api_req{data=#{user:=User}}, State) ->
             {ok, Data, State}
     end;
 
-cmd(event, subscribe, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(event, subscribe, #api_req{srv_id=SrvId, data=Data},
+        #{session_type:=nkservice_api_server}=State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{
@@ -110,7 +112,8 @@ cmd(event, subscribe, #api_req{srv_id=SrvId, data=Data}, State) ->
     nkservice_api_server:subscribe(self(), Event),
     {ok, #{}, State};
 
-cmd(event, unsubscribe, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(event, unsubscribe, #api_req{srv_id=SrvId, data=Data},
+        #{session_type:=nkservice_api_server}=State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
@@ -118,7 +121,8 @@ cmd(event, unsubscribe, #api_req{srv_id=SrvId, data=Data}, State) ->
     {ok, #{}, State};
 
 %% Gets [#{class=>...}]
-cmd(event, get_subscriptions, #api_req{tid=TId}, State) ->
+cmd(event, get_subscriptions, #api_req{tid=TId}, 
+        #{session_type:=nkservice_api_server}=State) ->
     Self = self(),
     spawn_link(
         fun() ->
@@ -128,7 +132,6 @@ cmd(event, get_subscriptions, #api_req{tid=TId}, State) ->
     {ack, State};
 
 cmd(event, send, #api_req{srv_id=SrvId, data=Data}, State) ->
-    lager:error("SEND"),
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{
@@ -156,7 +159,8 @@ cmd(user, send_event, #api_req{srv_id=SrvId, data=Data}, State) ->
     nkservice_events:send(Event),
     {ok, #{}, State};
 
-cmd(session, stop, #api_req{data=#{session_id:=SessId}}, State) ->
+cmd(session, stop, #api_req{data=#{session_id:=SessId}},
+        #{session_type:=nkservice_api_server}=State) ->
     case nkservice_api_server:find_session(SessId) of
         {ok, _User, Pid} ->
             nkservice_api_server:stop(Pid),
@@ -207,10 +211,26 @@ cmd(session, cmd, #api_req{data=Data, tid=TId}, State) ->
             {error, session_not_found, State}
     end;
 
-cmd(session, log, Req, State) ->
-    Msg = get_log_msg(Req),
-    lager:info("Ext API Session Log: ~p", [Msg]),
+cmd(session, log, #api_req{data=Data}, State) ->
+    Txt = "API Session Log: ~p",
+    case maps:get(level, Data, 6) of
+        7 -> lager:debug(Txt, [Data]);
+        6 -> lager:info(Txt, [Data]);
+        5 -> lager:notice(Txt, [Data]);
+        4 -> lager:warning(Txt, [Data]);
+        _ -> lager:error(Txt, [Data])
+    end,
     {ok, #{}, State};
+
+cmd(test, async, #api_req{tid=TId, data=Data}, State) ->
+    Self = self(),
+    Data2 = maps:get(data, Data, #{}),
+    spawn_link(
+        fun() ->
+            timer:sleep(2000),
+            nkservice_api_server:reply_ok(Self, TId, Data2)
+        end),
+    {ack, State};
 
 cmd(_Sub, Cmd, _Data, State) ->
     {error, {unknown_command, Cmd}, State}.
@@ -239,31 +259,4 @@ parse_service(Service) ->
                     end
             end
     end.
-
-
-%% @private
-get_log_msg(#api_req{srv_id=SrvId, data=Data, user=User, session_id=Session}) ->
-    #{source:=Source, message:=Short, level:=Level} = Data,
-    Msg = [
-        {version, <<"1.1">>},
-        {host, Source},
-        {message, Short},
-        {level, Level},
-        {<<"_srv_id">>, SrvId},
-        {<<"_user">>, User},
-        {<<"_session_id">>, Session},
-        case maps:get(full_message, Data, <<>>) of
-            <<>> -> [];
-            Full -> [{full_message, Full}]
-        end
-        |
-        case maps:get(meta, Data, #{}) of
-            Meta when is_map(Meta) ->
-                [{<<$_, Key/binary>>, Val} || {Key, Val}<- maps:to_list(Meta)];
-            _ ->
-                []
-        end
-    ],
-    maps:from_list(lists:flatten(Msg)).
-
 

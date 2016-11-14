@@ -378,17 +378,6 @@ api_server_http_upload(_Mod, _ObjId, _Name, _CT, _Bin, State) ->
 
 
 
-% %% @doc Called when a 'subscribe' external command arrives
-% %% You should allow subscribing to other service's events without care.
-% -spec api_subscribe_allow(nkservice:id(), nkservice_events:class(),	 
-% 						  nkservice_events:subclass(), nkservice_events:type(), map()) ->
-% 	{boolean(), map()}.
-
-% api_subscribe_allow(_SrvId, _Class, _SubClass, _Type, State) ->
-% 	{false, State}.
-
-
-
 %% ===================================================================
 %% Service Callbacks
 %% ===================================================================

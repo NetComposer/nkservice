@@ -106,12 +106,26 @@ syntax(session, log, Syntax, Defaults, Mandatory) ->
             level => {integer, 1, 7},
             meta => any
         },
-        Defaults#{level=>1},
+        Defaults#{level=>6},
         [source, message|Mandatory]
+    };
+
+syntax(test, async, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            data => any
+        },
+        Defaults,
+        Mandatory
     };
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
 
 
 %% @private

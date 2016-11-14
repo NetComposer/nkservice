@@ -12,7 +12,8 @@
         ssl,
         luerl,
         lager,
-        nkpacket
+        nkpacket,
+        hackney
         % nkdocker
     ]},
     {env, [

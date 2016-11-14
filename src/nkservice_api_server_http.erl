@@ -76,7 +76,8 @@ init(Req, [{srv_id, SrvId}]) ->
         Req2 = incoming(SrvId, Method, PathInfo, CT, Body, Req, State),
         {ok, Req2, []}
     catch
-        throw:ReqF -> {ok, ReqF, []}
+        throw:ReqF -> 
+            {ok, ReqF, []}
     end.
 
 
@@ -94,23 +95,24 @@ incoming(SrvId, <<"POST">>, [], _CT, Msg, Req, State) when is_map(Msg) ->
     case Msg of
         #{<<"class">> := Class, <<"cmd">> := Cmd} ->
             #{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-            Req = #api_req{
+            TId = erlang:phash2(make_ref()),
+            ApiReq = #api_req{
                 srv_id = SrvId,
                 class1 = Class,
                 subclass1 = maps:get(<<"subclass">>, Msg, <<"core">>),
                 cmd1 = Cmd,
-                tid = 0,
+                tid = TId,
                 data = maps:get(<<"data">>, Msg, #{}), 
                 user = User,
                 session_id = SessId
             },
-            case nkservice_api_lib:process_req(Req, State) of
+            case nkservice_api_lib:process_req(ApiReq, State) of
                 {ok, Reply, _State2} when is_map(Reply); is_list(Reply) ->
                     send_msg_ok(SrvId, Reply, Req);
                 {ack, _State2} ->
                     #{session_id:=SessId} = State,
                     nkservice_api_server:do_register_http(SessId),
-                    wait_ack(SrvId, Req);
+                    ack_wait(SrvId, TId, Req);
                 {error, Error, _State2} ->
                     send_msg_error(SrvId, Error, Req)
             end;
@@ -118,7 +120,7 @@ incoming(SrvId, <<"POST">>, [], _CT, Msg, Req, State) when is_map(Msg) ->
             throw(cowboy_req:reply(400, [], <<"Invalid Command">>, Req))
     end;
 
-incoming(SrvId, <<"GET">>, [File], _CT, _Body, Req, State) ->
+incoming(SrvId, <<"GET">>, [<<"download">>, File], _CT, _Body, Req, State) ->
     case filename_decode(File) of
         {Mod, ObjId, Name} ->
             case handle(api_server_http_download, [Mod, ObjId, Name], State) of
@@ -132,7 +134,7 @@ incoming(SrvId, <<"GET">>, [File], _CT, _Body, Req, State) ->
             cowboy_req:reply(400, [], <<"Invalid file name">>, Req)
     end;
 
-incoming(SrvId, <<"POST">>, [File], CT, Body, Req, State) ->
+incoming(SrvId, <<"POST">>, [<<"upload">>, File], CT, Body, Req, State) ->
     case filename_decode(File) of
         {Mod, ObjId, Name} ->
             case handle(api_server_http_upload, [Mod, ObjId, Name, CT, Body], State) of
@@ -151,11 +153,11 @@ incoming(_SrvId, Method, Path, CT, Body, Req, _State) ->
 
 
 %% @private
-wait_ack(SrvId, Req) ->
+ack_wait(SrvId, TId, Req) ->
     receive
-        {?MODULE, reply_ok, Reply} ->
+        {'$gen_cast', {nkservice_reply_ok, TId, Reply}} ->
             send_msg_ok(SrvId, Reply, Req);
-        {?MODULE, reply_error, Error} ->
+        {'$gen_cast', {nkservice_reply_error, TId, Error}} ->
             send_msg_error(SrvId, Error, Req)
     after 
         1000*?MAX_ACK_TIME -> 
@@ -173,12 +175,24 @@ wait_ack(SrvId, Req) ->
 auth(SrvId, Req) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {basic, User, Pass} ->
-            Data = #{<<"user">> => User, <<"pass">> => Pass},
+            Data = #{user_id=>User, password=>Pass, meta=>#{}},
             SessId = nklib_util:luid(),
-            State = #{srv_id=>SrvId},
+            {Ip, Port} = cowboy_req:peer(Req),
+            Transp = tls,
+            Remote = <<
+                (nklib_util:to_binary(Transp))/binary, ":",
+                (nklib_util:to_host(Ip))/binary, ":",
+                (nklib_util:to_binary(Port))/binary
+            >>,
+            State = #{
+                srv_id => SrvId, 
+                session_type => ?MODULE,
+                session_id => SessId,
+                remote => Remote
+            },
             case handle(api_server_login, [Data], State) of
                 {true, User2, _Meta, State2} ->
-                    State2#{user=>User2, session_id=>SessId};
+                    State2#{user=>User2};
                 {false, _Error, _State2} ->
                     lager:warning("HTTP RPC forbidden"),
                     throw(cowboy_req:reply(403, [], <<>>, Req))
@@ -215,13 +229,7 @@ get_body(CT, Req) ->
 
 %% @private
 send_msg_ok(_SrvId, Data, Req) ->
-    Base = #{result=>ok},
-    Msg = case Data of
-        #{} when map_size(Data)==0 -> Base;
-        #{} -> Base#{data=>Data};
-        List when is_list(List) -> Base#{data=>Data}
-    end,
-    send_http_msg(Msg, Req).
+    send_http_msg(#{result=>ok, data=>Data}, Req).
 
 
 %% @private
