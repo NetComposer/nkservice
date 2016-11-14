@@ -96,7 +96,7 @@ stop_all() ->
     {ok, map()} | {error, {integer(), binary()}} | {error, term()}.
 
 cmd(Id, Class, Sub, Cmd, Data) ->
-    Req = #api_req{class1=Class, subclass1=Sub, cmd1=Cmd, data=Data},
+    Req = #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data},
     do_call(Id, {cmd, Req}).
 
 
@@ -432,9 +432,9 @@ make_req(Class, Sub, Cmd, Data, TId, State) ->
         #state{srv_id=SrvId, user=User, session_id=Session} = State,
         Req = #api_req{
             srv_id = SrvId,
-            class1 = Class2,
-            subclass1 = Sub2,
-            cmd1 = Cmd2,
+            class = Class2,
+            subclass = Sub2,
+            cmd = Cmd2,
             tid = TId,
             data = Data, 
             user = User,
@@ -448,7 +448,7 @@ make_req(Class, Sub, Cmd, Data, TId, State) ->
 
 %% @private
 send_request(Req, From, NkPort, #state{tid=TId}=State) ->
-    #api_req{class1=Class, subclass1=Sub, cmd1=Cmd, data=Data} = Req,
+    #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data} = Req,
     Msg1 = #{
         class => Class,
         cmd => Cmd,

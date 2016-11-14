@@ -72,7 +72,7 @@
     {ok, Result::binary(), Data::map()} | {error, term()}.
 
 cmd(Id, Class, SubClass, Cmd, Data) ->
-    Req = #api_req{class1=Class, subclass1=SubClass, cmd1=Cmd, data=Data},
+    Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
     do_call(Id, {nkservice_cmd, Req}).
 
 
@@ -81,7 +81,7 @@ cmd(Id, Class, SubClass, Cmd, Data) ->
     ok.
 
 cmd_async(Id, Class, SubClass, Cmd, Data) ->
-    Req = #api_req{class1=Class, subclass1=SubClass, cmd1=Cmd, data=Data},
+    Req = #api_req{class=Class, subclass=SubClass, cmd=Cmd, data=Data},
     do_cast(Id, {nkservice_cmd, Req}).
 
 
@@ -360,9 +360,9 @@ conn_parse({text, Text}, NkPort, State) ->
             #state{srv_id=SrvId, user=User, session_id=Session} = State,
             Req = #api_req{
                 srv_id = SrvId,
-                class1 = Class,
-                subclass1 = maps:get(<<"subclass">>, Msg, <<"core">>),
-                cmd1 = Cmd,
+                class = Class,
+                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
+                cmd = Cmd,
                 tid = TId,
                 data = maps:get(<<"data">>, Msg, #{}), 
                 user = User,
@@ -510,7 +510,7 @@ conn_handle_cast({nkservice_send_event, Event, Body}, NkPort, State) ->
         end
     ],
     Data2 = maps:from_list(lists:flatten(Data1)),
-    Req = #api_req{class1=core, cmd1=event, data=Data2},
+    Req = #api_req{class=core, cmd=event, data=Data2},
     send_request(Req, undefined, NkPort, State);
 
 conn_handle_cast(nkservice_stop, _NkPort, State) ->
@@ -583,7 +583,7 @@ conn_handle_info(nkservice_send_ping, _NkPort, #state{ping=undefined}=State) ->
 
 conn_handle_info(nkservice_send_ping, NkPort, #state{ping=Time}=State) ->
     erlang:send_after(1000*Time, self(), nkservice_send_ping),
-    Req = #api_req{class1=core, cmd1=ping, data = #{time=>Time}},
+    Req = #api_req{class=core, cmd=ping, data = #{time=>Time}},
     send_request(Req, undefined, NkPort, State);
 
 conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
@@ -790,7 +790,7 @@ extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
 
 %% @private
 send_request(Req, From, NkPort, #state{tid=TId}=State) ->
-    #api_req{class1=Class, subclass1=Sub, cmd1=Cmd, data=Data} = Req,
+    #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data} = Req,
     Msg1 = #{
         class => Class,
         cmd => Cmd,

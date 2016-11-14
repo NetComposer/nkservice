@@ -62,9 +62,9 @@
 
 -record(api_req, {
 	srv_id :: nkservice_events:srv_id(),
-	class1 :: nkservice_api:class() | binary(), 	% binary only before parsing
-	subclass1 = core :: nkservice_api:subclass() | binary(),
-	cmd1 :: nkservice_api:cmd() | binary(),
+	class :: nkservice_api:class() | binary(), 	% binary only before parsing
+	subclass = core :: nkservice_api:subclass() | binary(),
+	cmd :: nkservice_api:cmd() | binary(),
 	data = #{} :: term(),
 	tid :: term(),
 	user :: binary(),

@@ -236,8 +236,8 @@ api_server_init(_NkPort, State) ->
 -spec api_server_syntax(#api_req{}, map(), map(), list()) ->
 	{Syntax::map(), Defaults::map(), Mandatory::list()}.
 
-api_server_syntax(#api_req{class1=core}=Req, Syntax, Defaults, Mandatory) ->
-	#api_req{subclass1=Sub, cmd1=Cmd} = Req,
+api_server_syntax(#api_req{class=core}=Req, Syntax, Defaults, Mandatory) ->
+	#api_req{subclass=Sub, cmd=Cmd} = Req,
 	nkservice_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
 	
 api_server_syntax(_Req, Syntax, Defaults, Mandatory) ->
@@ -257,7 +257,7 @@ api_server_allow(_Req, State) ->
 -spec api_server_cmd(#api_req{}, state()) ->
 	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
-api_server_cmd(#api_req{class1=core, subclass1=Sub, cmd1=Cmd}=Req, State) ->
+api_server_cmd(#api_req{class=core, subclass=Sub, cmd=Cmd}=Req, State) ->
 	nkservice_api:cmd(Sub, Cmd, Req, State);
 
 api_server_cmd(_Req, State) ->

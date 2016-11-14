@@ -75,12 +75,12 @@ process_req(Req, State) ->
 
 
 %% @private
-set_atoms(#api_req{class1=Class, subclass1=Sub, cmd1=Cmd}=Req) ->
+set_atoms(#api_req{class=Class, subclass=Sub, cmd=Cmd}=Req) ->
     try
         Req#api_req{
-            class1 = nklib_util:to_existing_atom(Class),
-            subclass1 = nklib_util:to_existing_atom(Sub),
-            cmd1 = nklib_util:to_existing_atom(Cmd)
+            class = nklib_util:to_existing_atom(Class),
+            subclass = nklib_util:to_existing_atom(Sub),
+            cmd = nklib_util:to_existing_atom(Cmd)
         }
     catch
         _:_ -> error
@@ -92,9 +92,9 @@ set_atoms(#api_req{class1=Class, subclass1=Sub, cmd1=Cmd}=Req) ->
 send_unrecognized_fields(Req, Fields) ->
     #api_req{
         srv_id = SrvId, 
-        class1 = Class, 
-        subclass1 = Sub, 
-        cmd1 = Cmd, 
+        class = Class, 
+        subclass = Sub, 
+        cmd = Cmd, 
         session_id = SessId
     } = Req,
     Event = #event{

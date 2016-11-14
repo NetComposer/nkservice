@@ -157,7 +157,7 @@ init(#{id:=Id, name:=Name}=Service) ->
                 {ok, User} ->
                     % io:format("Started Service: ~p\n", [Service2]),
                     % Ensure all atoms are loaded
-                    _ = Id:api_server_syntax(#api_req{class1=none}, #{}, #{}, []),
+                    _ = Id:api_server_syntax(#api_req{class=none}, #{}, #{}, []),
                     {ok, #state{id=Id, service=Service2, user=User}};
                 {stop, Reason} ->
                     {stop, Reason}
