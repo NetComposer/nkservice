@@ -229,7 +229,13 @@ get_body(CT, Req) ->
 
 %% @private
 send_msg_ok(_SrvId, Data, Req) ->
-    send_http_msg(#{result=>ok, data=>Data}, Req).
+    Msg1 = #{result=>ok},
+    Msg2 = case Data of
+        #{} when map_size(Data)==0 -> Msg1;
+        #{} -> Msg1#{data=>Data};
+        List when is_list(List) -> Msg1#{data=>Data}
+    end,
+    send_http_msg(Msg2, Req).
 
 
 %% @private

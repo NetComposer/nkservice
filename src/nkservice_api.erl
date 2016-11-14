@@ -73,14 +73,18 @@ cmd(core, event, #api_req{srv_id=SrvId, data=Data}, State) ->
     {ok, #{}, State2};
 
 cmd(user, list, #api_req{srv_id=SrvId}, State) ->
-    Data = lists:foldl(
+    Data1 = lists:foldl(
         fun({User, SessId, _Pid}, Acc) ->
             Sessions = maps:get(User, Acc, []),
             maps:put(User, [SessId|Sessions], Acc)
         end,
         #{},
         nkservice_api_server:get_all(SrvId)),
-    {ok, Data, State};
+    Data2 = case map_size(Data1) of
+        0 -> [];
+        _ -> Data1
+    end,
+    {ok, Data2, State};
 
 cmd(user, get, #api_req{data=#{user:=User}}, State) ->
     Data = lists:foldl(
@@ -233,6 +237,7 @@ cmd(test, async, #api_req{tid=TId, data=Data}, State) ->
     {ack, State};
 
 cmd(_Sub, Cmd, _Data, State) ->
+    lager:error("Unknown command: ~p, ~p, ~p", [_Sub, Cmd, State]),
     {error, {unknown_command, Cmd}, State}.
 
 

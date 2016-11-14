@@ -647,18 +647,23 @@ conn_stop(Reason, _NkPort, #state{trans=Trans}=State) ->
 %% ===================================================================
 
 %% @private
-process_client_req(Req, NkPort, #state{user=User} = State) ->
-    case nkservice_api_lib:process_req(Req, State) of
-        {ok, Reply, State2} ->
+process_client_req(Req, NkPort, #state{user=User, user_state=UserState} = State) ->
+    case nkservice_api_lib:process_req(Req, UserState) of
+        {ok, Reply, UserState2} ->
+            State2 = State#state{user_state=UserState2},
             send_reply_ok(Reply, Req, NkPort, State2);
-        {ack, State2} ->
+        {ack, UserState2} ->
+            State2 = State#state{user_state=UserState2},
             State3 = insert_ack(Req, State2),
             send_ack(Req, NkPort, State3);
-        {login, User2, Meta, State2} when User == <<>> ->
+        {login, User2, Meta, UserState2} when User == <<>> ->
+            State2 = State#state{user_state=UserState2},
             process_login(User2, Meta, Req, NkPort, State2);
-        {login, _User, _Meta, State2} ->
+        {login, _User, _Meta, UserState2} ->
+            State2 = State#state{user_state=UserState2},
             send_reply_error(already_authenticated, Req, NkPort, State2);
-        {error, Error, State2} ->
+        {error, Error, UserState2} ->
+            State2 = State#state{user_state=UserState2},
             send_reply_error(Error, Req, NkPort, State2)
     end.
 
@@ -811,16 +816,14 @@ send_reply_ok(Data, #api_req{tid=TId}, NkPort, State) ->
 send_reply_ok(Data, TId, NkPort, State) ->
     Msg1 = #{
         result => ok,
-        tid => TId,
-        data => Data
+        tid => TId
     },
-    % Msg2 = case Data of
-    %     #{} when map_size(Data)==0 -> Msg1;
-    %     #{} -> Msg1#{data=>Data};
-    %     % List when is_list(List), length(List)==0 -> Msg1;
-    %     List when is_list(List) -> Msg1#{data=>Data}
-    % end,
-    send(Msg1, NkPort, State).
+    Msg2 = case Data of
+        #{} when map_size(Data)==0 -> Msg1;
+        #{} -> Msg1#{data=>Data};
+        List when is_list(List) -> Msg1#{data=>Data}
+    end,
+    send(Msg2, NkPort, State).
 
 
 %% @private
