@@ -42,7 +42,7 @@ connect(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
     Url = "nkapic://localhost:9010",
     Login = #{
-        user_id => nklib_util:to_binary(User), 
+        user => nklib_util:to_binary(User), 
         password=> <<"p1">>,
         meta => #{a=>User}
     },
@@ -224,7 +224,7 @@ api_server_allow(_Req, State) ->
 
 
 %% @doc Called on login
-api_server_login(#{user_id:=User, password:=<<"p1">>, meta:=Meta}, State) ->
+api_server_login(#{user:=User, password:=<<"p1">>, meta:=Meta}, State) ->
 	{true, User, Meta, State};
 
 api_server_login(_Data, _State) ->

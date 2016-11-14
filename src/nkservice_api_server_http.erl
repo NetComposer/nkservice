@@ -175,7 +175,7 @@ ack_wait(SrvId, TId, Req) ->
 auth(SrvId, Req) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {basic, User, Pass} ->
-            Data = #{user_id=>User, password=>Pass, meta=>#{}},
+            Data = #{user=>User, password=>Pass, meta=>#{}},
             SessId = nklib_util:luid(),
             {Ip, Port} = cowboy_req:peer(Req),
             Transp = tls,

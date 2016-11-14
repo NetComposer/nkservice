@@ -33,7 +33,7 @@
 syntax(user, login, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            user_id => binary, 
+            user => binary, 
             password => binary,
             meta => map
         }, 

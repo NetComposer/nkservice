@@ -60,7 +60,7 @@
 -spec start(term(), binary(), map(), function(), term()) ->
     {ok, SessId::binary(), pid()} | {error, term()}.
 
-start(Serv, Url, #{user_id:=User}=Login, Fun, UserData) ->
+start(Serv, Url, #{user:=User}=Login, Fun, UserData) ->
     {ok, SrvId} = nkservice_srv:get_srv_id(Serv),
     ConnOpts = #{
         class => {?MODULE, SrvId},
