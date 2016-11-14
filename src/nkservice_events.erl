@@ -67,12 +67,13 @@ send(#event{}=Event) ->
         body = Body,
         pid = Pid
     } = Event,
+    Class2 = nklib_util:to_binary(Class),
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),
     ObjId2 = check_wildcard(ObjId),
-    do_send(Class, Sub2, Type2, SrvId, ObjId2, Body, Pid),
-    do_send(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body, Pid),
-    do_send(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body, Pid).
+    do_send(Class2, Sub2, Type2, SrvId, ObjId2, Body, Pid),
+    do_send(Class2, Sub2, {Type2, '*'}, SrvId, ObjId2, Body, Pid),
+    do_send(Class2, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body, Pid).
 
 
 %% @doc
@@ -88,16 +89,23 @@ call(Event) ->
     ok | not_found.
 
 call(#event{}=Event, Body) ->
-    #event{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId} = Event,
+    #event{
+        class = Class, 
+        subclass = Sub, 
+        type = Type, 
+        srv_id = SrvId, 
+        obj_id = ObjId
+    } = Event,
+    Class2 = nklib_util:to_binary(Class),
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),
     ObjId2 = check_wildcard(ObjId),
     % In each search, we search for Id and Id=='*'
-    case do_call(Class, Sub2, Type2, SrvId, ObjId2, Body) of
+    case do_call(Class2, Sub2, Type2, SrvId, ObjId2, Body) of
         not_found ->
-            case do_call(Class, Sub2, {Type2, '*'}, SrvId, ObjId2, Body) of
+            case do_call(Class2, Sub2, {Type2, '*'}, SrvId, ObjId2, Body) of
                 not_found ->
-                    do_call(Class, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body);
+                    do_call(Class2, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body);
                 ok ->
                     ok
             end;
@@ -125,10 +133,11 @@ reg(#event{}=Event) ->
         undefined -> self();
         _ -> Pid
     end,
+    Class2 = nklib_util:to_binary(Class),
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),
     ObjId2 = check_wildcard(ObjId),
-    Server = start_server(Class, Sub2, Type2),
+    Server = start_server(Class2, Sub2, Type2),
     gen_server:cast(Server, {reg, SrvId, ObjId2, Body, Pid2}),
     {ok, Server}.
 
@@ -150,10 +159,11 @@ unreg(#event{}=Event) ->
         undefined -> self();
         _ -> Pid
     end,
+    Class2 = nklib_util:to_binary(Class),
     Sub2 = check_wildcard(Sub),
     Type2 = check_wildcard(Type),
     ObjId2 = check_wildcard(ObjId),
-    Server = start_server(Class, Sub2, Type2),
+    Server = start_server(Class2, Sub2, Type2),
     gen_server:cast(Server, {unreg, SrvId, ObjId2, Pid2}).
 
 
@@ -320,8 +330,9 @@ terminate(_Reason, _State) ->
 %% ===================================================================
 
 %% @private
+check_wildcard('*') -> '*';
 check_wildcard(<<"*">>) -> '*';
-check_wildcard(Any) -> Any.
+check_wildcard(Any) -> nklib_util:to_binary(Any).
 
 
 %% @private

@@ -49,16 +49,16 @@
     {ok, map(), state()} | {error, nkservice:error(), state()}.
 
 
-cmd(<<"user">>, <<"login">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(user, login, #api_req{srv_id=SrvId, data=Data}, State) ->
     case SrvId:api_server_login(Data, State) of
-        {true, User, State2} ->
-            {login, User, State2};
+        {true, User, Meta, State2} ->
+            {login, User, Meta, State2};
         {false, Error, State2} ->
             timer:sleep(1000),
             {error, Error, State2}
     end;
 
-cmd(<<"core">>, <<"event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(core, event, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{<<"class">>:=Class} = Data,
     Event = #event{
         srv_id = maps:get(<<"service">>, Data, SrvId),
@@ -71,20 +71,31 @@ cmd(<<"core">>, <<"event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     {ok, State2} = SrvId:api_server_event(Event, Body, State),
     {ok, #{}, State2};
 
-cmd(<<"user">>, <<"list">>, #api_req{srv_id=SrvId}, State) ->
-    Map = nkservice_api_server:list_users(SrvId, #{}),
-    {ok, Map, State};
+cmd(user, list, #api_req{srv_id=SrvId}, State) ->
+    Data = lists:foldl(
+        fun({User, SessId, _Pid}, Acc) ->
+            Sessions = maps:get(User, Acc, []),
+            maps:put(User, [SessId|Sessions], Acc)
+        end,
+        #{},
+        nkservice_api_server:get_all(SrvId)),
+    {ok, Data, State};
 
-cmd(<<"user">>, <<"get">>, #api_req{srv_id=SrvId, data=#{user:=User}}, State) ->
-    Map = nkservice_api_server:get_user(SrvId, User, State, #{}),
-    case maps:size(Map) of
+cmd(user, get, #api_req{data=#{user:=User}}, State) ->
+    Data = lists:foldl(
+        fun({SessId, Meta, _Pid}, Acc) ->
+            maps:put(SessId, Meta, Acc)
+        end,
+        #{},
+        nkservice_api_server:find_user(User)),
+    case map_size(Data) of
         0 -> 
             {error, user_not_found, State};
         _ ->
-            {ok, Map, State}
+            {ok, Data, State}
     end;
 
-cmd(<<"event">>, <<"subscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(event, subscribe, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{
@@ -96,27 +107,28 @@ cmd(<<"event">>, <<"subscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
         body = maps:get(body, Data, #{})
     },
     % lager:warning("SUBS: ~p, ~p", [SrvId, Event]),
-    case SrvId:api_subscribe_allow(EvSrvId, Class, Sub, Type, State) of
-        {true, State2} ->
-            nkservice_api_server:register_event(self(), Event),
-            {ok, #{}, State2};
-        {false, State2} ->
-            {error, unauthorized, State2}
-    end;
+    nkservice_api_server:subscribe(self(), Event),
+    {ok, #{}, State};
 
-cmd(<<"event">>, <<"unsubscribe">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(event, unsubscribe, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{class=Class, subclass=Sub, type=Type, srv_id=EvSrvId, obj_id=ObjId},
-    nkservice_api_server:unregister_event(self(), Event),
+    nkservice_api_server:unsubscribe(self(), Event),
     {ok, #{}, State};
 
 %% Gets [#{class=>...}]
-cmd(<<"event">>, <<"get_subscriptions">>, #api_req{tid=TId}, State) ->
-    ok = nkservice_api_server:get_subscriptions(TId, State),
+cmd(event, get_subscriptions, #api_req{tid=TId}, State) ->
+    Self = self(),
+    spawn_link(
+        fun() ->
+            Reply = nkservice_api_server:get_subscriptions(Self),
+            nkservice_api_server:reply_ok(Self, TId, Reply)
+        end),
     {ack, State};
 
-cmd(<<"event">>, <<"send">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(event, send, #api_req{srv_id=SrvId, data=Data}, State) ->
+    lager:error("SEND"),
     #{class:=Class, subclass:=Sub, type:=Type, obj_id:=ObjId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{
@@ -130,7 +142,7 @@ cmd(<<"event">>, <<"send">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     nkservice_events:send(Event),
     {ok, #{}, State};
 
-cmd(<<"user">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(user, send_event, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{type:=Type, user:=User} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{
@@ -144,16 +156,16 @@ cmd(<<"user">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     nkservice_events:send(Event),
     {ok, #{}, State};
 
-cmd(<<"session">>, <<"stop">>, #api_req{data=#{session_id:=SessId}}, State) ->
+cmd(session, stop, #api_req{data=#{session_id:=SessId}}, State) ->
     case nkservice_api_server:find_session(SessId) of
-        {ok, User, Pid} ->
+        {ok, _User, Pid} ->
             nkservice_api_server:stop(Pid),
-            {ok, #{user=>User}, State};
+            {ok, #{}, State};
         not_found ->
             {error, session_not_found, State}
     end;
 
-cmd(<<"session">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(session, send_event, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{type:=Type, session_id:=SessId} = Data,
     EvSrvId = maps:get(service, Data, SrvId),
     Event = #event{
@@ -167,7 +179,7 @@ cmd(<<"session">>, <<"send_event">>, #api_req{srv_id=SrvId, data=Data}, State) -
     nkservice_events:send(Event),
     {ok, #{}, State};
 
-cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
+cmd(session, cmd, #api_req{data=Data, tid=TId}, State) ->
     #{session_id:=SessId, class:=Class, subclass:=Sub, cmd:=Cmd} = Data,
     case nkservice_api_server:find_session(SessId) of
         {ok, _User, Pid} ->
@@ -195,7 +207,7 @@ cmd(<<"session">>, <<"cmd">>, #api_req{data=Data, tid=TId}, State) ->
             {error, session_not_found, State}
     end;
 
-cmd(<<"session">>, <<"log">>, Req, State) ->
+cmd(session, log, Req, State) ->
     Msg = get_log_msg(Req),
     lager:info("Ext API Session Log: ~p", [Msg]),
     {ok, #{}, State};

@@ -30,21 +30,32 @@
 %% ===================================================================
 
 %% @private
-syntax(<<"user">>, <<"get">>, Syntax, Defaults, Mandatory) ->
+syntax(user, login, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            user_id => binary, 
+            password => binary,
+            meta => map
+        }, 
+        Defaults, 
+        Mandatory
+    };
+
+syntax(user, get, Syntax, Defaults, Mandatory) ->
     {Syntax#{user=>binary}, Defaults, [user|Mandatory]};
 
-syntax(<<"event">>, <<"subscribe">>, Syntax, Defaults, Mandatory) ->
+syntax(event, subscribe, Syntax, Defaults, Mandatory) ->
     {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
     {S#{body => any}, D, M};
 
-syntax(<<"event">>, <<"unsubscribe">>, Syntax, Defaults, Mandatory) ->
+syntax(event, unsubscribe, Syntax, Defaults, Mandatory) ->
     syntax_events(Syntax, Defaults, Mandatory);
   
-syntax(<<"event">>, <<"send">>, Syntax, Defaults, Mandatory) ->
+syntax(event, send, Syntax, Defaults, Mandatory) ->
     {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
     {S#{body => any}, D, M};
 
-syntax(<<"user">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
+syntax(user, send_event, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             user => binary,
@@ -57,10 +68,10 @@ syntax(<<"user">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
         [user|Mandatory]
     };
 
-syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
+syntax(session, stop, Syntax, Defaults, Mandatory) ->
     {Syntax#{session_id=>binary}, Defaults, [session_id|Mandatory]};
 
-syntax(<<"session">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
+syntax(session, send_event, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             session_id => binary,
@@ -73,20 +84,20 @@ syntax(<<"session">>, <<"send_event">>, Syntax, Defaults, Mandatory) ->
         [session_id|Mandatory]
     };
 
-syntax(<<"session">>, <<"cmd">>, Syntax, Defaults, Mandatory) ->
+syntax(session, cmd, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             session_id => binary,
-            class => binary,
-            subclass => binary,
-            cmd => binary,
+            class => atom,
+            subclass => atom,
+            cmd => atom,
             data => any
         },
-        Defaults#{subclass => <<"core">>},
+        Defaults#{subclass => core},
         [session_id, class, cmd|Mandatory]
     };
 
-syntax(<<"session">>, <<"log">>, Syntax, Defaults, Mandatory) ->
+syntax(session, log, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             source => binary,

@@ -58,6 +58,7 @@ process_req(Req, State) ->
                     Req3 = Req2#api_req{data=Parsed},
                     case SrvId:api_server_allow(Req3, State) of
                         {true, State2} ->
+                            % lager:notice("Calling ~p", [Req3]),
                             SrvId:api_server_cmd(Req3, State2);
                         {false, State2} ->
                             {error, unauthorized, State2}

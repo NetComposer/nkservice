@@ -146,8 +146,6 @@ pending_msgs() ->
 init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
     % io:format("SRV: ~p", [Service]),
-    % Ensure all atoms are loaded
-    _ = Id:api_server_syntax(#api_req{class1=none}, #{}, #{}, []),
     case nkservice_srv_listen_sup:update_transports(Service) of
         {ok, Listen} ->
             Service2 = Service#{listen_ids=>Listen},
@@ -158,6 +156,8 @@ init(#{id:=Id, name:=Name}=Service) ->
             case Id:service_init(Service, #{id=>Id}) of
                 {ok, User} ->
                     % io:format("Started Service: ~p\n", [Service2]),
+                    % Ensure all atoms are loaded
+                    _ = Id:api_server_syntax(#api_req{class1=none}, #{}, #{}, []),
                     {ok, #state{id=Id, service=Service2, user=User}};
                 {stop, Reason} ->
                     {stop, Reason}

@@ -176,11 +176,9 @@ auth(SrvId, Req) ->
             Data = #{<<"user">> => User, <<"pass">> => Pass},
             SessId = nklib_util:luid(),
             State = #{srv_id=>SrvId},
-            case handle(api_server_login, [Data, SessId], State) of
-                {true, User2, State2} ->
+            case handle(api_server_login, [Data], State) of
+                {true, User2, _Meta, State2} ->
                     State2#{user=>User2, session_id=>SessId};
-                {true, User2, SessId2, State2} ->
-                    State2#{user=>User2, session_id=>SessId2};
                 {false, _Error, _State2} ->
                     lager:warning("HTTP RPC forbidden"),
                     throw(cowboy_req:reply(403, [], <<>>, Req))

@@ -320,6 +320,8 @@ conn_stop(Reason, _NkPort, State) ->
 %% @private
 process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
     #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
+
+
     case CB(Req#api_req{user=User, session_id=SessId}, UserData) of
         {ok, Reply, UserData2} ->
             send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
@@ -430,9 +432,9 @@ make_req(Class, Sub, Cmd, Data, TId, State) ->
         #state{srv_id=SrvId, user=User, session_id=Session} = State,
         Req = #api_req{
             srv_id = SrvId,
-            class1 = Class,
-            subclass1 = Sub,
-            cmd1 = Cmd,
+            class1 = Class2,
+            subclass1 = Sub2,
+            cmd1 = Cmd2,
             tid = TId,
             data = Data, 
             user = User,

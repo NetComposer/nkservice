@@ -253,27 +253,20 @@ api_server_allow(_Req, State) ->
 	{false, State}.
 
 
-
 %% @doc Called when a new API command has arrived and is authorized
 -spec api_server_cmd(#api_req{}, state()) ->
 	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
 
-api_server_cmd(#api_req{class1=core}=Req, State) ->
-	#api_req{subclass1=Sub, cmd1=Cmd} = Req,
+api_server_cmd(#api_req{class1=core, subclass1=Sub, cmd1=Cmd}=Req, State) ->
 	nkservice_api:cmd(Sub, Cmd, Req, State);
 
 api_server_cmd(_Req, State) ->
 	{error, not_implemented, State}.
 
 
-
 %% @doc Cmd "login" is received (class "core")
-%% You get the class and data fields, along with a server-generated session id
-%% You can accept the request setting an 'user' for this connection
-%% and, optionally, changing the session id (for example for session recoverty)
 -spec api_server_login(map(), state()) ->
-	{true, User::binary(), state()} | 
-	{true, User::binary(), SessId::binary(), state()} | 
+	{true, User::binary(), Meta::map(), state()} | 
 	{false, error_code(), state()} | continue.
 
 api_server_login(_Data, State) ->

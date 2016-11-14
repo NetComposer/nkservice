@@ -25,14 +25,13 @@
 -export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
 -export([stop/1, start_ping/2, stop_ping/1]).
 -export([register/2, unregister/2]).
--export([register_event/2, register_event/3, unregister_event/2, unregister_event/3]).
--export([find_user/1, find_session/1]).
+-export([subscribe/2, subscribe/3, unsubscribe/2, unsubscribe/3]).
+-export([find_user/1, find_session/1, get_subscriptions/1]).
 -export([do_register_http/1]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
--export([list_users/2, get_user/4, get_subscriptions/2]).
--export([get_all/0, get_all/1, print/3, get_data/1]).
+-export([get_all/0, get_all/1, print/3]).
 
 
 -define(LLOG(Type, Txt, Args, State),
@@ -44,9 +43,10 @@
         ok).
 
 
--define(OP_TIME, 5).            % Maximum operation time (without ACK)
+-define(OP_TIME, 10).           % Maximum operation time (without ACK)
 -define(ACK_TIME, 180).         % Maximum operation time (with ACK)
 -define(CALL_TIMEOUT, 180).     % Maximum sync call time
+-define(PING_TIME, 60).
 
 -include("nkservice.hrl").
 
@@ -92,7 +92,7 @@ cmd_async(Id, Class, SubClass, Cmd, Data) ->
 reply_ok(Id, TId, Data) ->
     case find(Id) of
         {ok, Pid} ->
-            gen_server:cast(Pid, {reply_ok, TId, Data});
+            gen_server:cast(Pid, {nkservice_reply_ok, TId, Data});
         not_found ->
             case find_session_http(Id) of
                 {ok, Pid} ->
@@ -110,7 +110,7 @@ reply_ok(Id, TId, Data) ->
 reply_error(Id, TId, Code) ->
     case find(Id) of
         {ok, Pid} ->
-            gen_server:cast(Pid, {reply_error, TId, Code});
+            gen_server:cast(Pid, {nkservice_reply_error, TId, Code});
         not_found ->
             case find_session_http(Id) of
                 {ok, Pid} ->
@@ -128,7 +128,7 @@ reply_error(Id, TId, Code) ->
 
 %% @doc Send to extend the timeout for the transaction 
 reply_ack(Id, TId) ->
-    do_cast(Id, {reply_ack, TId}).
+    do_cast(Id, {nkservice_reply_ack, TId}).
 
 
 %% @doc Start sending pings
@@ -172,35 +172,35 @@ unregister(Id, Link) ->
 %% @doc Registers with the Events system
 %% All fields except body and pid are used for index
 %% Id is not used for real registrations
--spec register_event(id(), nkservice:event()) ->
+-spec subscribe(id(), nkservice:event()) ->
     ok.
 
-register_event(Id, Event) ->
-    register_event(Id, Event, single).
+subscribe(Id, Event) ->
+    subscribe(Id, Event, single).
 
 
 %% @doc Registers with and index
--spec register_event(id(), nkservice:event(), term()) ->
+-spec subscribe(id(), nkservice:event(), term()) ->
     ok.
 
-register_event(Id, Event, InstanceId) ->
-    do_cast(Id, {nkservice_register_event, Event, InstanceId}).
+subscribe(Id, Event, InstanceId) ->
+    do_cast(Id, {nkservice_subscribe, Event, InstanceId}).
 
 
 %% @doc Unregisters with the Events systtem
--spec unregister_event(id(),  nkservice:event()) ->
+-spec unsubscribe(id(),  nkservice:event()) ->
     ok.
 
-unregister_event(Id, Event) ->
-    unregister_event(Id, Event, single).
+unsubscribe(Id, Event) ->
+    unsubscribe(Id, Event, single).
 
 
 %% @doc 
--spec unregister_event(id(),  nkservice:event(), term()|all) ->
+-spec unsubscribe(id(),  nkservice:event(), term()|all) ->
     ok.
 
-unregister_event(Id, Event, InstanceId) ->
-    do_cast(Id, {nkservice_unregister_event, Event, InstanceId}).
+unsubscribe(Id, Event, InstanceId) ->
+    do_cast(Id, {nkservice_unsubscribe, Event, InstanceId}).
 
 
 %% @private
@@ -219,14 +219,19 @@ get_all(SrvId) ->
     [{User, SessId, Pid} || {{User, SessId}, Pid} <- nklib_proc:values({?MODULE, SrvId})].
 
 
+%% @private
 -spec find_user(string()|binary()) ->
-    [{SessId::binary(), pid()}].
+    [{SessId::binary(), Meta::map(), pid()}].
 
 find_user(User) ->
     User2 = nklib_util:to_binary(User),
-    nklib_proc:values({?MODULE, user, User2}).
+    [
+        {SessId, Meta, Pid} ||
+        {{SessId, Meta}, Pid}<- nklib_proc:values({?MODULE, user, User2})
+    ].
 
 
+%% @private
 -spec find_session(binary()) ->
     {ok, User::binary(), pid()} | not_found.
 
@@ -237,6 +242,7 @@ find_session(SessId) ->
     end.
 
 
+%% @private
 -spec find_session_http(binary()) ->
     {ok, pid()} | not_found.
 
@@ -248,22 +254,9 @@ find_session_http(SessId) ->
 
 
 %% @private
-get_data(Id) ->
-    do_call(Id, get_data).
+get_subscriptions(Id) ->
+    do_call(Id, nkservice_get_subscriptions).
 
-
-%% @private
-do_register(SrvId, User, SessId) ->
-    case nklib_proc:reg({?MODULE, session, SessId}, User) of
-        true ->
-            nklib_proc:put(?MODULE, {User, SessId}),
-            nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
-            nklib_proc:put({?MODULE, user, User}, {SessId}),
-            true;
-        {false, _} ->
-            false
-    end.
-    
 
 %% @private
 do_register_http(SessId) ->
@@ -295,7 +288,6 @@ do_register_http(SessId) ->
     mon :: reference()
 }).
 
-
 -record(state, {
     srv_id :: nkservice:id(),
     user = <<>> :: binary(),
@@ -303,7 +295,7 @@ do_register_http(SessId) ->
     trans = #{} :: #{tid() => #trans{}},
     tid = 1 :: integer(),
     ping :: integer() | undefined,
-    regs2 = [] :: [#reg{}],
+    regs = [] :: [#reg{}],
     links :: nklib_links:links(),
     % retry_time = 100 :: integer(),
     user_state :: user_state()
@@ -334,13 +326,14 @@ conn_init(NkPort) ->
     {ok, {nkservice_api_server, SrvId}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     UserState = #{type=>api_server, srv_id=>SrvId, remote=>Remote},
+    SessId = nklib_util:luid(),
+    true = nklib_proc:reg({?MODULE, session, SessId}, <<>>),
     State1 = #state{
         srv_id = SrvId,
-        session_id = nklib_util:luid(),
+        session_id = SessId,
         user_state = UserState,
         links = nklib_links:new()
     },
-    nklib_proc:put(?MODULE, <<>>),
     ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
     {ok, State2} = handle(api_server_init, [NkPort], State1),
     {ok, State2}.
@@ -429,12 +422,7 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 conn_handle_call({nkservice_cmd, Req}, From, NkPort, State) ->
     send_request(Req, From, NkPort, State);
     
-conn_handle_call(nkservice_get_user_data, From, _NkPort, State) ->
-    #state{user_state=UserState} = State,
-    gen_server:reply(From, get_user_data(self(), UserState)),
-    {ok, State};
-
-conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs2=Regs}=State) ->
+conn_handle_call(nkservice_get_subscriptions, From, _NkPort, #state{regs=Regs}=State) ->
     Data = [
         #{
             class => Class,
@@ -452,15 +440,10 @@ conn_handle_call(nkservice_get_regs, From, _NkPort, #state{regs2=Regs}=State) ->
     gen_server:reply(From, Data),
     {ok, State};
 
-conn_handle_call(get_data, From, _NkPort, #state{regs2=Regs, links=Links}=State) ->
-    Events = [{Event, Ids} || #reg{event=Event, ids=Ids} <-Regs],
-    gen_server:reply(From, {ok, Events, Links}),
+conn_handle_call(get_state, From, _NkPort, State) ->
+    gen_server:reply(From, lager:pr(State, ?MODULE)),
     {ok, State};
 
-conn_handle_call(get_state, From, _NkPort, State) ->
-    gen_server:reply(From, {ok, State}),
-    {ok, State};
-    
 conn_handle_call(Msg, From, _NkPort, State) ->
     handle(api_server_handle_call, [Msg, From], State).
 
@@ -471,7 +454,7 @@ conn_handle_call(Msg, From, _NkPort, State) ->
 conn_handle_cast({nkservice_cmd, Req}, NkPort, State) ->
     send_request(Req, undefined, NkPort, State);
 
-conn_handle_cast({reply_ok, TId, Data}, NkPort, State) ->
+conn_handle_cast({nkservice_reply_ok, TId, Data}, NkPort, State) ->
     case extract_op(TId, State) of
         {#trans{op=ack}, State2} ->
             send_reply_ok(Data, TId, NkPort, State2);
@@ -480,7 +463,7 @@ conn_handle_cast({reply_ok, TId, Data}, NkPort, State) ->
             {ok, State}
     end;
 
-conn_handle_cast({reply_error, TId, Code}, NkPort, State) ->
+conn_handle_cast({nkservice_reply_error, TId, Code}, NkPort, State) ->
     case extract_op(TId, State) of
         {#trans{op=ack}, State2} ->
             send_reply_error(Code, TId, NkPort, State2);
@@ -489,7 +472,7 @@ conn_handle_cast({reply_error, TId, Code}, NkPort, State) ->
             {ok, State}
     end;
 
-conn_handle_cast({reply_ack, TId}, NkPort, State) ->
+conn_handle_cast({nkservice_reply_ack, TId}, NkPort, State) ->
     case extract_op(TId, State) of
         {#trans{op=ack}, State2} ->
             State3 = insert_ack(TId, State2),
@@ -543,8 +526,8 @@ conn_handle_cast({nkservice_start_ping, Time}, _NkPort, #state{ping=Ping}=State)
 conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
-conn_handle_cast({nkservice_register_event, Event, Id}, _NkPort, State) ->
-    #state{regs2=Regs} = State,
+conn_handle_cast({nkservice_subscribe, Event, Id}, _NkPort, State) ->
+    #state{regs=Regs} = State,
     Index = event_index(Event),
     {ok, Pid} = nkservice_events:reg(Event),
     Regs2 = case lists:keyfind(Index, #reg.index, Regs) of
@@ -557,25 +540,25 @@ conn_handle_cast({nkservice_register_event, Event, Id}, _NkPort, State) ->
             Reg2 = Reg#reg{event=Event, ids=nklib_util:store_value(Id, OldsIds)},
             lists:keystore(Index, #reg.index, Regs, Reg2)
     end,
-    {ok, State#state{regs2=Regs2}};
+    {ok, State#state{regs=Regs2}};
 
-conn_handle_cast({nkservice_unregister_event, Event, Id}, _NkPort, State) ->
-    #state{regs2=Regs} = State,
+conn_handle_cast({nkservice_unsubscribe, Event, Id}, _NkPort, State) ->
+    #state{regs=Regs} = State,
     Index = event_index(Event),
     case lists:keytake(Index, #reg.index, Regs) of
         {value, #reg{ids=[Id], mon=Mon}, Regs2} ->
             demonitor(Mon),
             ?LLOG(info, "unregistered event ~p", [Event], State),
             ok = nkservice_events:unreg(Event),
-            {ok, State#state{regs2=Regs2}};
+            {ok, State#state{regs=Regs2}};
         {value, #reg{mon=Mon}, Regs2} when Id==all ->
             demonitor(Mon),
             ?LLOG(info, "unregistered event ~p", [Event], State),
             ok = nkservice_events:unreg(Event),
-            {ok, State#state{regs2=Regs2}};
+            {ok, State#state{regs=Regs2}};
         {value, #reg{ids=Ids}=Reg, Regs2} ->
             Reg2 = Reg#reg{ids=Ids -- [Id]},
-            {ok, State#state{regs2=[Reg2|Regs2]}};
+            {ok, State#state{regs=[Reg2|Regs2]}};
         false ->
             {ok, State}
     end;
@@ -613,12 +596,15 @@ conn_handle_info({timeout, _, {nkservice_op_timeout, TId}}, _NkPort, State) ->
             {ok, State}
     end;
 
+conn_handle_info({'EXIT', _PId, normal}, _NkPort, State) ->
+    {ok, State};
+
 conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
-    #state{regs2=Regs} = State,
+    #state{regs=Regs} = State,
     case lists:keytake(Ref, 2, Regs) of
         {value, #reg{event=Event, ids=Ids}, Regs2} ->
-            lists:foreach(fun(Id) -> register_event(self(), Event, Id) end, Ids),
-            {ok, State#state{regs2=Regs2}};
+            lists:foreach(fun(Id) -> subscribe(self(), Event, Id) end, Ids),
+            {ok, State#state{regs=Regs2}};
         false ->
             case links_down(Ref, State) of
                 {ok, Link, State2} ->
@@ -668,78 +654,13 @@ process_client_req(Req, NkPort, #state{user=User} = State) ->
         {ack, State2} ->
             State3 = insert_ack(Req, State2),
             send_ack(Req, NkPort, State3);
-        {login, User2, State2} when User == <<>> ->
-            process_login(User2, Req, NkPort, State2);
-        {login, _User, State2} ->
+        {login, User2, Meta, State2} when User == <<>> ->
+            process_login(User2, Meta, Req, NkPort, State2);
+        {login, _User, _Meta, State2} ->
             send_reply_error(already_authenticated, Req, NkPort, State2);
         {error, Error, State2} ->
             send_reply_error(Error, Req, NkPort, State2)
     end.
-
-
-
-
-
-
-
-
-
-% process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, 
-%                    #state{session_id = <<>>} = State) ->
-%     _ = send_ack(Req, NkPort, State),
-%     #api_req{data=Data} = Req,
-%     SessId = case Data of
-%         #{<<"session_id">>:=UserSessId} -> UserSessId;
-%         _ -> nklib_util:uuid_4122()
-%     end,
-%     case handle(api_server_login, [Data, SessId], State) of
-%         {true, User, State2} ->
-%             process_login(User, SessId, Req, NkPort, State2);
-%         {true, User, NewSessId, State2} ->
-%             process_login(User, NewSessId, Req, NkPort, State2);
-%         {false, Error, State2} ->
-%             #state{retry_time=Time} = State2,
-%             timer:sleep(Time),
-%             State3 = State2#state{retry_time=2*Time},
-%             send_reply_error(Error, Req, NkPort, State3)
-%     end;
-
-% process_client_req(<<"core">>, <<"user">>, <<"login">>, Req, NkPort, State) ->
-%     send_reply_error(already_authenticated, Req, NkPort, State);
-
-% process_client_req(_Class, _Sub, _Cmd, Req, NkPort, #state{session_id = <<>>}=State) ->
-%     send_reply_error(not_authenticated, Req, NkPort, State);
-
-% process_client_req(<<"core">>, <<"core">>, <<"event">>, Req, NkPort, State) ->
-%     #api_req{data=#{<<"class">>:=Class}=Data} = Req, 
-%     #state{srv_id=SrvId} = State,
-%     case send_reply_ok(#{}, Req, NkPort, State) of
-%         {ok, State2} ->
-%             Event = #event{
-%                 srv_id = maps:get(<<"service">>, Data, SrvId),
-%                 class = Class, 
-%                 subclass = maps:get(<<"subclass">>, Data, <<"*">>),
-%                 type = maps:get(<<"type">>, Data, <<"*">>),
-%                 obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
-%             },
-%             Body = maps:get(<<"body">>, Data, #{}),
-%             {ok, State3} = handle(api_server_event, [Event, Body], State2),
-%             {ok, State3};
-%         Other ->
-%             Other
-%     end;
-
-% process_client_req(_Class, _Sub, _Cmd, #api_req{tid=TId}=Req, NkPort, State) ->
-%     case handle(api_server_cmd, [Req], State) of
-%         {ok, Reply, State2} when is_map(Reply); is_list(Reply) ->
-%             send_reply_ok(Reply, Req, NkPort, State2);
-%         {ack, State2} ->
-%             State3 = insert_ack(TId, State2),
-%             send_ack(Req, NkPort, State3);
-%         {error, Error, State2} ->
-%             send_reply_error(Error, Req, NkPort, State2)
-%     end.
-
 
 %% @private
 process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
@@ -753,84 +674,28 @@ process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-process_login(User, Req, NkPort, State) ->
+process_login(User, Meta, Req, NkPort, State) ->
     #state{srv_id=SrvId, session_id=SessId, user_state=UserState} = State,
-    case do_register(SrvId, User, SessId) of
-        true ->
-            UserState2 = UserState#{user=>User, session_id=>SessId},
-            State2 = State#state{user_state=UserState2, user=User},
-            nklib_proc:put(?MODULE, {socket, User, SessId}),
-            nklib_proc:put({?MODULE, SrvId}, {socket, User, SessId}),
-            nklib_proc:put({?MODULE, user, User}, {socket, SessId}),
-            Event1 = #event{
-                srv_id = SrvId,
-                class = <<"core">>,
-                subclass = <<"user_event">>,
-                obj_id = User
-            },
-            register_event(self(), Event1),
-            Event2 = Event1#event{
-                subclass = <<"session_event">>,
-                obj_id = SessId
-            },
-            register_event(self(), Event2),
-            send_reply_ok(#{session_id=>SessId}, Req, NkPort, State2);
-        {false, _} -> 
-            stop(self()),
-            send_reply_error(duplicated_session_id, Req, NkPort, State)
-end.
-
-
-
-%% @private
-list_users(SrvId, Acc) ->
-    lists:foldl(
-        fun({User, SessId, _Pid}, FunAcc) ->
-            Sessions = maps:get(User, FunAcc, []),
-            maps:put(User, [SessId|Sessions], FunAcc)
-        end,
-        Acc,
-        get_all(SrvId)
-    ).
-
-
-%% @private
-get_user(_SrvId, User, UserState, Acc) ->
-    lists:foldl(
-        fun({SessId, Pid}, FunAcc) ->
-            case get_user_data(Pid, UserState) of
-                {ok, UserData} ->
-                    maps:put(SessId, UserData, FunAcc);
-                _ ->
-                    FunAcc
-            end
-        end,
-        Acc,
-        find_user(User)
-    ).
-
-
-%% @private
-get_user_data(Pid, _UserState) when Pid/= self() ->
-    nklib_util:call(Pid, nkservice_get_user_data);
-
-get_user_data(_Pid, #{srv_id:=SrvId}=UserState) ->
-    UserState2 = maps:without([session_id, srv_id, user], UserState),
-    SrvId:api_server_get_user_data(UserState2).
-
-
-%% @private
-get_subscriptions(TId, #{type:=api_server}) ->
-    Self = self(),
-    _ = spawn_link(
-        fun() ->
-            Subs = gen_server:call(Self, nkservice_get_regs),
-            reply_ok(Self, TId, Subs)        
-        end),
-    ok;
-
-get_subscriptions(_TId, _) ->
-    continue.
+    UserState2 = UserState#{user=>User, session_id=>SessId},
+    State2 = State#state{user_state=UserState2, user=User},
+    nklib_proc:put(?MODULE, {User, SessId}),
+    nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
+    nklib_proc:put({?MODULE, user, User}, {SessId, Meta}),
+    nklib_proc:put({?MODULE, session, SessId}, User),
+    Event1 = #event{
+        srv_id = SrvId,
+        class = <<"core">>,
+        subclass = <<"user_event">>,
+        obj_id = User
+    },
+    subscribe(self(), Event1),
+    Event2 = Event1#event{
+        subclass = <<"session_event">>,
+        obj_id = SessId
+    },
+    subscribe(self(), Event2),
+    start_ping(self(), ?PING_TIME),
+    send_reply_ok(#{session_id=>SessId}, Req, NkPort, State2).
 
 
 %% @private
@@ -862,7 +727,7 @@ find(Pid) when is_pid(Pid) ->
 
 find(Id) ->
     case find_user(Id) of
-        [{_, Pid}|_] ->
+        [{_SessId, _Meta, Pid}|_] ->
             {ok, Pid};
         [] ->
             case find_session(Id) of
