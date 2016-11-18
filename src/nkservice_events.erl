@@ -461,10 +461,11 @@ send_events([{Pid, _}|Rest], Event, Body, PidS) when is_pid(PidS), Pid/=PidS ->
 send_events([{Pid, RegBody}|Rest], #event{}=Event, Body, PidS) ->
     % lager:info("Sending event ~p to ~p (~p)", 
     %            [lager:pr(Event, ?MODULE), Pid, Body]),
-    Body2 = case is_map(Body) andalso is_map(RegBody) of
-        true -> maps:merge(RegBody, Body);
-        false when map_size(Body)==0 -> RegBody;
-        false -> RegBody
+    Body2 = case {is_map(Body), is_map(RegBody)} of
+        {true, true} -> maps:merge(RegBody, Body);
+        {true, false} -> Body;
+        {false, true} -> RegBody;
+        {false, false} -> Body
     end,
     Pid ! {nkservice_event, Event, Body2},
     send_events(Rest, Event, Body, PidS).

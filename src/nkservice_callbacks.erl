@@ -208,7 +208,8 @@ error_code(session_not_found) 		-> {100062, "Session not found"};
 
 error_code(invalid_uri) 			-> {100070, "Invalid Uri"};
 error_code(unknown_peer) 			-> {100071, "Unknown peer"};
-error_code(invalid_json) 			-> {100070, "Invalid JSON"};
+error_code(invalid_json) 			-> {100072, "Invalid JSON"};
+error_code(data_not_available)   	-> {100073, "Data is not available"};
 
 
 error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->

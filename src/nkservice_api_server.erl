@@ -22,8 +22,8 @@
 -module(nkservice_api_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([cmd/5, cmd_async/5, reply_ok/3, reply_error/3, reply_ack/2]).
--export([stop/1, start_ping/2, stop_ping/1]).
+-export([cmd/5, cmd_async/5, reply_ok/3, reply_login/5, reply_error/3, reply_ack/2]).
+-export([stop/1, stop_all/0, start_ping/2, stop_ping/1]).
 -export([register/2, unregister/2]).
 -export([subscribe/2, subscribe/3, unsubscribe/2, unsubscribe/3]).
 -export([find_user/1, find_session/1, get_subscriptions/1]).
@@ -103,6 +103,14 @@ reply_ok(Id, TId, Data) ->
     end.
 
 
+%% @doc Sends an "login ok" reply to a command (when you reply 'ack' in callbacks)
+-spec reply_login(id(), term(), map(), binary(), map()) ->
+    ok.
+
+reply_login(Id, TId, Reply, User, MetaData) ->
+    do_cast(Id, {nkservice_reply_login, TId, Reply, User, MetaData}).
+
+
 %% @doc Sends an error reply to a command (when you reply 'ack' in callbacks)
 -spec reply_error(id(), term(), nkservice:error()) ->
     ok.
@@ -151,6 +159,11 @@ stop_ping(Id) ->
 %% @doc Stops the server
 stop(Id) ->
     do_cast(Id, nkservice_stop).
+
+
+%% @doc Stops all clients
+stop_all() ->
+    lists:foreach(fun({_User, _SessId, Pid}) -> stop(Pid) end, get_all()).
 
 
 %% @doc Registers a process with the session
@@ -459,7 +472,23 @@ conn_handle_cast({nkservice_reply_ok, TId, Data}, NkPort, State) ->
         {#trans{op=ack}, State2} ->
             send_reply_ok(Data, TId, NkPort, State2);
         not_found ->
-            ?LLOG(warning, "received user reply_ok for unknown req: ~p ~p", [TId, State#state.trans], State), 
+            ?LLOG(warning, "received user reply_ok for unknown req: ~p ~p", 
+                  [TId, State#state.trans], State), 
+            {ok, State}
+    end;
+
+conn_handle_cast({nkservice_reply_login, TId, Reply, User, Meta}, NkPort, State) ->
+    case extract_op(TId, State) of
+        {#trans{op=ack}, State2} ->
+            case State of
+                #state{user = <<>>} ->
+                    process_login(Reply, User, Meta, TId, NkPort, State2);
+                _ ->
+                    send_reply_error(already_authenticated, TId, NkPort, State2)
+            end;
+        not_found ->
+            ?LLOG(warning, "received user nkservice_reply_login for unknown req: ~p ~p", 
+                  [TId, State#state.trans], State), 
             {ok, State}
     end;
 
@@ -468,7 +497,8 @@ conn_handle_cast({nkservice_reply_error, TId, Code}, NkPort, State) ->
         {#trans{op=ack}, State2} ->
             send_reply_error(Code, TId, NkPort, State2);
         not_found ->
-            ?LLOG(warning, "received user reply_error for unknown req: ~p ~p", [TId, State#state.trans], State), 
+            ?LLOG(warning, "received user reply_error for unknown req: ~p ~p", 
+                  [TId, State#state.trans], State), 
             {ok, State}
     end;
 
@@ -656,10 +686,10 @@ process_client_req(Req, NkPort, #state{user=User, user_state=UserState} = State)
             State2 = State#state{user_state=UserState2},
             State3 = insert_ack(Req, State2),
             send_ack(Req, NkPort, State3);
-        {login, User2, Meta, UserState2} when User == <<>> ->
+        {login, Reply, User2, Meta, UserState2} when User == <<>> ->
             State2 = State#state{user_state=UserState2},
-            process_login(User2, Meta, Req, NkPort, State2);
-        {login, _User, _Meta, UserState2} ->
+            process_login(Reply, User2, Meta, Req, NkPort, State2);
+        {login, _Reply, _User, _Meta, UserState2} ->
             State2 = State#state{user_state=UserState2},
             send_reply_error(already_authenticated, Req, NkPort, State2);
         {error, Error, UserState2} ->
@@ -679,9 +709,9 @@ process_client_resp(Result, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-process_login(User, Meta, Req, NkPort, State) ->
+process_login(Reply, User, Meta, ReqOrTid, NkPort, State) ->
     #state{srv_id=SrvId, session_id=SessId, user_state=UserState} = State,
-    UserState2 = UserState#{user=>User, session_id=>SessId},
+    UserState2 = UserState#{user=>User, user_meta=>Meta, session_id=>SessId},
     State2 = State#state{user_state=UserState2, user=User},
     nklib_proc:put(?MODULE, {User, SessId}),
     nklib_proc:put({?MODULE, SrvId}, {User, SessId}),
@@ -700,7 +730,7 @@ process_login(User, Meta, Req, NkPort, State) ->
     },
     subscribe(self(), Event2),
     start_ping(self(), ?PING_TIME),
-    send_reply_ok(#{session_id=>SessId}, Req, NkPort, State2).
+    send_reply_ok(Reply#{session_id=>SessId}, ReqOrTid, NkPort, State2).
 
 
 %% @private

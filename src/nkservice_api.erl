@@ -53,7 +53,7 @@ cmd(user, login, #api_req{srv_id=SrvId, data=Data},
         #{session_type:=nkservice_api_server}=State) ->
     case SrvId:api_server_login(Data, State) of
         {true, User, Meta, State2} ->
-            {login, User, Meta, State2};
+            {login, #{}, User, Meta, State2};
         {false, Error, State2} ->
             timer:sleep(1000),
             {error, Error, State2}
