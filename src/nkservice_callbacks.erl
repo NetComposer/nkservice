@@ -234,6 +234,7 @@ api_server_init(_NkPort, State) ->
 
 
 %% @doc Called to get the syntax for an external API command
+%% Called from nkservice_api_lib
 -spec api_server_syntax(#api_req{}, map(), map(), list()) ->
 	{Syntax::map(), Defaults::map(), Mandatory::list()}.
 
@@ -247,6 +248,7 @@ api_server_syntax(_Req, Syntax, Defaults, Mandatory) ->
 
 %% @doc Called when a new API command has arrived and called nkservice_api:launch_cmd/6
 %% to authorized the (already parsed) request
+%% Called from nkservice_api_lib
 -spec api_server_allow(#api_req{}, state()) ->
 	{boolean(), state()}.
 

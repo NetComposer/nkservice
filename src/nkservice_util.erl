@@ -53,7 +53,7 @@ http(Method, Url, Opts) ->
             };
         #{body:=Body} ->
             {
-                [{<<"Content-Type">>, <<"application/octet-stream">>}|Headers1],
+                Headers1,
                 nklib_util:to_binary(Body)                
             };
         _ ->
@@ -235,15 +235,6 @@ error_code(SrvId, Error) ->
                     {Code, list_to_binary(Val)}
             end
     end.
-
-
-
-
-
-
-
-
-
 
 
 
