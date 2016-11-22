@@ -21,7 +21,7 @@
 -module(nkservice).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, stop/1, update/2, get_all/0, get_all/1]).
+-export([start/2, stop/1, reload/1, update/2, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export([get_listeners/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
@@ -168,6 +168,14 @@ stop(Service) ->
             {error, not_running}
     end.
 
+
+
+%% @doc Reloads a configuration
+-spec reload(service_select()) ->
+    ok | {error, term()}.
+
+reload(ServiceId) ->
+    update(ServiceId, #{}).
 
 
 %% @doc Updates a service configuration

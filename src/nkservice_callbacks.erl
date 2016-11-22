@@ -36,7 +36,7 @@
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
 -export([api_server_http_download/4, api_server_http_upload/6]).
-
+-export([api_server_http_get/2, api_server_http_post/4]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -267,7 +267,8 @@ api_server_cmd(_Req, State) ->
 	{error, not_implemented, State}.
 
 
-%% @doc Cmd "login" is received (class "core")
+%% @doc Used when the standard login apply
+%% Called from nkservice_api or nkservice_api_server_http
 -spec api_server_login(map(), state()) ->
 	{true, User::binary(), Meta::map(), state()} | 
 	{false, error_code(), state()} | continue.
@@ -379,6 +380,20 @@ api_server_http_upload(_Mod, _ObjId, _Name, _CT, _Bin, State) ->
 	{error, not_found, State}.
 
 
+%% @doc called when a GET is received
+-spec api_server_http_get([binary()], state()) ->
+	{ok, Code::integer(), Hds::[{binary(), binary()}], Body::map()|binary(), state()}.
+
+api_server_http_get(_Path, State) ->
+	{ok, 404, [], <<"Unhandled Request">>, State}.
+
+
+%% @doc called when a PUT is received
+-spec api_server_http_post([binary()], CT::binary(), Body::binary(), state()) ->
+	{ok, Code::integer(), Hds::[{binary(), binary()}], Body::map()|binary(), state()}.
+
+api_server_http_post(_Path, _CT, _Body, State) ->
+	{ok, 404, [], <<"Unhandled Request">>, State}.
 
 
 %% ===================================================================

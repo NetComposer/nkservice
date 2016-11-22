@@ -61,32 +61,6 @@ filename_decode(Term) ->
 
 
 %% ===================================================================
-%% Callbacks
-%% ===================================================================
-
-
-%% @private
-init(Req, [{srv_id, SrvId}]) ->
-    try
-        State = auth(SrvId, Req),
-        Method = cowboy_req:method(Req),
-        PathInfo = cowboy_req:path_info(Req),
-        CT = cowboy_req:header(<<"content-type">>, Req),
-        Body = get_body(CT, Req),
-        Req2 = incoming(SrvId, Method, PathInfo, CT, Body, Req, State),
-        {ok, Req2, []}
-    catch
-        throw:ReqF -> 
-            {ok, ReqF, []}
-    end.
-
-
-%% @private
-terminate(_Reason, _Req, _Opts) ->
-    ok.
-
-
-%% ===================================================================
 %% Incoming
 %% ===================================================================
 
@@ -147,6 +121,14 @@ incoming(SrvId, <<"POST">>, [<<"upload">>, File], CT, Body, Req, State) ->
             cowboy_req:reply(400, [], <<"Invalid file name">>, Req)
     end;
 
+incoming(_SrvId, <<"GET">>, Path, _CT, _Body, Req, State) ->
+    {ok, Code, Hds, Body2} = handle(api_server_http_get, [Path], State),        
+    cowboy_req:reply(Code, Hds, Body2, Req);
+
+incoming(_SrvId, <<"POST">>, Path, CT, Body, Req, State) ->
+    {ok, Code, Hds, Body2} = handle(api_server_http_post, [Path, CT, Body], State),
+    cowboy_req:reply(Code, Hds, Body2, Req);
+
 incoming(_SrvId, Method, Path, CT, Body, Req, _State) ->
     lager:notice("Unhandled request: ~s, ~s, ~s, ~s", [Method, Path, CT, Body]),
     cowboy_req:reply(404, [], <<"Unhandled Request">>, Req).
@@ -164,6 +146,32 @@ ack_wait(SrvId, TId, Req) ->
             send_msg_error(SrvId, timeout, Req)
     end.
 
+
+
+%% ===================================================================
+%% Callbacks
+%% ===================================================================
+
+
+%% @private
+init(Req, [{srv_id, SrvId}]) ->
+    try
+        State = auth(SrvId, Req),
+        Method = cowboy_req:method(Req),
+        PathInfo = cowboy_req:path_info(Req),
+        CT = cowboy_req:header(<<"content-type">>, Req),
+        Body = get_body(CT, Req),
+        Req2 = incoming(SrvId, Method, PathInfo, CT, Body, Req, State),
+        {ok, Req2, []}
+    catch
+        throw:ReqF -> 
+            {ok, ReqF, []}
+    end.
+
+
+%% @private
+terminate(_Reason, _Req, _Opts) ->
+    ok.
 
 
 %% ===================================================================
@@ -193,7 +201,7 @@ auth(SrvId, Req) ->
             case handle(api_server_login, [Data], State) of
                 {true, User2, _Meta, State2} ->
                     State2#{user=>User2};
-                {false, _Error, _State2} ->
+                {false, _State2} ->
                     lager:warning("HTTP RPC forbidden"),
                     throw(cowboy_req:reply(403, [], <<>>, Req))
             end;
