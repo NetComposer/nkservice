@@ -386,7 +386,7 @@ conn_parse({text, Text}, NkPort, State) ->
             case extract_op(TId, State) of
                 {Trans, State2} ->
                     case Trans of
-                        #trans{op=#{cmd:=<<"ping">>}} -> ok;
+                        #trans{op=#{cmd:=ping}} -> ok;
                         _ -> ?PRINT("received ~s", [Msg], State)
                     end,
                     Data = maps:get(<<"data">>, Msg, #{}),
@@ -935,7 +935,8 @@ links_down(Mon, #state{links=Links}=State) ->
 
 
 %% @private
-print(_Txt, [#{cmd:=<<"ping">>}], _State) ->
+print(_Txt, [#{cmd:=ping
+    }], _State) ->
     ok;
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
