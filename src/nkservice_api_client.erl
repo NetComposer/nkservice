@@ -161,8 +161,8 @@ transports(_) -> [wss, ws].
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
 
-default_port(ws) -> 9010;
-default_port(wss) -> 9011.
+default_port(ws) -> 80;
+default_port(wss) -> 443.
 
 
 -spec conn_init(nkpacket:nkport()) ->

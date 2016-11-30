@@ -272,14 +272,24 @@ get_api_webs(SrvId, [{List, Opts}|Rest], Acc) ->
         {nkservice_api_server, Proto, Ip, Port} <- List, 
         Proto==http orelse Proto==https
     ],
-    Path = nklib_util:to_list(maps:get(path, Opts, <<"/rpc">>)),
-    CowPath = Path ++ "/[...]",
-    Routes = [{'_', [{CowPath, nkservice_api_server_http, [{srv_id, SrvId}]}]}],
-    Opts2 = #{
-        class => {nkservice_api_server, SrvId},
-        http_proto => {dispatch, #{routes => Routes}}
-    },
-    get_api_webs(SrvId, Rest, [{List2, Opts2}|Acc]).
+    Acc2 = case List2 of
+        [] ->
+            [];
+        _ ->
+            Path1 = nklib_util:to_list(maps:get(path, Opts, <<>>)),
+            Path2 = case lists:reverse(Path1) of
+                [$/|R] -> lists:reverse(R);
+                _ -> Path1
+            end,
+            CowPath = Path2 ++ "/[...]",
+            Routes = [{'_', [{CowPath, nkservice_api_server_http, [{srv_id, SrvId}]}]}],
+            Opts2 = #{
+                class => {nkservice_api_server, SrvId},
+                http_proto => {dispatch, #{routes => Routes}}
+            },
+            [{List2, Opts2}|Acc]
+    end,
+    get_api_webs(SrvId, Rest, Acc2).
 
 
 %% @private
@@ -295,6 +305,7 @@ get_api_sockets(SrvId, [{List, Opts}|Rest], Config, Acc) ->
     ],
     Timeout = maps:get(api_server_tiemout, Config, 180),
     Opts2 = #{
+        path => maps:get(path, Opts, <<"/">>),
         class => {nkservice_api_server, SrvId},
         get_headers => [<<"user-agent">>],
         idle_timeout => 1000 * Timeout

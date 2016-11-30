@@ -16,9 +16,9 @@ start() ->
 		callback => ?MODULE,
         log_level => debug,
         api_server => "wss:all:9010, https://all:9010/rpc",
-        api_server_timeout => 300,
-        plugins => [nkservice_api_gelf],
-        api_gelf_server => "c2.netc.io"
+        api_server_timeout => 300
+        % plugins => [nkservice_api_gelf],
+        % api_gelf_server => "c2.netc.io"
 	},
 	nkservice:start(test, Spec).
 
@@ -40,7 +40,7 @@ get_sessions(User) ->
 
 connect(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
-    Url = "nkapic://localhost:9010",
+    Url = "nkapic://localhost:8089/nkapi/ws",
     Login = #{
         user => nklib_util:to_binary(User), 
         password=> <<"p1">>,
@@ -179,7 +179,7 @@ cmd_http(Class, Sub, Cmd, Data) ->
 %% ===================================================================
 
 
-api_client_fun(#api_req{class1=core, cmd1=event, data = Data}, UserData) ->
+api_client_fun(#api_req{class=core, cmd=event, data = Data}, UserData) ->
     Class = maps:get(<<"class">>, Data),
     Sub = maps:get(<<"subclass">>, Data, <<"*">>),
     Type = maps:get(<<"type">>, Data, <<"*">>),
@@ -188,7 +188,7 @@ api_client_fun(#api_req{class1=core, cmd1=event, data = Data}, UserData) ->
     lager:notice("CLIENT event ~s:~s:~s:~s: ~p", [Class, Sub, Type, ObjId, Body]),
     {ok, #{}, UserData};
 
-api_client_fun(#api_req{class1=class1, data=Data}=_Req, UserData) ->
+api_client_fun(#api_req{class=class1, data=Data}=_Req, UserData) ->
     % lager:notice("API REQ: ~p", [lager:pr(_Req, ?MODULE)]),
     {ok, Data, UserData};
 
@@ -202,16 +202,16 @@ api_client_fun(_Req, UserData) ->
 %% ===================================================================
 
 %% @doc
-api_server_syntax(#api_req{class1=test, cmd1=op1, data=_Data}, S, D, M) ->
+api_server_syntax(#api_req{class=test, cmd=op1, data=_Data}, S, D, M) ->
     {S, D, M};
 
-api_server_syntax(#api_req{class1=test, cmd1=op2, data=_Data}, S, D, M) ->
+api_server_syntax(#api_req{class=test, cmd=op2, data=_Data}, S, D, M) ->
     {S, D, M};
 
-api_server_syntax(#api_req{class1=test, cmd1=op3, data=_Data}, S, D, M) ->
+api_server_syntax(#api_req{class=test, cmd=op3, data=_Data}, S, D, M) ->
     {S, D, M};
 
-api_server_syntax(#api_req{class1=test, cmd1=op4, data=_Data}, S, D, M) ->
+api_server_syntax(#api_req{class=test, cmd=op4, data=_Data}, S, D, M) ->
     {S, D, M};
 
 api_server_syntax(_Req, _S, _D, _M) ->
@@ -232,10 +232,10 @@ api_server_login(_Data, _State) ->
 
 
 %% @doc Called on any command
-api_server_cmd(#api_req{class1=test, cmd1=op1, data=Data}, State) ->
+api_server_cmd(#api_req{class=test, cmd=op1, data=Data}, State) ->
     {ok, #{res1=>Data}, State};
 
-api_server_cmd(#api_req{class1=test, cmd1=op2, tid=TId, data=Data}, State) ->
+api_server_cmd(#api_req{class=test, cmd=op2, tid=TId, data=Data}, State) ->
 	Self = self(),
 	spawn(
 		fun() -> 
@@ -244,7 +244,7 @@ api_server_cmd(#api_req{class1=test, cmd1=op2, tid=TId, data=Data}, State) ->
 		end),
     {ack, State};
 
-api_server_cmd(#api_req{class1=test, cmd1=op3, data=Data}, State) ->
+api_server_cmd(#api_req{class=test, cmd=op3, data=Data}, State) ->
 	Self = self(),
 	spawn(
 		fun() -> 
