@@ -1,3 +1,4 @@
+
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
@@ -172,6 +173,7 @@ init(#{id:=Id, name:=Name}=Service) ->
     term().
 
 handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) ->
+    #{id:=Id, name:=Name} = Service,
     case nkservice_config:config_service(UserSpec, Service) of
         {ok, Service2} ->
             case nkservice_srv_listen_sup:update_transports(Service2) of
@@ -187,9 +189,9 @@ handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) 
                         true -> Removed#{lua_state:=<<"...">>};
                         false -> Removed
                     end,
-                    lager:info("Added config: ~p", [Added2]),
-                    lager:info("Removed config: ~p", [Removed2]),
-                    % io:format("Updated Service: ~p\n", [Service3]),
+                    lager:info("Service '~s' added config: ~p", [Name, Added2]),
+                    lager:info("Service '~s' removed config: ~p", [Name, Removed2]),
+                    nkservice_util:notify_updated_service(Id),
                     {reply, ok, State#state{service=Service3}};
                 {error, Error} ->
                     {reply, {error, Error}, State}
@@ -244,7 +246,7 @@ terminate(Reason, #state{id=Id, service=Service}=State) ->
     catch nklib_gen_server:terminate(nkservice_terminate, Reason, State, ?P1, ?P2),
     #{name:=Name, plugins:=Plugins} = Service,  
     _Service2 = nkservice_config:stop_plugins(Plugins, Service),
-    lager:debug("Service ~s (~p) has terminated (~p)", [Name, Id, Reason]).
+    lager:notice("Service '~s' (~p) has terminated (~p)", [Name, Id, Reason]).
     
 
 

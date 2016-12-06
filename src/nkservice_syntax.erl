@@ -51,7 +51,8 @@ syntax() ->
         class => any,
         plugins => {list, atom},
         callback => atom,
-        log_level => log_level,
+        debug => fun parse_debug/1,
+        log_level => log_level,     %% TO REMOVE
 
         api_server => fun parse_api_server/3,
         api_server_timeout => {integer, 5, none},
@@ -118,6 +119,32 @@ parse_api_server(api_server, Url, _Ctx) ->
                     end
             end
     end.
+
+
+%% @private
+parse_debug(Term) when is_list(Term) ->
+    do_parse_debug(Term, []);
+
+parse_debug(Term) ->
+    parse_debug([Term]).
+
+
+%% @private
+do_parse_debug([], Acc) ->
+    {ok, Acc};
+
+do_parse_debug([{Mod, Data}|Rest], Acc) ->
+    Mod2 = nklib_util:to_atom(Mod),
+    case code:ensure_loaded(Mod2) of
+        {module, Mod2} ->
+            do_parse_debug(Rest, [{Mod, Data}|Acc]);
+        _ ->
+            lager:warning("Module ~p could not be loaded", [Mod2]),
+            error
+    end;
+
+do_parse_debug([Mod|Rest], Acc) ->
+    do_parse_debug([{Mod, []}|Rest], Acc).
 
 
 %% @private

@@ -66,11 +66,16 @@ start(Serv, Url, Login, Fun, UserData) ->
     
 start(Serv, Url, #{user:=User}=Login, Fun, UserData, Class, Sub) ->
     {ok, SrvId} = nkservice_srv:get_srv_id(Serv),
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, #{nkpacket:=true}} -> true;
+        _ -> false
+    end,
     ConnOpts = #{
         class => {?MODULE, SrvId},
         monitor => self(),
         idle_timeout => ?WS_TIMEOUT,
-        user => {Fun, UserData#{user=>User}}
+        user => {Fun, UserData#{user=>User}},
+        debug => Debug
     },
     case nkpacket:connect(Url, ConnOpts) of
         {ok, Pid} -> 

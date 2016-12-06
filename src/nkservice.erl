@@ -130,7 +130,7 @@ start(Name, UserSpec) ->
             {ok, Service2} ->
                 case nkservice_srv_sup:start_service(Service2) of
                     ok ->
-                        lager:info("Service ~s (~p) has started", [Name, Id]),
+                        lager:notice("Service '~s' (~p) has started", [Name, Id]),
                         {ok, Id};
                     {error, Error} -> 
                         {error, Error}

@@ -39,11 +39,11 @@
                [State#state.session_id, State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Uncomment this for detailed logs
+        % print(Txt, Args, State),    % Uncomment this for detailed logs
         ok).
 
 
--define(OP_TIME, 10).           % Maximum operation time (without ACK)
+-define(OP_TIME, 3600).           % Maximum operation time (without ACK)
 -define(ACK_TIME, 180).         % Maximum operation time (with ACK)
 -define(CALL_TIMEOUT, 180).     % Maximum sync call time
 -define(PING_TIME, 60).

@@ -216,7 +216,7 @@ start_link(Class, Sub, Type) ->
 init([Class, Sub, Type]) ->
     true = nklib_proc:reg({?MODULE, Class, Sub, Type}),
     nklib_proc:put(?MODULE, {Class, Sub, Type}),
-    lager:info("Starting events for ~p:~p:~p (~p)", [Class, Sub, Type, self()]),
+    lager:info("Starting event server for ~p:~p:~p (~p)", [Class, Sub, Type, self()]),
     {ok, #state{class=Class, sub=Sub, type=Type}}.
 
 

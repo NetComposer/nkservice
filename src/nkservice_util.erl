@@ -25,7 +25,8 @@
 -export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
 -export([get_core_listeners/2, make_id/1, update_uuid/2]).
--export([error_code/2]).
+-export([error_code/2, get_debug_info/2]).
+-export([register_for_changes/1, notify_updated_service/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 
@@ -234,6 +235,41 @@ error_code(SrvId, Error) ->
                 Val ->
                     {Code, list_to_binary(Val)}
             end
+    end.
+
+
+%% @doc Registers a pid to receive changes in service config
+-spec register_for_changes(nkservice:id()) ->
+    ok.
+
+register_for_changes(SrvId) ->
+    nklib_proc:put({notify_updated_service, SrvId}).
+
+
+%% @doc 
+-spec notify_updated_service(nkservice:id()) ->
+    ok.
+
+notify_updated_service(SrvId) ->
+    lists:foreach(
+        fun({_, Pid}) -> Pid ! nkservice_updated end,
+        nklib_proc:values({notify_updated_service, SrvId})).
+
+
+%% @doc
+-spec get_debug_info(nkservice:id(), module()) ->
+    {ok, term()} | not_found.
+
+get_debug_info(SrvId, Module) ->
+    % We could check for services not yet started
+    try nkservice_srv:get_item(SrvId, debug) of
+        Debug ->
+            case lists:keyfind(Module, 1, Debug) of
+                {_, Data} -> {true, Data};
+                false -> false
+            end
+    catch
+        _:_ -> false
     end.
 
 

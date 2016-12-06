@@ -41,14 +41,15 @@
 
 config_service(Config, Service) ->
     try
+        Config2 = maps:merge(#{debug=>[]}, Config),
         Syntax = nkservice_syntax:syntax(), 
-        Config2 = case nkservice_util:parse_syntax(Config, Syntax, #{}) of
+        Config3 = case nkservice_util:parse_syntax(Config2, Syntax, #{}) of
             {ok, Parsed} -> Parsed;
             {error, Error1} -> throw(Error1)
         end,
-        GlobalKeys = [class, plugins, callback, log_level],
+        GlobalKeys = [class, plugins, callback, log_level, debug],
         % Extract global key values from Config, if present
-        Service2 = maps:with(GlobalKeys, Config2),
+        Service2 = maps:with(GlobalKeys, Config3),
         % Global keys are first-level keys on Service map
         Service3 = maps:merge(Service, Service2),
         Plugins = maps:get(plugins, Service3, []),
@@ -62,7 +63,7 @@ config_service(Config, Service) ->
         % Stop old services no longer present
         Service4 = stop_plugins(ToStop, Service3),
         OldConfig = maps:get(config, Service4, #{}),
-        UserConfig1 = maps:without(GlobalKeys, Config2),
+        UserConfig1 = maps:without(GlobalKeys, Config3),
         UserConfig2 = maps:merge(OldConfig, UserConfig1),
         % Options not in global keys go to 'config' key
         Service5 = Service4#{plugins=>DownToTop, config=>UserConfig2},
@@ -143,22 +144,28 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
 start_plugins([], _OldPlugins, Service) ->
     Service;
 
-start_plugins([Plugin|Rest], OldPlugins, #{config:=Config}=Service) ->
+start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) ->
     Mod = get_mod(Plugin),
     Service2 = case lists:member(Plugin, OldPlugins) of
         false ->
-            % lager:warning("Start Plugin: ~p", [Plugin]),
             case nklib_util:apply(Mod, plugin_start, [Config, Service]) of
-                {ok, Config2} -> Service#{config:=Config2};
-                {stop, Error} -> throw({plugin_stop, {Plugin, Error}});
-                not_exported -> Service
+                {ok, Config2} -> 
+                    lager:info("Service '~s' started plugin ~p", [Name, Plugin]),
+                        Service#{config:=Config2};
+                {stop, Error} -> 
+                    throw({plugin_stop, {Plugin, Error}});
+                not_exported -> 
+                    Service
             end;
         true ->
-            % lager:warning("Update Plugin: ~p", [Plugin]),
             case nklib_util:apply(Mod, plugin_update, [Config, Service]) of
-                {ok, Config2} -> Service#{config:=Config2};
-                {stop, Error} -> throw({plugin_stop, {Plugin, Error}});
-                not_exported -> Service
+                {ok, Config2} -> 
+                    lager:info("Service '~s' updated plugin ~p", [Name, Plugin]),
+                    Service#{config:=Config2};
+                {stop, Error} -> 
+                    throw({plugin_stop, {Plugin, Error}});
+                not_exported -> 
+                    Service
             end
     end,
     start_plugins(Rest, OldPlugins, Service2).
@@ -168,8 +175,7 @@ start_plugins([Plugin|Rest], OldPlugins, #{config:=Config}=Service) ->
 stop_plugins([], Service) ->
     Service;
 
-stop_plugins([Plugin|Rest], Service) ->
-    % lager:warning("Stop Plugin: ~p", [Plugin]),
+stop_plugins([Plugin|Rest], #{name:=Name}=Service) ->
     #{config:=Config, listen:=Listen, listen_ids:=ListenIds} = Service,
     Listen2 = maps:remove(Plugin, Listen),
     case maps:find(Plugin, ListenIds) of
@@ -182,8 +188,11 @@ stop_plugins([Plugin|Rest], Service) ->
     ListenIds2 = maps:remove(Plugin, ListenIds),
     Mod = get_mod(Plugin),
     Service2 = case nklib_util:apply(Mod, plugin_stop, [Config, Service]) of
-        {ok, Config2} -> Service#{config:=Config2};
-        not_exported -> Service
+        {ok, Config2} -> 
+            lager:info("Service '~s' stopped plugin ~p", [Name, Plugin]),
+            Service#{config:=Config2};
+        not_exported -> 
+            Service
     end,
     Key = list_to_atom("config_"++atom_to_list(Plugin)),
     Service3 = maps:remove(Key, Service2),

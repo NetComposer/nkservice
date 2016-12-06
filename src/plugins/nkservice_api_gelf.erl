@@ -85,11 +85,9 @@ plugin_syntax() ->
 %% When the plugin starts, it adds a user process to the service (named api_gelf)
 %% that starts with nklib_log:start_link({?MODULE, SrvId}, nklib_log_gelf, Opts),
 %% and it is registered under {?MODULE, SrvId}
-plugin_start(Config, #{id:=Id, name:=Name}) ->
+plugin_start(Config, #{id:=Id}) ->
     case Config of
         #{api_gelf_server:=Server} ->
-            lager:info("Plugin NkSERVICE GELF (~s) starting (~s)", 
-                       [Name, Server]),
             Port = maps:get(api_gelf_port, Config, 12201),
             Opts = #{server=>Server, port=>Port},
             Args = [{?MODULE, Id}, nklib_log_gelf, Opts],
@@ -104,8 +102,7 @@ plugin_start(Config, #{id:=Id, name:=Name}) ->
     end.
 
 
-plugin_stop(Config, #{id:=Id, name:=Name}) ->
-    lager:info("Plugin NkSERVICE GELF (~s) stopping", [Name]),
+plugin_stop(Config, #{id:=Id}) ->
     nklib_log:stop({?MODULE, Id}),
     {ok, Config}.
 
