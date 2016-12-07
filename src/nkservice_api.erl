@@ -30,9 +30,10 @@
 %% Types
 %% ===================================================================
 
--type class() :: atom().
--type subclass() :: atom().
--type cmd() :: atom().
+% Native formats are binary. However atoms will be used for parsing
+-type class() :: atom() | binary().
+-type subclass() :: atom() | binary().
+-type cmd() :: atom() | binary().
 -type state() :: map().
 
 -include("nkservice.hrl").
@@ -62,11 +63,11 @@ cmd(user, login, #api_req{srv_id=SrvId, data=Data},
 cmd(core, event, #api_req{srv_id=SrvId, data=Data}, State) ->
     #{<<"class">>:=Class} = Data,
     Event = #event{
-        srv_id = maps:get(<<"service">>, Data, SrvId),
+        srv_id = SrvId, %maps:get(<<"service">>, Data, SrvId),
         class = Class, 
-        subclass = maps:get(<<"subclass">>, Data, <<"*">>),
-        type = maps:get(<<"type">>, Data, <<"*">>),
-        obj_id = maps:get(<<"obj_id">>, Data, <<"*">>)
+        subclass = maps:get(<<"subclass">>, Data, <<>>),
+        type = maps:get(<<"type">>, Data, <<>>),
+        obj_id = maps:get(<<"obj_id">>, Data, <<>>)
     },
     Body = maps:get(<<"body">>, Data, #{}),
     {ok, State2} = SrvId:api_server_event(Event, Body, State),
@@ -144,7 +145,7 @@ cmd(event, send, #api_req{srv_id=SrvId, data=Data}, State) ->
         type = Type, 
         srv_id = EvSrvId, 
         obj_id = ObjId,
-        body = maps:get(body, Data, undefined)
+        body = maps:get(body, Data, #{})
     },
     nkservice_events:send(Event),
     {ok, #{}, State};
@@ -158,7 +159,7 @@ cmd(user, send_event, #api_req{srv_id=SrvId, data=Data}, State) ->
         type = Type, 
         srv_id = EvSrvId, 
         obj_id = User,
-        body = maps:get(body, Data, undefined)
+        body = maps:get(body, Data, #{})
     },
     nkservice_events:send(Event),
     {ok, #{}, State};
@@ -182,7 +183,7 @@ cmd(session, send_event, #api_req{srv_id=SrvId, data=Data}, State) ->
         type = Type, 
         srv_id = EvSrvId, 
         obj_id = SessId,
-        body = maps:get(body, Data, undefined)
+        body = maps:get(body, Data, #{})
     },
     nkservice_events:send(Event),
     {ok, #{}, State};

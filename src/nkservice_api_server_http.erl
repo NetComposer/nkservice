@@ -77,7 +77,7 @@ incoming(SrvId, <<"POST">>, [], _CT, Msg, Req, State) when is_map(Msg) ->
                 cmd = Cmd,
                 tid = TId,
                 data = maps:get(<<"data">>, Msg, #{}), 
-                user = User,
+                user_id = User,
                 session_id = SessId
             },
             case nkservice_api_lib:process_req(ApiReq, State) of

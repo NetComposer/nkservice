@@ -252,7 +252,7 @@ register_for_changes(SrvId) ->
 
 notify_updated_service(SrvId) ->
     lists:foreach(
-        fun({_, Pid}) -> Pid ! nkservice_updated end,
+        fun({_, Pid}) -> Pid ! {nkservice_updated, SrvId} end,
         nklib_proc:values({notify_updated_service, SrvId})).
 
 
@@ -344,7 +344,8 @@ get_api_sockets(SrvId, [{List, Opts}|Rest], Config, Acc) ->
         path => maps:get(path, Opts, <<"/">>),
         class => {nkservice_api_server, SrvId},
         get_headers => [<<"user-agent">>],
-        idle_timeout => 1000 * Timeout
+        idle_timeout => 1000 * Timeout,
+        debug => false
     },
     get_api_sockets(SrvId, Rest, Config, [{List2, maps:merge(Opts, Opts2)}|Acc]).
 

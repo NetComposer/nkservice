@@ -32,7 +32,9 @@
 %% @private
 app_syntax() ->
     #{
-        log_path => binary
+        log_path => binary,
+        api_ping_timeout => {integer, 5, none},
+        api_cmd_timeout => {integer, 5, none}
     }.
 
 
@@ -40,7 +42,9 @@ app_syntax() ->
 %% @private
 app_defaults() ->    
     #{
-        log_path => <<"log">>
+        log_path => <<"log">>,
+        api_ping_timeout => 60,
+        api_cmd_timeout => 10
     }.
 
 

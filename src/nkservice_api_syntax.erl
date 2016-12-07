@@ -63,7 +63,7 @@ syntax(user, send_event, Syntax, Defaults, Mandatory) ->
             body => any
         },
         Defaults#{
-            type => <<"*">>
+            type => <<>>
         },
         [user|Mandatory]
     };
@@ -79,7 +79,7 @@ syntax(session, send_event, Syntax, Defaults, Mandatory) ->
             body => any
         },
         Defaults#{
-            type => <<"*">>
+            type => <<>>
         },
         [session_id|Mandatory]
     };
@@ -136,12 +136,13 @@ syntax_events(Syntax, Defaults, Mandatory) ->
             subclass => binary,
             type => binary,
             obj_id => binary,
-            service => fun ?MODULE:parse_service/1
+            body => map
+            % service => fun ?MODULE:parse_service/1
         },
         Defaults#{
-            subclass => <<"*">>,
-            type => <<"*">>,
-            obj_id => <<"*">>
+            subclass => <<>>,
+            type => <<>>,
+            obj_id => <<>>
         },
         [class|Mandatory]
     }.

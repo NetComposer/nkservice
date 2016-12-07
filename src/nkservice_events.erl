@@ -23,13 +23,25 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 -export([send/1, reg/1, unreg/1]).
--export([call/1, call/2]).
+-export([call/1]).
+-export([parse/2]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, 
          handle_cast/2, handle_info/2]).
 % -export([atest/0]).
 
 -include("nkservice.hrl").
+
+-define(DEBUG(SrvId, Txt, Args, State),
+    case erlang:get({?MODULE, SrvId}) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(LLOG(Type, Txt, Args, State),
+    lager:Type("NkSERVICE Events ~s:~s:~s "++Txt, 
+               [State#state.class, State#state.sub, State#state.type|Args])).
+
 
 
 %% ===================================================================
@@ -38,12 +50,15 @@
 
 -type event() :: #event{}.
 
--type srv_id() :: nkservice:id() | '*'.
--type class() :: term().
--type subclass() :: term() | '*'.
--type type() :: term() | '*'.
--type obj_id() :: term().
--type body() :: term().
+-type srv_id() :: nkservice:id() | all.
+
+% Native formats are binary. Atoms will be converted to binaries.
+-type class() :: atom() | binary().
+-type subclass() :: atom() | binary(). 
+-type type() :: atom() | binary().
+-type obj_id() :: atom() | binary(). 
+-type body() :: map().
+
 
 
 
@@ -56,24 +71,12 @@
 -spec send(event()) ->
     ok | not_found.
 
-send(#event{}=Event) ->
+send(Event) ->
     % lager:info("EVENT: ~p ~p", [Event, Body]),
-    #event{
-        class = Class, 
-        subclass = Sub, 
-        type = Type, 
-        srv_id = SrvId, 
-        obj_id = ObjId,
-        body = Body,
-        pid = Pid
-    } = Event,
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = check_wildcard(Sub),
-    Type2 = check_wildcard(Type),
-    ObjId2 = check_wildcard(ObjId),
-    do_send(Class2, Sub2, Type2, SrvId, ObjId2, Body, Pid),
-    do_send(Class2, Sub2, {Type2, '*'}, SrvId, ObjId2, Body, Pid),
-    do_send(Class2, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body, Pid).
+    Event2 = normalize(Event),
+    do_send(Event2, direct),
+    do_send(Event2, all_types),
+    do_send(Event2, all_types_subs). 
 
 
 %% @doc
@@ -81,31 +84,13 @@ send(#event{}=Event) ->
     ok | not_found.
 
 call(Event) ->
-    call(Event, #{}).
-
-
-%% @doc
--spec call(event(), body()) ->
-    ok | not_found.
-
-call(#event{}=Event, Body) ->
-    #event{
-        class = Class, 
-        subclass = Sub, 
-        type = Type, 
-        srv_id = SrvId, 
-        obj_id = ObjId
-    } = Event,
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = check_wildcard(Sub),
-    Type2 = check_wildcard(Type),
-    ObjId2 = check_wildcard(ObjId),
-    % In each search, we search for Id and Id=='*'
-    case do_call(Class2, Sub2, Type2, SrvId, ObjId2, Body) of
+    Event2 = normalize(Event),
+    case do_call(Event2, direct) of
         not_found ->
-            case do_call(Class2, Sub2, {Type2, '*'}, SrvId, ObjId2, Body) of
+            % All types
+            case do_call(Event2, all_types) of
                 not_found ->
-                    do_call(Class2, {Sub2, '*'}, {Type2, '*'}, SrvId, ObjId2, Body);
+                    do_call(Event2, all_types_subs);
                 ok ->
                     ok
             end;
@@ -119,26 +104,10 @@ call(#event{}=Event, Body) ->
 -spec reg(event()) ->
     {ok, pid()}.
 
-reg(#event{}=Event) ->
-    #event{
-        class = Class, 
-        subclass = Sub, 
-        type = Type, 
-        srv_id = SrvId, 
-        obj_id = ObjId,
-        body = Body,
-        pid = Pid
-    } = Event,
-    Pid2 = case Pid of
-        undefined -> self();
-        _ -> Pid
-    end,
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = check_wildcard(Sub),
-    Type2 = check_wildcard(Type),
-    ObjId2 = check_wildcard(ObjId),
-    Server = start_server(Class2, Sub2, Type2),
-    gen_server:cast(Server, {reg, SrvId, ObjId2, Body, Pid2}),
+reg(Event) ->
+    Event2 = normalize_self(Event),
+    Server = start_server(Event2),
+    gen_server:cast(Server, {reg, Event2}),
     {ok, Server}.
 
 
@@ -146,25 +115,10 @@ reg(#event{}=Event) ->
 -spec unreg(event()) ->
     ok.
 
-unreg(#event{}=Event) ->
-    #event{
-        class = Class, 
-        subclass = Sub, 
-        type = Type, 
-        srv_id = SrvId, 
-        obj_id = ObjId,
-        pid  =  Pid
-    } = Event,
-    Pid2 = case Pid of
-        undefined -> self();
-        _ -> Pid
-    end,
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = check_wildcard(Sub),
-    Type2 = check_wildcard(Type),
-    ObjId2 = check_wildcard(ObjId),
-    Server = start_server(Class2, Sub2, Type2),
-    gen_server:cast(Server, {unreg, SrvId, ObjId2, Pid2}).
+unreg(Event) ->
+    Event2 = normalize_self(Event),
+    Server = start_server(Event2),
+    gen_server:cast(Server, {unreg, Event2}).
 
 
 
@@ -186,6 +140,53 @@ dump(Class, Sub, Type) ->
     case find_server(Class, Sub, Type) of
         {ok, Pid} -> gen_server:call(Pid, dump);
         not_found -> not_found
+    end.
+
+
+
+%% @doc Tries to parse a event-type object
+parse(Data, Pid) ->
+  {Syntax, Defaults, Mandatory} = nkservice_api_syntax:syntax_events(#{}, #{}, []),
+    Opts = #{
+        return => map, 
+        defaults => Defaults,
+        mandatory => Mandatory
+    },
+    case nklib_config:parse_config(Data, Syntax, Opts) of
+        {ok, Parsed, Other} ->
+            case map_size(Other)>0 andalso is_pid(Pid) of
+                true ->
+                    MEvent = #event{
+                        class = core,
+                        subclass = session,
+                        type = unrecognized_fields,
+                        body = #{
+                            class => event,
+                            body => maps:keys(Other)
+                        }
+                    },
+                    Pid ! {nkservice_event, MEvent};
+                false -> 
+                    ok
+            end,
+            #{
+                class := Class,
+                subclass := Sub,
+                type := Type,
+                obj_id := ObjId
+            } = Parsed,
+            Event = #event{
+                class = Class,
+                subclass = Sub,
+                type = Type,
+                obj_id = ObjId,
+                body = maps:get(body, Parsed, #{})
+            },
+            {ok, Event};
+        {error, {syntax_error, Error}} ->
+            {error, {syntax_error, Error}};
+        {error, {missing_mandatory_field, Field}} ->
+            {error, {missing_field, Field}}
     end.
 
 
@@ -216,33 +217,32 @@ start_link(Class, Sub, Type) ->
 init([Class, Sub, Type]) ->
     true = nklib_proc:reg({?MODULE, Class, Sub, Type}),
     nklib_proc:put(?MODULE, {Class, Sub, Type}),
-    lager:info("Starting event server for ~p:~p:~p (~p)", [Class, Sub, Type, self()]),
-    {ok, #state{class=Class, sub=Sub, type=Type}}.
+    State = #state{class=Class, sub=Sub, type=Type},
+    ?LLOG(info, "starting server (~p)", [self()], State),
+    {ok, State}.
 
 
 %% @private
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {reply, term(), #state{}} | {noreply, #state{}} | {stop, normal, ok, #state{}}.
 
-handle_call({call, Sub, Type, SrvId, ObjId, Body}, _From, State) ->
+handle_call({call, Event}, _From, State) ->
+    #event{class=Class, srv_id=SrvId, obj_id=ObjId, pid=Pid} = Event,
     #state{class=Class, regs=Regs} = State,
-    Event = #event{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId},
     PidTerms = case maps:get({SrvId, ObjId}, Regs, []) of
         [] ->
-            maps:get({SrvId, '*'}, Regs, []);
+            maps:get({SrvId, <<>>}, Regs, []);
         List ->
             List
     end,
-    % lager:error("Event single: ~p:~p:~p:~p (~p:~p): ~p", 
-    %             [Class, Sub, Type, ObjId, State#state.sub, State#state.type,
-    %              PidTerms]),
+    ?DEBUG(SrvId, "call ~s:~s (~p): ~p", [SrvId, ObjId, Pid, PidTerms], State),
     case PidTerms of
         [] ->
             {reply, not_found, State};
         _ ->
             Pos = nklib_util:l_timestamp() rem length(PidTerms) + 1,
             {Pid, RegBody} = lists:nth(Pos, PidTerms),
-            send_events([{Pid, RegBody}], Event, Body, all),
+            send_events([{Pid, RegBody}], Event#event{pid=undefined}),
             {reply, ok, State}
     end;
 
@@ -258,29 +258,34 @@ handle_call(Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}}.
 
-handle_cast({send, Sub, Type, SrvId, ObjId, Body, PidSpec}, State) ->
+handle_cast({send, Event}, State) ->
     #state{class=Class, regs=Regs} = State,
-    Event = #event{class=Class, subclass=Sub, type=Type, srv_id=SrvId, obj_id=ObjId},
+    #event{class=Class, srv_id=SrvId, obj_id=ObjId, pid=Pid} = Event,
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
-    PidTerms2 = maps:get({SrvId, '*'}, Regs, []) -- PidTerms1,
-    PidTerms3 = maps:get({'*', '*'}, Regs, []) -- PidTerms1 -- PidTerms2,
-    % lager:error("Event all: ~p (~p:~p): ~p,~p,~p", 
-    %             [lager:pr(Event, ?MODULE), State#state.sub, State#state.type,
-    %             PidTerms1, PidTerms2, PidTerms3]),
-    send_events(PidTerms1, Event, Body, PidSpec),
-    send_events(PidTerms2, Event, Body, PidSpec),
-    send_events(PidTerms3, Event, Body, PidSpec),
+    PidTerms2 = maps:get({SrvId, <<>>}, Regs, []) -- PidTerms1,
+    PidTerms3 = maps:get({<<>>, <<>>}, Regs, []) -- PidTerms1 -- PidTerms2,
+    ?DEBUG(SrvId, "send ~s:~s (pid:~p): ~p,~p,~p", 
+          [SrvId, ObjId, Pid, PidTerms1, PidTerms2, PidTerms3], State),
+    send_events(PidTerms1, Event),
+    send_events(PidTerms2, Event),
+    send_events(PidTerms3, Event),
     {noreply, State};
 
-handle_cast({reg, SrvId, ObjId, Body, Pid}, #state{regs=Regs, pids=Pids}=State) ->
-    {Regs2, Pids2} = do_reg(SrvId, ObjId, Body, Pid, Regs, Pids),
-    {noreply, State#state{regs=Regs2, pids=Pids2}};
+handle_cast({reg, Event}, State) ->
+    #event{srv_id=SrvId, obj_id=ObjId, body=Body, pid=Pid} = Event,
+    set_log(SrvId),
+    ?DEBUG(SrvId, "registered ~s:~s (~p)", [SrvId, ObjId, Pid], State),
+    State2 = do_reg({SrvId, ObjId}, Body, Pid, State),
+    {noreply, State2};
 
-handle_cast({unreg, SrvId, ObjId, Pid}, #state{regs=Regs, pids=Pids}=State) ->
-    {Regs2, Pids2} = do_unreg([{SrvId, ObjId}], Pid, Regs, Pids),
-    {noreply, State#state{regs=Regs2, pids=Pids2}};
+handle_cast({unreg, Event}, State) ->
+    #event{srv_id=SrvId, obj_id=ObjId, pid=Pid} = Event,
+    ?DEBUG(SrvId, "unregistered ~s:~s (~p)", [SrvId, ObjId, Pid], State),
+    State2 = do_unreg([{SrvId, ObjId}], Pid, State),
+    {noreply, State2};
 
 handle_cast(remove_all, #state{pids=Pids}=State) ->
+    ?LLOG(info, "remove all", [], State),
     lists:foreach(fun({_Pid, {Mon, _}}) -> demonitor(Mon) end, maps:to_list(Pids)),
     {noreply, State#state{regs=#{}, pids=#{}}};
 
@@ -293,15 +298,24 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}}.
 
-handle_info({'DOWN', Mon, process, Pid, _Reason}, #state{regs=Regs, pids=Pids}=State) ->
+handle_info({'DOWN', Mon, process, Pid, _Reason}, #state{pids=Pids}=State) ->
     case maps:find(Pid, Pids) of
         {ok, {Mon, Keys}} ->
-            {Regs2, Pids2} = do_unreg(Keys, Pid, Regs, Pids),
-            {noreply, State#state{regs=Regs2, pids=Pids2}};
+            lists:foreach(
+                fun({SrvId, ObjId}) ->
+                    ?DEBUG(SrvId, "unregistered ~s:~s (down)", [SrvId, ObjId], State)
+                end,
+                Keys),
+            State2 = do_unreg(Keys, Pid, State),
+            {noreply, State2};
         error ->
             lager:warning("Module ~p received unexpected down: ~p", [?MODULE, Pid]),
             {noreply, State}
     end;
+
+handle_info({nkservice_updated, SrvId}, State) ->
+    force_set_log(SrvId),
+    {noreply, State};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info ~p", [?MODULE, Info]),
@@ -320,7 +334,8 @@ code_change(_OldVsn, State, _Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(_Reason, _State) ->  
+terminate(_Reason, State) ->  
+    ?LLOG(info, "stopping server (~p)", [self()], State),
     ok.
 
 
@@ -330,42 +345,87 @@ terminate(_Reason, _State) ->
 %% ===================================================================
 
 %% @private
-check_wildcard('*') -> '*';
-check_wildcard(<<"*">>) -> '*';
-check_wildcard(Any) -> nklib_util:to_binary(Any).
+normalize(Event) ->
+    #event{
+        class = Class,
+        subclass = Sub,
+        type = Type,
+        obj_id = ObjId,
+        body = Body,
+        pid = Pid
+    } = Event,
+    Body2 = case is_map(Body) of
+        true -> 
+            Body;
+        false ->
+            lager:warning("Body is not map ~s:~s:~s: ~p", [Class, Sub, Type, Body]),
+            #{}
+    end,
+    Pid2 = case is_pid(Pid) orelse Pid==undefined of
+        true ->
+            Pid;
+        false ->
+            lager:warning("Pid is not pif ~s:~s:~s: ~p", [Class, Sub, Type, Pid]),
+            undefined
+    end,
+    Event#event{
+        class = nklib_util:to_binary(Class),
+        subclass = nklib_util:to_binary(Sub),
+        type = nklib_util:to_binary(Type),
+        obj_id = nklib_util:to_binary(ObjId),
+        body = Body2,
+        pid = Pid2
+
+    }.
 
 
 %% @private
-do_call(Class, Sub, Type, SrvId, ObjId, Body) ->
-    case Sub of
-        {SubC, SubS} -> ok;
-        SubC -> SubS = SubC
-    end,
+normalize_self(#event{pid=Pid}=Event) ->
+    Event2 = normalize(Event),
+    case Pid of
+        undefined -> Event2#event{pid=self()};
+        _ -> Event2
+    end.
+
+
+
+%% @private
+do_call(#event{class=Class, subclass=Sub, type=Type}=Send, Type) ->
     case Type of
-        {TypeC, TypeS} -> ok;
-        TypeC -> TypeS = TypeC
+        direct ->
+            TypeS = Type,
+            SubS = Sub;
+        all_types ->
+            TypeS = <<>>,
+            SubS = Sub;
+        all_types_subs ->
+            TypeS = <<>>,
+            SubS = <<>>
     end,
     case find_server(Class, SubS, TypeS) of
         {ok, Server} -> 
-            gen_server:call(Server, {call, SubC, TypeC, SrvId, ObjId, Body});
+            gen_server:call(Server, {call, Send});
         not_found -> 
             not_found
     end.
 
 
 %% @private
-do_send(Class, Sub, Type, SrvId, ObjId, Body, Pid) ->
-    case Sub of
-        {SubC, SubS} -> ok;
-        SubC -> SubS = SubC
-    end,
+do_send(#event{class=Class, subclass=Sub, type=Type}=Send, Type) ->
     case Type of
-        {TypeC, TypeS} -> ok;
-        TypeC -> TypeS = TypeC
+        direct ->
+            TypeS = Type,
+            SubS = Sub;
+        all_types ->
+            TypeS = <<>>,
+            SubS = Sub;
+        all_types_subs ->
+            TypeS = <<>>,
+            SubS = <<>>
     end,
     case find_server(Class, SubS, TypeS) of
         {ok, Server} -> 
-            gen_server:cast(Server, {send, SubC, TypeC, SrvId, ObjId, Body, Pid});
+            gen_server:cast(Server, {send, Send});
         not_found -> 
             ok
     end.
@@ -373,7 +433,9 @@ do_send(Class, Sub, Type, SrvId, ObjId, Body, Pid) ->
 
 %% @private
 find_server(Class, Sub, Type) ->
-    case nklib_proc:values({?MODULE, Class, Sub, Type}) of
+    Class2 = nklib_util:to_binary(Class),
+    Sub2 = nklib_util:to_binary(Sub),
+    case nklib_proc:values({?MODULE, Class2, Sub2, Type}) of
         [{undefined, Pid}] ->
             {ok, Pid};
         [] ->
@@ -382,7 +444,7 @@ end.
 
 
 %% @private
-start_server(Class, Sub, Type) ->
+start_server(#event{class=Class, subclass=Sub, type=Type}) ->
     case find_server(Class, Sub, Type) of
         {ok, Pid} ->
             Pid;
@@ -401,36 +463,37 @@ start_server(Class, Sub, Type) ->
 
 
 %% @private
-do_reg(SrvId, ObjId, Body, Pid, Regs, Pids) ->
-    Key = {SrvId, ObjId},
-    Regs2 = case maps:find(Key, Regs) of
-        {ok, PidTerms} ->
-            maps:put(Key, lists:keystore(Pid, 1, PidTerms, {Pid, Body}), Regs);
+do_reg(Key, Body, Pid, #state{regs=Regs, pids=Pids}=State) ->
+    PidBodyList2 = case maps:find(Key, Regs) of
+        {ok, PidBodyList} ->   % [{pid(), body)}]
+            lists:keystore(Pid, 1, PidBodyList, {Pid, Body});
         error ->
-            maps:put(Key, [{Pid, Body}], Regs)
+            [{Pid, Body}]
     end,
-    Pids2 = case maps:find(Pid, Pids) of
-        {ok, {Mon, Keys}} ->
-            maps:put(Pid, {Mon, nklib_util:store_value(Key, Keys)}, Pids);
+    Regs2 = maps:put(Key, PidBodyList2, Regs),
+    {Mon2, Keys2} = case maps:find(Pid, Pids) of
+        {ok, {Mon, Keys}} ->    % [reference(), [key()]]
+            {Mon, nklib_util:store_value(Key, Keys)};
         error ->
             Mon = monitor(process, Pid),
-            maps:put(Pid, {Mon, [Key]}, Pids)
+            {Mon, [Key]}
     end,
-    {Regs2, Pids2}.
+    Pids2 = maps:put(Pid, {Mon2, Keys2}, Pids),
+    State#state{regs=Regs2, pids=Pids2}.
 
 
 %% @private
-do_unreg([], _Pid, Regs, Pids) ->
-    {Regs, Pids};
+do_unreg([], _Pid, State) ->
+    State;
 
-do_unreg([Key|Rest], Pid, Regs, Pids) ->
+do_unreg([Key|Rest], Pid, #state{regs=Regs, pids=Pids}=State) ->
     Regs2 = case maps:find(Key, Regs) of
-        {ok, PidTerms} ->
-            case lists:keydelete(Pid, 1, PidTerms) of
+        {ok, PidBodyList} ->
+            case lists:keydelete(Pid, 1, PidBodyList) of
                 [] ->
                     maps:remove(Key, Regs);
-                PidTerms2 ->
-                    maps:put(Key, PidTerms2, Regs)
+                PidBodyList2 ->
+                    maps:put(Key, PidBodyList2, Regs)
             end;
         error ->
             Regs
@@ -447,31 +510,43 @@ do_unreg([Key|Rest], Pid, Regs, Pids) ->
         error ->
             Pids
     end,
-    do_unreg(Rest, Pid, Regs2, Pids2).
+    do_unreg(Rest, Pid, State#state{regs=Regs2, pids=Pids2}).
+
+
+%% @private
+send_events([], _Event) ->
+    ok;
+
+send_events([{Pid, _}|Rest], #event{pid=PidE}=Event) when is_pid(PidE), Pid/=PidE ->
+    send_events(Rest, Event);
+
+send_events([{Pid, RegBody}|Rest], #event{body=Body}=Event) ->
+    % lager:info("Sending event ~p to ~p (~p)", 
+    %            [lager:pr(Event, ?MODULE), Pid, Body]),
+    Body2 = maps:merge(RegBody, Body),
+    Pid ! {nkservice_event, Event#event{body=Body2}},
+    send_events(Rest, Event).
 
 
 
 %% @private
-send_events([], _Event, _Body, _PidSpec) ->
-    ok;
+set_log(SrvId) ->
+    case get({?MODULE, SrvId}) of
+        undefined ->
+            force_set_log(SrvId),
+            nkservice_util:register_for_changes(SrvId);
+        _ ->
+            ok
+    end.
 
-send_events([{Pid, _}|Rest], Event, Body, PidS) when is_pid(PidS), Pid/=PidS ->
-    send_events(Rest, Event, Body, PidS);
 
-send_events([{Pid, RegBody}|Rest], #event{}=Event, Body, PidS) ->
-    % lager:info("Sending event ~p to ~p (~p)", 
-    %            [lager:pr(Event, ?MODULE), Pid, Body]),
-    Body2 = case {is_map(Body), is_map(RegBody)} of
-        {true, true} -> maps:merge(RegBody, Body);
-        {true, false} -> Body;
-        {false, true} -> RegBody;
-        {false, false} -> Body
+%% @private
+force_set_log(SrvId) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
     end,
-    Pid ! {nkservice_event, Event, Body2},
-    send_events(Rest, Event, Body, PidS).
-
-
-
+    put({?MODULE, SrvId}, Debug).
 
 
 %% ===================================================================
@@ -545,7 +620,7 @@ test2() ->
     P4 = test_reg(2, b2),
     P5 = test_reg(3, b3),
     P6 = test_reg(3, b3b),
-    P7 = test_reg('*', b7),
+    P7 = test_reg(<<"*">>, b7),
     timer:sleep(50),
 
     Reg = #event{class=c, subclass=s, type=t, srv_id=srv},
@@ -644,7 +719,7 @@ test3() ->
     P4 = test_reg(2, b2),
     P5 = test_reg(3, b3),
     P6 = test_reg(3, b3b),
-    P7 = test_reg('*', b7),
+    P7 = test_reg(<<"*">>, b7),
     timer:sleep(50),
 
     {
@@ -654,7 +729,7 @@ test3() ->
             {{srv, 1}, [{P1, b1}, {P2, b1}, {P3, b1b}]},
             {{srv, 2}, [{P4, b2}]},
             {{srv, 3}, [{P5, b3}, {P6, b3b}]},
-            {{srv, '*'}, [{P7, b7}]}
+            {{srv, <<"*">>}, [{P7, b7}]}
         ],
         [
             {P1, {_, [{srv, 0}, {srv, 1}]}},
@@ -663,7 +738,7 @@ test3() ->
             {P4, {_, [{srv, 0}, {srv, 2}]}},
             {P5, {_, [{srv, 0}, {srv, 3}]}},
             {P6, {_, [{srv, 0}, {srv, 3}]}},
-            {P7, {_, [{srv, 0}, {srv, '*'}]}}
+            {P7, {_, [{srv, 0}, {srv, <<"*">>}]}}
         ]
     }
         = dump(c, s, t),
@@ -676,7 +751,7 @@ test3() ->
             {{srv, 0}, [{P2, b1}, {P3, b1b}, {P4, b2}, {P5, b3}, {P6, b3b}, {P7, b7}]},
             {{srv, 1}, [{P2, b1}, {P3, b1b}]},
             {{srv, 3}, [{P5, b3}, {P6, b3b}]},
-            {{srv, '*'}, [{P7, b7}]}
+            {{srv, <<"*">>}, [{P7, b7}]}
         ],
         [
             {P2, {_, [{srv, 0}, {srv, 1}]}},
@@ -684,7 +759,7 @@ test3() ->
             {P4, {_, [{srv, 0}]}},
             {P5, {_, [{srv, 0}, {srv, 3}]}},
             {P6, {_, [{srv, 0}, {srv, 3}]}},
-            {P7, {_, [{srv, 0}, {srv, '*'}]}}
+            {P7, {_, [{srv, 0}, {srv, <<"*">>}]}}
         ]
     } = 
         dump(c, s, t),
@@ -705,9 +780,9 @@ test_reg(I, B) ->
 
 test_reg_loop(Pid, I) ->
     receive
-        {nkservice_event, Event, Body} -> 
-            #event{class=c, subclass=s, type=t, srv_id=srv, obj_id=Id} = Event,
-            Pid ! {c, self(), Id, Body},
+        {nkservice_event, Event} -> 
+            #event{class=c, subclass=s, type=t, srv_id=srv, obj_id=Id, body=B} = Event,
+            Pid ! {c, self(), Id, B},
             test_reg_loop(Pid, I);
         stop ->
             ok;

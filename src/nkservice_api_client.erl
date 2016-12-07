@@ -333,7 +333,7 @@ process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
     #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
 
 
-    case CB(Req#api_req{user=User, session_id=SessId}, UserData) of
+    case CB(Req#api_req{user_id=User, session_id=SessId}, UserData) of
         {ok, Reply, UserData2} ->
             send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
         {ack, UserData2} ->
@@ -448,7 +448,7 @@ make_req(Class, Sub, Cmd, Data, TId, State) ->
             cmd = Cmd2,
             tid = TId,
             data = Data, 
-            user = User,
+            user_id = User,
             session_id = Session
         },
         {ok, Req}

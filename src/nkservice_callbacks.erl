@@ -31,7 +31,7 @@
 		 api_server_syntax/4, api_server_allow/2, 
 		 api_server_cmd/2, api_server_login/2,
 		 api_server_event/3,
-		 api_server_forward_event/3, api_server_get_user_data/1,
+		 api_server_forward_event/2, api_server_get_user_data/1,
 		 api_server_reg_down/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
@@ -287,14 +287,12 @@ api_server_event(_Event, _Body, State) ->
 
 %% @doc Called when the API server receives an event notification from 
 %% nkservice_events. We can send it to the remote side or ignore it.
--spec api_server_forward_event(nkservice_event:event(), 
-							   nkservice_event:body(), state()) ->
-	{ok, state()} | 
-	{ok, nkservice_event:event(), nkservice_event:body(), continue()} |
+-spec api_server_forward_event(nkservice_event:event(), state()) ->
+	{ok, nkservice_event:event(), continue()} |
 	{ignore, state()}.
 
-api_server_forward_event(_Event, _Body, State) ->
-	{ok, State}.
+api_server_forward_event(Event, State) ->
+	{ok, Event, State}.
 
 
 %% @doc Called when the API server receives an event notification from 

@@ -22,7 +22,7 @@
 -module(nkservice_api_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([process_req/2]).
+-export([process_req/2, process_event/2]).
 
 -include("nkservice.hrl").
 
@@ -40,7 +40,7 @@
 
 process_req(Req, State) ->
     case set_atoms(Req) of
-        #api_req{srv_id=SrvId, user=User, data=Data} = Req2 ->
+        #api_req{srv_id=SrvId, user_id=User, data=Data} = Req2 ->
             {Syntax, Defaults, Mandatory} = SrvId:api_server_syntax(Req2, #{}, #{}, []),
             Opts = #{
                 return => map, 
@@ -72,6 +72,32 @@ process_req(Req, State) ->
             lager:error("Atom not found"),
             {error, not_implemented, State}
     end.
+
+
+%% @doc Starts the processing of an external API request
+%% It parses the request, getting the syntax calling SrvId:api_syntax()
+%% If it is valid, calls SrvId:api_allow() to authorized the request
+%% If is is authorized, calls SrvId:api_cmd() to process the request.
+%% It received some state (usually from api_server_cmd/5) that can be updated
+-spec process_event(#api_req{}, state()) ->
+    {ok, state()} | {error, nkservice:error(), state()}.
+
+process_event(Req, State) ->
+    #api_req{class=event, srv_id=SrvId, data=Data} = Req,                      
+    case nkservice_events:parse(Data, self()) of
+        {ok, Event} ->
+            Req2 = Req#api_req{data=Event},
+            case SrvId:api_server_allow(Req2, State) of
+                {true, State2} ->
+                    % lager:notice("Calling ~p", [Req3]),
+                    SrvId:api_server_cmd(Req2, State2);
+                {false, State2} ->
+                    {error, unauthorized, State2}
+            end;
+        {error, Error} ->
+            {error, Error, State}
+    end.
+
 
 
 %% @private
