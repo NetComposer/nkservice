@@ -156,7 +156,8 @@ init(#{id:=Id, name:=Name}=Service) ->
             nkservice_config:make_cache(Service2),
             case Id:service_init(Service, #{id=>Id}) of
                 {ok, User} ->
-                    % io:format("Started Service: ~p\n", [Service2]),
+                    % Someone could be listening (like events)
+                    nkservice_util:notify_updated_service(Id),
                     % Ensure all atoms are loaded
                     _ = Id:api_server_syntax(#api_req{class=none}, #{}, #{}, []),
                     {ok, #state{id=Id, service=Service2, user=User}};

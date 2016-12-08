@@ -431,6 +431,9 @@ service_handle_cast(Msg, State) ->
 -spec service_handle_info(term(), state()) ->
 	{noreply, state()} | continue().
 
+service_handle_info({'EXIT', _, normal}, State) ->
+	{noreply, State};
+
 service_handle_info(Msg, State) ->
     lager:notice("Module nkservice_srv received unexpected info ~p", [Msg]),
 	{noreply, State}.

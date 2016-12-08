@@ -350,7 +350,10 @@ process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
 process_server_event(Event, State) ->
     #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
     ApiReq = #api_req{class=event, user_id=User, session_id=SessId, data=Event},
-    {ok, UserData2} = CB(ApiReq, UserData),
+    case CB(ApiReq, UserData) of
+        {ok, UserData2}  -> ok;
+        {ok, _, UserData2} -> ok
+    end,
     {ok, State#state{userdata=UserData2}}.
 
 

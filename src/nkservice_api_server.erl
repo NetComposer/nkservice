@@ -222,6 +222,12 @@ subscribe(Id, Event) ->
 -spec subscribe(id(), nkservice:event(), term()) ->
     ok.
 
+subscribe(Id, #event{type=[F|_]=Types}=Event, InstanceId)
+          when not is_integer(F) ->
+    lists:foreach(
+        fun(Type) -> subscribe(Id, Event#event{type=Type}, InstanceId) end,
+        Types);
+
 subscribe(Id, Event, InstanceId) ->
     do_cast(Id, {nkservice_subscribe, Event, InstanceId}).
 
@@ -238,6 +244,12 @@ unsubscribe(Id, Event) ->
 %% Use 'all' to remove all instances
 -spec unsubscribe(id(),  nkservice:event(), term()|all) ->
     ok.
+
+unsubscribe(Id, #event{type=[F|_]=Types}=Event, InstanceId)
+          when not is_integer(F) ->
+    lists:foreach(
+        fun(Type) -> unsubscribe(Id, Event#event{type=Type}, InstanceId) end,
+        Types);
 
 unsubscribe(Id, Event, InstanceId) ->
     do_cast(Id, {nkservice_unsubscribe, Event, InstanceId}).
@@ -571,7 +583,7 @@ conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
 
 conn_handle_cast({nkservice_subscribe, Event, Id}, _NkPort, State) ->
     #state{regs=Regs} = State,
-    {ok, Pid} = nkservice_events:reg(Event),
+    Pid = nkservice_events:reg(Event),
     Index = event_index(Event),
     Regs2 = case lists:keyfind(Index, #reg.index, Regs) of
         false ->

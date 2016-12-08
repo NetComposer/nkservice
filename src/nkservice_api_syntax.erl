@@ -46,11 +46,12 @@ syntax(user, get, Syntax, Defaults, Mandatory) ->
 
 syntax(event, subscribe, Syntax, Defaults, Mandatory) ->
     {S, D, M} = events(Syntax, Defaults, Mandatory),
-    {S#{body => any}, D, M};
+    {S#{body=>any, type=>[binary, {list, binary}]}, D, M};
 
 syntax(event, unsubscribe, Syntax, Defaults, Mandatory) ->
-    events(Syntax, Defaults, Mandatory);
-  
+    {S, D, M} = events(Syntax, Defaults, Mandatory),
+    {S#{type=>[binary, {list, binary}]}, D, M};
+
 syntax(event, send, Syntax, Defaults, Mandatory) ->
     {S, D, M} = events(Syntax, Defaults, Mandatory),
     {S#{body => any}, D, M};

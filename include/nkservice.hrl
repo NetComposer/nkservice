@@ -25,7 +25,7 @@
 	srv_id :: nkservice_events:srv_id(),
 	class :: nkservice_events:class(),
 	subclass = <<>> :: nkservice_events:subclass(),
-	type = <<>> :: nkservice_events:type(),
+	type = <<>> :: nkservice_events:type() | [nkservice_events:type()],
 	obj_id = <<>> :: nkservice_events:obj_id(),
 	body = #{} :: nkservice_events:body(),
 	pid = undefined :: pid() | undefined,

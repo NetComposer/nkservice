@@ -70,17 +70,24 @@ event_get_subs() ->
     cmd(core, event, get_subscriptions, #{}).
 
 event_subscribe() ->
-    cmd(core, event, subscribe, #{class=>class1, body=>#{k=>v}}),
-    cmd(core, event, subscribe, #{class=>class2, subclass=>s2}),
-    cmd(core, event, subscribe, #{class=>class3, subclass=>s3, type=>t3}),
-    cmd(core, event, subscribe, #{class=>class4, subclass=>s4, type=>t4, obj_id=>o4}).
+    event_subscribe(#{class=>class1, body=>#{k=>v}}),
+    event_subscribe(#{class=>class2, subclass=>s2}),
+    event_subscribe(#{class=>class3, subclass=>s3, type=>t3}),
+    event_subscribe(#{class=>class4, subclass=>s4, type=>t4, obj_id=>o4}).
+
+event_subscribe(Obj) ->
+    cmd(core, event, subscribe, Obj).
 
 
 event_unsubscribe() ->
-    cmd(core, event, unsubscribe, #{class=>class1}),
-    cmd(core, event, unsubscribe, #{class=>class2, subclass=>s2}),
-    cmd(core, event, unsubscribe, #{class=>class3, subclass=>s3, type=>t3}),
-    cmd(core, event, unsubscribe, #{class=>class4, subclass=>s4, type=>t4, obj_id=>o4}).
+    event_unsubscribe(#{class=>class1}),
+    event_unsubscribe(#{class=>class2, subclass=>s2}),
+    event_unsubscribe(#{class=>class3, subclass=>s3, type=>t3}),
+    event_unsubscribe(#{class=>class4, subclass=>s4, type=>t4, obj_id=>o4}).
+
+event_unsubscribe(Obj) ->
+    cmd(core, event, unsubscribe, Obj).
+
 
 event_send(Class, Sub, Type, ObjId) ->
     cmd(core, event, send, #{class=>Class, subclass=>Sub, type=>Type, obj_id=>ObjId}).

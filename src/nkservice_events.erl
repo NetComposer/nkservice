@@ -34,7 +34,7 @@
 
 -define(DEBUG(SrvId, Txt, Args, State),
     case erlang:get({?MODULE, SrvId}) of
-        true -> ?LLOG(info, Txt, Args, State);
+        true -> ?LLOG(debug, Txt, Args, State);
         _ -> ok
     end).
 
@@ -104,18 +104,28 @@ do_call([Pid|Rest], Event) ->
 %% missing or <<>> fields mean 'any'
 %% service can be 'all'
 -spec reg(event()) ->
-    {ok, pid()}.
+    pid() | [pid()].
+
+reg(#event{type=[F|_]=Types}=Event) when not is_integer(F) ->
+    lists:map(
+        fun(Type) -> reg(Event#event{type=to_bin(Type)}) end,
+        Types);
 
 reg(Event) ->
     Event2 = normalize_self(Event),
     Server = start_server(Event2),
     gen_server:cast(Server, {reg, Event2}),
-    {ok, Server}.
+    Server.
 
 
 %% @doc
 -spec unreg(event()) ->
     ok.
+
+unreg(#event{type=[F|_]=Types}=Event) when not is_integer(F) ->
+    lists:foreach(
+        fun(Type) -> unreg(Event#event{type=to_bin(Type)}) end,
+        Types);
 
 unreg(Event) ->
     Event2 = normalize_self(Event),
@@ -131,9 +141,9 @@ get_all() ->
 
 %% @private
 remove_all(Class, Sub, Type) ->
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = nklib_util:to_binary(Sub),
-    Type2 = nklib_util:to_binary(Type),
+    Class2 = to_bin(Class),
+    Sub2 = to_bin(Sub),
+    Type2 = to_bin(Type),
     case find_servers(Class2, Sub2, Type2) of
         [Pid] -> gen_server:cast(Pid, remove_all);
         [] -> not_found
@@ -142,9 +152,9 @@ remove_all(Class, Sub, Type) ->
 
 %% @private
 dump(Class, Sub, Type) ->
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = nklib_util:to_binary(Sub),
-    Type2 = nklib_util:to_binary(Type),
+    Class2 = to_bin(Class),
+    Sub2 = to_bin(Sub),
+    Type2 = to_bin(Type),
     case find_servers(Class2, Sub2, Type2) of
         [Pid] -> gen_server:call(Pid, dump);
         [] -> not_found
@@ -379,14 +389,20 @@ normalize(Event) ->
             undefined
     end,
     Event#event{
-        class = nklib_util:to_binary(Class),
-        subclass = nklib_util:to_binary(Sub),
-        type = nklib_util:to_binary(Type),
-        obj_id = nklib_util:to_binary(ObjId),
+        class = to_bin(Class),
+        subclass = to_bin(Sub),
+        type = to_bin(Type),
+        obj_id = to_bin(ObjId),
         body = Body2,
         pid = Pid2
 
     }.
+
+
+%% @private
+to_bin(Term) -> nklib_util:to_binary(Term).
+
+
 
 
 %% @private
