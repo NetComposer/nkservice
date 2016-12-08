@@ -21,7 +21,7 @@ cmd|"login"|Command to invoke at the client or the server, related to the class.
 data|{}|Optional information to add to the request.
 tid|1|Each request must have an unique transaction id (any numerical or text value).
 
-All messages must be answered immediately with a **response** having the following fields:
+All messages (except events) must be answered immediately with a **response** having the following fields:
 
 Field|Sample|Comment
 ---|---|---
@@ -51,6 +51,16 @@ Responses are expected to be sent **immediately**. If a response is not going to
 
 NkSERVICE will close the connection if no response is received within 5 seconds. Sending each _ack_ will extend this timeout for 3 more minutes. NkSERVICE server will send periodic ping requests, that follow the same rule.
 
+See bellow for _events_, which are special requests that must not be answered. They have the following fields:
+
+Field|Comment
+---|---|---
+class|Will always be "event"
+data|See bellow for fields
+
+They have no `tid` since they must not be answered.
+
+
 
 ## Login
 
@@ -66,10 +76,7 @@ See the `create_service` command in (see [core commands](api_commands.md)).
 
 ## Events
 
-There is an special type of request called **event**. An event is a request from class `core` and cmd `event`. Events must be answered immediately, with `"result": "ok"` and no `data` field, since no response data is expected.
-
-All received events must have, in the `data` field, an event class, and, optionally, the following fields:
-
+There is an special type of request called **event**. An event is a request with class `core` and no transaction id, since, they must not be replied. 
 Field|Sample|Comment
 ---|---|---
 class|"media"|Class sending the event (client or server)
