@@ -73,7 +73,7 @@ incoming(SrvId, <<"POST">>, [], _CT, Msg, Req, State) when is_map(Msg) ->
             ApiReq = #api_req{
                 srv_id = SrvId,
                 class = Class,
-                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
+                subclass = maps:get(<<"subclass">>, Msg, <<>>),
                 cmd = Cmd,
                 tid = TId,
                 data = maps:get(<<"data">>, Msg, #{}), 

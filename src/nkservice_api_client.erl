@@ -75,6 +75,7 @@ start(Serv, Url, #{user:=User}=Login, Fun, UserData, Class, Sub) ->
         monitor => self(),
         idle_timeout => ?WS_TIMEOUT,
         user => {Fun, UserData#{user=>User}},
+        force_scheme => nkapi_c,
         debug => Debug
     },
     case nkpacket:connect(Url, ConnOpts) of
@@ -195,7 +196,7 @@ conn_init(NkPort) ->
 conn_parse(close, _NkPort, State) ->
     {ok, State};
 
-conn_parse({text, Text}, NkPort, State) ->
+conn_parse({text, Text}, NkPort, #state{srv_id=SrvId}=State) ->
     Msg = case nklib_json:decode(Text) of
         error ->
             ?LLOG(warning, "JSON decode error: ~p", [Text], State),
@@ -205,10 +206,13 @@ conn_parse({text, Text}, NkPort, State) ->
     end,
     ?PRINT("received ~s", [Msg], State),
     case Msg of
+        #{<<"class">> := <<"event">>, <<"data">> := Data} ->
+            {ok, Event} = nkservice_events:parse(SrvId, Data, none),
+            process_server_event(Event, State);
         #{<<"class">> := <<"core">>, <<"cmd">> := <<"ping">>, <<"tid">> := TId} ->
             send_reply_ok(#{}, TId, NkPort, State);
         #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
-            Sub = maps:get(<<"subclass">>, Msg, <<"core">>),
+            Sub = maps:get(<<"subclass">>, Msg, <<>>),
             Data = maps:get(<<"data">>, Msg, #{}),
             case make_req(Class, Sub, Cmd, Data, TId, State) of
                 {ok, Req} ->
@@ -331,9 +335,8 @@ conn_stop(Reason, _NkPort, State) ->
 %% @private
 process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
     #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
-
-
-    case CB(Req#api_req{user_id=User, session_id=SessId}, UserData) of
+    ApiReq = Req#api_req{user_id=User, session_id=SessId},
+    case CB(ApiReq, UserData) of
         {ok, Reply, UserData2} ->
             send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
         {ack, UserData2} ->
@@ -341,6 +344,15 @@ process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
         {error, Error, UserData2} ->
             send_reply_error(Error, TId, NkPort, State#state{userdata=UserData2})
     end.
+
+
+%% @private
+process_server_event(Event, State) ->
+    #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
+    ApiReq = #api_req{class=event, user_id=User, session_id=SessId, data=Event},
+    {ok, UserData2} = CB(ApiReq, UserData),
+    {ok, State#state{userdata=UserData2}}.
+
 
 
 %% @private
@@ -465,9 +477,10 @@ send_request(Req, From, NkPort, #state{tid=TId}=State) ->
         cmd => Cmd,
         tid => TId
     },
-    Msg2 = case Sub == <<"core">> orelse Sub == core of
-        true  -> Msg1;
-        false -> Msg1#{subclass=>Sub}
+    Msg2 = case Sub of
+        <<>> -> Msg1;
+        '' -> Msg1;
+        _ -> Msg1#{subclass=>Sub}
     end,
     Msg3 = case is_map(Data) andalso map_size(Data)>0  of
         true -> Msg2#{data=>Data};

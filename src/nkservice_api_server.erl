@@ -100,7 +100,8 @@ cmd_async(Id, Class, SubClass, Cmd, Data) ->
     do_cast(Id, {nkservice_send_req, Req}).
 
 
-%% @doc Sends an event (response is not expected from remote)
+%% @doc Sends an event directly (as if we were subscribed)
+%% Response is not expected from remote
 -spec event(id(), nkservice_events:event()) ->
     ok | {error, term()}.
 
@@ -206,16 +207,18 @@ unregister(Id, Link) ->
 
 
 %% @doc Registers with the Events system
-%% All fields except body and pid are used for index
-%% Id is not used for real registrations
 -spec subscribe(id(), nkservice:event()) ->
     ok.
 
 subscribe(Id, Event) ->
-    subscribe(Id, Event, single).
+    subscribe(Id, Event, none).
 
 
-%% @doc Registers with and index
+%% @doc Registers with the Events system
+%% For each event 'type' (all fields except body, pid and meta), you can subsribe
+%% several times, with different InstanceId.
+%% When you unsubscribe, only when all registered instances are unsubscribed the
+%% real unsubscription will be performed.
 -spec subscribe(id(), nkservice:event(), term()) ->
     ok.
 
@@ -228,10 +231,11 @@ subscribe(Id, Event, InstanceId) ->
     ok.
 
 unsubscribe(Id, Event) ->
-    unsubscribe(Id, Event, single).
+    unsubscribe(Id, Event, none).
 
 
-%% @doc 
+%% @doc See subscribe/3
+%% Use 'all' to remove all instances
 -spec unsubscribe(id(),  nkservice:event(), term()|all) ->
     ok.
 
@@ -329,7 +333,6 @@ do_register_http(SessId) ->
     op_time :: integer(),
     regs = [] :: [#reg{}],
     links :: nklib_links:links(),
-    % retry_time = 100 :: integer(),
     user_state :: user_state()
 }).
 
@@ -396,7 +399,7 @@ conn_parse({text, Text}, NkPort, State) ->
     end,
     case Msg of
         #{<<"class">> := <<"event">>, <<"data">> := Data} ->
-            ?MSG("received event ~s", [Msg], State),
+            ?MSG("received event ~s", [Data], State),
             #state{srv_id=SrvId, user=User, session_id=Session} = State,
             Req = #api_req{
                 srv_id = SrvId,
@@ -412,7 +415,7 @@ conn_parse({text, Text}, NkPort, State) ->
             Req = #api_req{
                 srv_id = SrvId,
                 class = Class,
-                subclass = maps:get(<<"subclass">>, Msg, <<"core">>),
+                subclass = maps:get(<<"subclass">>, Msg, <<>>),
                 cmd = Cmd,
                 tid = TId,
                 data = maps:get(<<"data">>, Msg, #{}), 
@@ -568,8 +571,8 @@ conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
 
 conn_handle_cast({nkservice_subscribe, Event, Id}, _NkPort, State) ->
     #state{regs=Regs} = State,
-    Index = event_index(Event),
     {ok, Pid} = nkservice_events:reg(Event),
+    Index = event_index(Event),
     Regs2 = case lists:keyfind(Index, #reg.index, Regs) of
         false ->
             ?DEBUG("registered event ~p", [Event], State),
@@ -588,8 +591,8 @@ conn_handle_cast({nkservice_unsubscribe, Event, Id}, _NkPort, State) ->
     case lists:keytake(Index, #reg.index, Regs) of
         {value, #reg{ids=[Id], mon=Mon}, Regs2} ->
             demonitor(Mon),
-            ?DEBUG("unregistered event ~p", [Event], State),
             ok = nkservice_events:unreg(Event),
+            ?DEBUG("unregistered event ~p", [Event], State),
             {ok, State#state{regs=Regs2}};
         {value, #reg{mon=Mon}, Regs2} when Id==all ->
             demonitor(Mon),
@@ -651,7 +654,7 @@ conn_handle_info({'EXIT', _PId, normal}, _NkPort, State) ->
 
 conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     #state{regs=Regs} = State,
-    case lists:keytake(Ref, 2, Regs) of
+    case lists:keytake(Ref, #reg.mon, Regs) of
         {value, #reg{event=Event, ids=Ids}, Regs2} ->
             lists:foreach(fun(Id) -> subscribe(self(), Event, Id) end, Ids),
             {ok, State#state{regs=Regs2}};
@@ -846,8 +849,7 @@ extract_op(TId, #state{trans=AllTrans}=State) ->
 %% @private
 extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
     nklib_util:cancel_timer(Timer),
-    lager:warning("NEW TIME: ~p", [1000*?ACK_TIME]),
-
+    ?DEBUG("extended op, new time: ~p", [1000*?ACK_TIME], State),
     Timer2 = erlang:start_timer(1000*?ACK_TIME, self(), {nkservice_op_timeout, TId}),
     Trans2 = Trans#trans{timer=Timer2},
     State#state{trans=maps:put(TId, Trans2, AllTrans)}.
@@ -861,9 +863,10 @@ send_request(Req, From, NkPort, #state{tid=TId}=State) ->
         cmd => Cmd,
         tid => TId
     },
-    Msg2 = case Sub == <<"core">> orelse Sub == core of
-        true  -> Msg1;
-        false -> Msg1#{subclass=>Sub}
+    Msg2 = case Sub of
+        <<>> -> Msg1;
+        '' -> Msg1;
+        _ -> Msg1#{subclass=>Sub}
     end,
     Msg3 = if 
         is_map(Data), map_size(Data)>0  ->
@@ -983,7 +986,7 @@ handle(Fun, Args, State) ->
 
 %% @private
 event_index(Event) ->
-    erlang:phash2(Event#event{body=#{}}).
+    erlang:phash2(Event#event{body=#{}, pid=undefined, meta=#{}}).
 
 
 %% @private

@@ -1,4 +1,4 @@
--module(api_test).
+-module(nkservice_test_api).
 -compile([export_all]).
 
 
@@ -14,9 +14,10 @@
 start() ->
 	Spec = #{
 		callback => ?MODULE,
-        log_level => debug,
-        api_server => "wss:all:9010, https://all:9010/rpc",
-        api_server_timeout => 300
+        api_server => 
+            "wss:all:9010, ws:all:9011/ws, https://all:9010/rpc",
+        api_server_timeout => 300,
+        debug => [nkservice_api_server, nkservice_events]
         % plugins => [nkservice_api_gelf],
         % api_gelf_server => "c2.netc.io"
 	},
@@ -40,7 +41,7 @@ get_sessions(User) ->
 
 connect(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
-    Url = "nkapic://localhost:8089/nkapi/ws",
+    Url = "ws://localhost:9011/ws",
     Login = #{
         user => nklib_util:to_binary(User), 
         password=> <<"p1">>,
@@ -146,6 +147,7 @@ get_client() ->
     Pid.
 
 
+%% Test calling with class=test, cmd=op1, op2, data=#{nim=>1}
 cmd(Class, Sub, Cmd, Data) ->
     Pid = get_client(),
     cmd(Pid, Class, Sub, Cmd, Data).
@@ -179,14 +181,9 @@ cmd_http(Class, Sub, Cmd, Data) ->
 %% ===================================================================
 
 
-api_client_fun(#api_req{class=core, cmd=event, data = Data}, UserData) ->
-    Class = maps:get(<<"class">>, Data),
-    Sub = maps:get(<<"subclass">>, Data, <<"*">>),
-    Type = maps:get(<<"type">>, Data, <<"*">>),
-    ObjId = maps:get(<<"obj_id">>, Data, <<"*">>),
-    Body = maps:get(<<"body">>, Data, #{}),
-    lager:notice("CLIENT event ~s:~s:~s:~s: ~p", [Class, Sub, Type, ObjId, Body]),
-    {ok, #{}, UserData};
+api_client_fun(#api_req{class=event, data=Event}, UserData) ->
+    lager:notice("CLIENT event ~p", [lager:pr(Event, nkservice_events)]),
+    {ok, UserData};
 
 api_client_fun(#api_req{class=class1, data=Data}=_Req, UserData) ->
     % lager:notice("API REQ: ~p", [lager:pr(_Req, ?MODULE)]),
@@ -201,18 +198,10 @@ api_client_fun(_Req, UserData) ->
 %% API callbacks
 %% ===================================================================
 
+
 %% @doc
-api_server_syntax(#api_req{class=test, cmd=op1, data=_Data}, S, D, M) ->
-    {S, D, M};
-
-api_server_syntax(#api_req{class=test, cmd=op2, data=_Data}, S, D, M) ->
-    {S, D, M};
-
-api_server_syntax(#api_req{class=test, cmd=op3, data=_Data}, S, D, M) ->
-    {S, D, M};
-
-api_server_syntax(#api_req{class=test, cmd=op4, data=_Data}, S, D, M) ->
-    {S, D, M};
+api_server_syntax(#api_req{class=test, data=_Data}, S, D, M) ->
+    {S#{num=>integer}, D, M};
 
 api_server_syntax(_Req, _S, _D, _M) ->
     continue.
@@ -243,14 +232,6 @@ api_server_cmd(#api_req{class=test, cmd=op2, tid=TId, data=Data}, State) ->
 			nkservice_api_server:reply_ok(Self, TId, #{res2=>Data})
 		end),
     {ack, State};
-
-api_server_cmd(#api_req{class=test, cmd=op3, data=Data}, State) ->
-	Self = self(),
-	spawn(
-		fun() -> 
-			_ = nkservice_api_server:cmd(Self, test, core, op3_reply, #{you_sent=>Data})
-		end),
-    {ok, #{received=>ok}, State};
 
 api_server_cmd(_Req, _State) ->
     continue.

@@ -29,6 +29,31 @@
 -type state() :: map().
 
 
+-define(DEBUG(Txt, Args, Req),
+    case erlang:get(nkservice_api_server_debug) of
+        true -> ?LLOG(debug, Txt, Args, Req);
+        _ -> ok
+    end).
+
+-define(LLOG(Type, Txt, Args, Req),
+    lager:Type(
+        [
+            {session_id, Req#api_req.session_id},
+            {user_id, Req#api_req.user_id},
+            {class, Req#api_req.class},
+            {subclass, Req#api_req.subclass},
+            {cmd, Req#api_req.cmd}
+        ],
+        "NkSERVICE API Server (~s, ~s, ~s/~s/~s) "++Txt, 
+        [
+            Req#api_req.user_id, 
+            Req#api_req.session_id,
+            Req#api_req.class,
+            Req#api_req.subclass,
+            Req#api_req.cmd
+            | Args
+        ])).
+
 
 %% @doc Starts the processing of an external API request
 %% It parses the request, getting the syntax calling SrvId:api_syntax()
@@ -47,8 +72,8 @@ process_req(Req, State) ->
                 defaults => Defaults,
                 mandatory => Mandatory
             },
-            % lager:info("Syntax for ~p: ~p, ~p ~p", 
-            %             [lager:pr(Req, ?MODULE), Syntax, Defaults, Mandatory]),
+            ?DEBUG("parsing syntax ~p (~p, ~p ~p)", 
+                   [Data, Syntax, Defaults, Mandatory], Req),
             case nklib_config:parse_config(Data, Syntax, Opts) of
                 {ok, Parsed, Other} ->
                     case map_size(Other) of
@@ -58,9 +83,10 @@ process_req(Req, State) ->
                     Req3 = Req2#api_req{data=Parsed},
                     case SrvId:api_server_allow(Req3, State) of
                         {true, State2} ->
-                            % lager:notice("Calling ~p", [Req3]),
+                            ?DEBUG("request allowed", [], Req),
                             SrvId:api_server_cmd(Req3, State2);
                         {false, State2} ->
+                            ?DEBUG("request NOT allowed", [], Req),
                             {error, unauthorized, State2}
                     end;
                 {error, {syntax_error, Error}} ->
@@ -69,7 +95,7 @@ process_req(Req, State) ->
                     {error, {missing_field, Field}, State}
             end;
         error ->
-            lager:error("Atom not found"),
+            ?LLOG(error, "set atoms error", [], Req),
             {error, not_implemented, State}
     end.
 
@@ -84,7 +110,7 @@ process_req(Req, State) ->
 
 process_event(Req, State) ->
     #api_req{class=event, srv_id=SrvId, data=Data} = Req,                      
-    case nkservice_events:parse(Data, self()) of
+    case nkservice_events:parse(SrvId, Data, self()) of
         {ok, Event} ->
             Req2 = Req#api_req{data=Event},
             case SrvId:api_server_allow(Req2, State) of
@@ -132,7 +158,6 @@ send_unrecognized_fields(Req, Fields) ->
         body = #{class=>Class, subclass=>Sub, cmd=>Cmd, fields=>Fields}
     },
     nkservice_events:send(Event),
-    lager:notice("NkSERVICE API: Unknown keys in service launch "
-                 "~s:~s:~s: ~p", [Class, Sub, Cmd, Fields]).
+    ?LLOG(info, "uknown keys in service launch: ~p", [Fields], Req).
 
 

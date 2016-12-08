@@ -39,6 +39,32 @@
 -include("nkservice.hrl").
 
 
+-define(DEBUG(Txt, Args, Req),
+    case erlang:get(nkservice_api_server_debug) of
+        true -> ?LLOG(debug, Txt, Args, Req);
+        _ -> ok
+    end).
+
+-define(LLOG(Type, Txt, Args, Req),
+    lager:Type(
+        [
+            {session_id, Req#api_req.session_id},
+            {user_id, Req#api_req.user_id},
+            {class, Req#api_req.class},
+            {subclass, Req#api_req.subclass},
+            {cmd, Req#api_req.cmd}
+        ],
+        "NkSERVICE API Server Req (~s, ~s, ~s/~s/~s) "++Txt, 
+        [
+            Req#api_req.user_id, 
+            Req#api_req.session_id,
+            Req#api_req.class,
+            Req#api_req.subclass,
+            Req#api_req.cmd
+            | Args
+        ])).
+
+
 
 %% ===================================================================
 %% Commands
@@ -113,7 +139,6 @@ cmd(event, subscribe, #api_req{srv_id=SrvId, data=Data},
         obj_id = ObjId,
         body = maps:get(body, Data, #{})
     },
-    % lager:warning("SUBS: ~p, ~p", [SrvId, Event]),
     nkservice_api_server:subscribe(self(), Event),
     {ok, #{}, State};
 
@@ -188,34 +213,18 @@ cmd(session, send_event, #api_req{srv_id=SrvId, data=Data}, State) ->
     nkservice_events:send(Event),
     {ok, #{}, State};
 
-cmd(session, cmd, #api_req{data=Data, tid=TId}, State) ->
-    #{session_id:=SessId, class:=Class, subclass:=Sub, cmd:=Cmd} = Data,
+cmd(session, cmd, #api_req{data=Data}=Req, State) ->
+    #{session_id:=SessId} = Data,
     case nkservice_api_server:find_session(SessId) of
         {ok, _User, Pid} ->
-            CmdData = maps:get(data, Data, #{}),
             Self = self(),
-            _ = spawn_link(
-                fun() ->
-                    case nkservice_api_server:cmd(Pid, Class, Sub, Cmd, CmdData) of
-                        {ok, <<"ok">>, ResData} ->
-                            nkservice_api_server:reply_ok(Self, TId, ResData);
-                        {ok, <<"error">>, #{<<"code">>:=Code, <<"error">>:=Error}} ->
-                            nkservice_api_server:reply_error(Self, TId, {Code, Error});
-                        {ok, Res, _ResData} ->
-                            Ref = nklib_util:uid(),
-                            lager:error("Internal error ~s: Invalid reply: ~p", 
-                                        [Ref, Res]),
-                            nkservice_api_server:reply_error(Self, TId, 
-                                                             {internal_error, Ref});
-                        {error, Error} ->
-                            nkservice_api_server:reply_error(Self, TId, Error)
-                    end
-                end),
+            _ = spawn_link(fun() -> subcmd(Req, Pid, Self) end),
             {ack, State};
         not_found ->
             {error, session_not_found, State}
     end;
 
+%% Default implmentation, plugins like GELF implement his
 cmd(session, log, #api_req{data=Data}, State) ->
     Txt = "API Session Log: ~p",
     case maps:get(level, Data, 6) of
@@ -238,7 +247,6 @@ cmd(test, async, #api_req{tid=TId, data=Data}, State) ->
     {ack, State};
 
 cmd(_Sub, Cmd, _Data, State) ->
-    lager:error("Unknown command: ~p, ~p, ~p", [_Sub, Cmd, State]),
     {error, {unknown_command, Cmd}, State}.
 
 
@@ -246,6 +254,24 @@ cmd(_Sub, Cmd, _Data, State) ->
 %% Internal
 %% ===================================================================
 
+
+%% @private
+subcmd(#api_req{data=Data, tid=TId}=Req, Pid, Self) ->
+    #{class:=Class, cmd:=Cmd} = Data,
+    Sub = maps:get(subclass, Data, <<>>),
+    CmdData = maps:get(data, Data, #{}),
+    case nkservice_api_server:cmd(Pid, Class, Sub, Cmd, CmdData) of
+        {ok, <<"ok">>, ResData} ->
+            nkservice_api_server:reply_ok(Self, TId, ResData);
+        {ok, <<"error">>, #{<<"code">>:=Code, <<"error">>:=Error}} ->
+            nkservice_api_server:reply_error(Self, TId, {Code, Error});
+        {ok, Res, _ResData} ->
+            Ref = nklib_util:uid(),
+            ?LLOG(notice, "invalid reply: ~p (~p)", [Res, Ref], Req),
+            nkservice_api_server:reply_error(Self, TId, {internal_error, Ref});
+        {error, Error} ->
+            nkservice_api_server:reply_error(Self, TId, Error)
+    end.
 
 %% @private
 parse_service(Service) ->

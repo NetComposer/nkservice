@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 -export([send/1, reg/1, unreg/1]).
 -export([call/1]).
--export([parse/2]).
+-export([parse/3]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, 
          handle_cast/2, handle_info/2]).
@@ -34,12 +34,12 @@
 
 -define(DEBUG(SrvId, Txt, Args, State),
     case erlang:get({?MODULE, SrvId}) of
-        true -> ?LLOG(debug, Txt, Args, State);
+        true -> ?LLOG(info, Txt, Args, State);
         _ -> ok
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkSERVICE Events ~s:~s:~s "++Txt, 
+    lager:Type("NkSERVICE Events '~s/~s/~s' "++Txt, 
                [State#state.class, State#state.sub, State#state.type|Args])).
 
 
@@ -72,11 +72,10 @@
     ok | not_found.
 
 send(Event) ->
-    % lager:info("EVENT: ~p ~p", [Event, Body]),
     Event2 = normalize(Event),
-    do_send(Event2, direct),
-    do_send(Event2, all_types),
-    do_send(Event2, all_types_subs). 
+    lists:foreach(
+        fun(Server) -> gen_server:cast(Server, {send, Event2}) end,
+        find_servers(Event2)).
 
 
 %% @doc
@@ -85,22 +84,25 @@ send(Event) ->
 
 call(Event) ->
     Event2 = normalize(Event),
-    case do_call(Event2, direct) of
-        not_found ->
-            % All types
-            case do_call(Event2, all_types) of
-                not_found ->
-                    do_call(Event2, all_types_subs);
-                ok ->
-                    ok
-            end;
+    do_call(find_servers(Event2), Event2).
+
+
+%% @private
+do_call([], _Event) ->
+    not_found;
+
+do_call([Pid|Rest], Event) ->
+    case gen_server:call(Pid, {call, Event}) of
         ok ->
-            ok
+            ok;
+        _ ->
+            do_call(Rest, Event)
     end.
 
 
 %% @doc
-%% body and pid are not used for registration index
+%% missing or <<>> fields mean 'any'
+%% service can be 'all'
 -spec reg(event()) ->
     {ok, pid()}.
 
@@ -129,24 +131,30 @@ get_all() ->
 
 %% @private
 remove_all(Class, Sub, Type) ->
-    case find_server(Class, Sub, Type) of
-        {ok, Pid} -> gen_server:cast(Pid, remove_all);
-        not_found -> not_found
+    Class2 = nklib_util:to_binary(Class),
+    Sub2 = nklib_util:to_binary(Sub),
+    Type2 = nklib_util:to_binary(Type),
+    case find_servers(Class2, Sub2, Type2) of
+        [Pid] -> gen_server:cast(Pid, remove_all);
+        [] -> not_found
     end.
 
 
 %% @private
 dump(Class, Sub, Type) ->
-    case find_server(Class, Sub, Type) of
-        {ok, Pid} -> gen_server:call(Pid, dump);
-        not_found -> not_found
+    Class2 = nklib_util:to_binary(Class),
+    Sub2 = nklib_util:to_binary(Sub),
+    Type2 = nklib_util:to_binary(Type),
+    case find_servers(Class2, Sub2, Type2) of
+        [Pid] -> gen_server:call(Pid, dump);
+        [] -> not_found
     end.
 
 
 
 %% @doc Tries to parse a event-type object
-parse(Data, Pid) ->
-  {Syntax, Defaults, Mandatory} = nkservice_api_syntax:syntax_events(#{}, #{}, []),
+parse(SrvId, Data, Pid) ->
+  {Syntax, Defaults, Mandatory} = nkservice_api_syntax:events(#{}, #{}, []),
     Opts = #{
         return => map, 
         defaults => Defaults,
@@ -157,9 +165,10 @@ parse(Data, Pid) ->
             case map_size(Other)>0 andalso is_pid(Pid) of
                 true ->
                     MEvent = #event{
-                        class = core,
-                        subclass = session,
-                        type = unrecognized_fields,
+                        srv_id = SrvId,
+                        class = <<"core">>,
+                        subclass = <<"session">>,
+                        type = <<"unrecognized_fields">>,
                         body = #{
                             class => event,
                             body => maps:keys(Other)
@@ -176,6 +185,7 @@ parse(Data, Pid) ->
                 obj_id := ObjId
             } = Parsed,
             Event = #event{
+                srv_id = SrvId,
                 class = Class,
                 subclass = Sub,
                 type = Type,
@@ -227,7 +237,7 @@ init([Class, Sub, Type]) ->
     {reply, term(), #state{}} | {noreply, #state{}} | {stop, normal, ok, #state{}}.
 
 handle_call({call, Event}, _From, State) ->
-    #event{class=Class, srv_id=SrvId, obj_id=ObjId, pid=Pid} = Event,
+    #event{class=Class, srv_id=SrvId, obj_id=ObjId} = Event,
     #state{class=Class, regs=Regs} = State,
     PidTerms = case maps:get({SrvId, ObjId}, Regs, []) of
         [] ->
@@ -235,14 +245,14 @@ handle_call({call, Event}, _From, State) ->
         List ->
             List
     end,
-    ?DEBUG(SrvId, "call ~s:~s (~p): ~p", [SrvId, ObjId, Pid, PidTerms], State),
+    ?DEBUG(SrvId, "call ~s:~s: ~p", [SrvId, ObjId, PidTerms], State),
     case PidTerms of
         [] ->
             {reply, not_found, State};
         _ ->
             Pos = nklib_util:l_timestamp() rem length(PidTerms) + 1,
             {Pid, RegBody} = lists:nth(Pos, PidTerms),
-            send_events([{Pid, RegBody}], Event#event{pid=undefined}),
+            send_events([{Pid, RegBody}], Event#event{pid=undefined}, State),
             {reply, ok, State}
     end;
 
@@ -260,15 +270,15 @@ handle_call(Msg, _From, State) ->
 
 handle_cast({send, Event}, State) ->
     #state{class=Class, regs=Regs} = State,
-    #event{class=Class, srv_id=SrvId, obj_id=ObjId, pid=Pid} = Event,
+    #event{class=Class, srv_id=SrvId, obj_id=ObjId} = Event,
     PidTerms1 = maps:get({SrvId, ObjId}, Regs, []),
     PidTerms2 = maps:get({SrvId, <<>>}, Regs, []) -- PidTerms1,
-    PidTerms3 = maps:get({<<>>, <<>>}, Regs, []) -- PidTerms1 -- PidTerms2,
-    ?DEBUG(SrvId, "send ~s:~s (pid:~p): ~p,~p,~p", 
-          [SrvId, ObjId, Pid, PidTerms1, PidTerms2, PidTerms3], State),
-    send_events(PidTerms1, Event),
-    send_events(PidTerms2, Event),
-    send_events(PidTerms3, Event),
+    PidTerms3 = maps:get({all, <<>>}, Regs, []) -- PidTerms1 -- PidTerms2,
+    ?DEBUG(SrvId, "send ~s:~s ~p,~p,~p", 
+          [SrvId, ObjId, PidTerms1, PidTerms2, PidTerms3], State),
+    send_events(PidTerms1, Event, State),
+    send_events(PidTerms2, Event, State),
+    send_events(PidTerms3, Event, State),
     {noreply, State};
 
 handle_cast({reg, Event}, State) ->
@@ -358,14 +368,14 @@ normalize(Event) ->
         true -> 
             Body;
         false ->
-            lager:warning("Body is not map ~s:~s:~s: ~p", [Class, Sub, Type, Body]),
+            lager:warning("~p is not a map (~s:~s:~s)", [Body, Class, Sub, Type]),
             #{}
     end,
     Pid2 = case is_pid(Pid) orelse Pid==undefined of
         true ->
             Pid;
         false ->
-            lager:warning("Pid is not pif ~s:~s:~s: ~p", [Class, Sub, Type, Pid]),
+            lager:warning("~p is not a pid (~s:~s:~s)", [Pid, Class, Sub, Type]),
             undefined
     end,
     Event#event{
@@ -388,67 +398,41 @@ normalize_self(#event{pid=Pid}=Event) ->
     end.
 
 
+%% @private
+find_servers(#event{class=Class, subclass=Sub, type=Type}) ->
+    find_servers(Class, Sub, Type).
+    
 
 %% @private
-do_call(#event{class=Class, subclass=Sub, type=Type}=Send, Type) ->
-    case Type of
-        direct ->
-            TypeS = Type,
-            SubS = Sub;
-        all_types ->
-            TypeS = <<>>,
-            SubS = Sub;
-        all_types_subs ->
-            TypeS = <<>>,
-            SubS = <<>>
-    end,
-    case find_server(Class, SubS, TypeS) of
-        {ok, Server} -> 
-            gen_server:call(Server, {call, Send});
-        not_found -> 
-            not_found
-    end.
+find_servers(Class, <<>>, <<>>) ->
+    do_find_server(Class, <<>>, <<>>, []);
+
+find_servers(Class, Sub, <<>>) ->
+    Acc = do_find_server(Class, <<>>, <<>>, []),
+    do_find_server(Class, Sub, <<>>, Acc);
+
+find_servers(Class, Sub, Type) ->
+    Acc1 = do_find_server(Class, <<>>, <<>>, []),
+    Acc2 = do_find_server(Class, Sub, <<>>, Acc1),
+    do_find_server(Class, Sub, Type, Acc2).
 
 
 %% @private
-do_send(#event{class=Class, subclass=Sub, type=Type}=Send, Type) ->
-    case Type of
-        direct ->
-            TypeS = Type,
-            SubS = Sub;
-        all_types ->
-            TypeS = <<>>,
-            SubS = Sub;
-        all_types_subs ->
-            TypeS = <<>>,
-            SubS = <<>>
-    end,
-    case find_server(Class, SubS, TypeS) of
-        {ok, Server} -> 
-            gen_server:cast(Server, {send, Send});
-        not_found -> 
-            ok
-    end.
-
-
-%% @private
-find_server(Class, Sub, Type) ->
-    Class2 = nklib_util:to_binary(Class),
-    Sub2 = nklib_util:to_binary(Sub),
-    case nklib_proc:values({?MODULE, Class2, Sub2, Type}) of
+do_find_server(Class, Sub, Type, Acc) ->
+    case nklib_proc:values({?MODULE, Class, Sub, Type}) of
         [{undefined, Pid}] ->
-            {ok, Pid};
+            [Pid|Acc];
         [] ->
-            not_found
+            Acc
 end.
 
 
 %% @private
 start_server(#event{class=Class, subclass=Sub, type=Type}) ->
-    case find_server(Class, Sub, Type) of
-        {ok, Pid} ->
+    case do_find_server(Class, Sub, Type, []) of
+        [Pid] ->
             Pid;
-        not_found ->
+        [] ->
             Spec = {
                 {Class, Sub, Type},
                 {?MODULE, start_link, [Class, Sub, Type]},
@@ -457,8 +441,10 @@ start_server(#event{class=Class, subclass=Sub, type=Type}) ->
                 worker,
                 [?MODULE]
             },
-            {ok, Pid} = supervisor:start_child(nkservice_events_sup, Spec),
-            Pid
+            case supervisor:start_child(nkservice_events_sup, Spec) of
+                {ok, Pid}  -> Pid;
+                {error, {already_started, Pid}} -> Pid
+            end
     end.
 
 
@@ -514,18 +500,19 @@ do_unreg([Key|Rest], Pid, #state{regs=Regs, pids=Pids}=State) ->
 
 
 %% @private
-send_events([], _Event) ->
+send_events([], _Event, _State) ->
     ok;
 
-send_events([{Pid, _}|Rest], #event{pid=PidE}=Event) when is_pid(PidE), Pid/=PidE ->
-    send_events(Rest, Event);
+send_events([{Pid, _}|Rest], #event{pid=PidE}=Event, State) 
+        when is_pid(PidE), Pid/=PidE ->
+    send_events(Rest, Event, State);
 
-send_events([{Pid, RegBody}|Rest], #event{body=Body}=Event) ->
-    % lager:info("Sending event ~p to ~p (~p)", 
-    %            [lager:pr(Event, ?MODULE), Pid, Body]),
-    Body2 = maps:merge(RegBody, Body),
-    Pid ! {nkservice_event, Event#event{body=Body2}},
-    send_events(Rest, Event).
+send_events([{Pid, RegBody}|Rest], Event, State) ->
+    #event{srv_id=SrvId, body=Body}=Event, 
+    Event2 = Event#event{body=maps:merge(RegBody, Body)},
+    ?DEBUG(SrvId, "sending event ~p to ~p", [lager:pr(Event2, ?MODULE), Pid], State),
+    Pid ! {nkservice_event, Event2},
+    send_events(Rest, Event, State).
 
 
 
@@ -549,12 +536,13 @@ force_set_log(SrvId) ->
     put({?MODULE, SrvId}, Debug).
 
 
+
 %% ===================================================================
-%% EUnit tests
+%% Tests
 %% ===================================================================
 
 
-% -define(TEST, 1).
+% % -define(TEST, 1).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -compile([export_all]).
@@ -563,17 +551,18 @@ basic_test_() ->
     {setup, 
         fun() -> 
             ?debugFmt("Starting ~p", [?MODULE]),
-            case find_server(c, s, t) of
-                not_found ->
-                    {ok, _} = gen_server:start(?MODULE, [c, s, t], []),
+            case do_find_server(<<"c">>, <<"s">>, <<"t">>, []) of
+                [] ->
+                    {ok, _} = gen_server:start(?MODULE, [<<"c">>, <<"s">>, <<"t">>], []),
                     do_stop;
                 _ -> 
+                    remove_all(c, s, t),
                     ok
             end
         end,
         fun(Stop) -> 
             case Stop of 
-                do_stop -> exit(whereis(?MODULE), kill);
+                do_stop -> catch exit(whereis(?MODULE), kill);
                 ok -> ok
             end
         end,
@@ -584,26 +573,27 @@ basic_test_() ->
         ]
     }.
 
-% -compile([export_all]).
 
 test1() ->
     Reg = #event{class=c, subclass=s, type=t, srv_id=srv},
     Self = self(),
-    reg(Reg#event{obj_id=id1, body=b1}),
-    reg(Reg#event{obj_id=id2, body=b2}),
+    reg(Reg#event{obj_id=id1, body=#{b1=>1}}),
+    reg(Reg#event{obj_id=id2, body=#{b2=>2}}),
     {
         [
-            {{srv, id1}, [{Self, b1}]}, 
-            {{srv, id2}, [{Self, b2}]}
-        ],
-        [{Self, {_, [{srv, id2}, {srv, id1}]}}]
+            {{srv, <<"id1">>}, [{Self, #{b1:=1}}]}, 
+            {{srv, <<"id2">>}, [{Self, #{b2:=2}}]}
+        ], 
+        [
+            {Self, {_, [{srv, <<"id2">>}, {srv, <<"id1">>}]}}
+        ]
     } = 
         dump(c, s, t),
 
     unreg(Reg#event{obj_id=id1}),
     {
-        [{{srv, id2}, [{Self, b2}]}],
-        [{Self, {_, [{srv, id2}]}}]
+        [{{srv, <<"id2">>}, [{Self, #{b2:=2}}]}],
+        [{Self, {_, [{srv, <<"id2">>}]}}]
     } = 
         dump(c, s, t),
 
@@ -620,7 +610,7 @@ test2() ->
     P4 = test_reg(2, b2),
     P5 = test_reg(3, b3),
     P6 = test_reg(3, b3b),
-    P7 = test_reg(<<"*">>, b7),
+    P7 = test_reg(<<>>, b7),
     timer:sleep(50),
 
     Reg = #event{class=c, subclass=s, type=t, srv_id=srv},
@@ -628,9 +618,12 @@ test2() ->
         fun(_) ->
             call(Reg#event{obj_id=0}),
             receive 
-                {c, _RP1, 0, RB1} -> true = lists:member(RB1, [b1, b1b, b2, b3, b3b, b7]);
-                O -> error(O)
-                after 100 -> error(?LINE) 
+                {c, _RP1, <<"0">>, RB1} -> 
+                    true = lists:member(RB1, [b1, b1b, b2, b3, b3b, b7]);
+                O -> 
+                    error(O)
+                after 100 -> 
+                    error(?LINE) 
                 
             end
         end,
@@ -640,7 +633,7 @@ test2() ->
         fun(_) ->
             call(Reg#event{obj_id=1}),
             receive 
-                {c, _RP2, 1, RB2} -> true = lists:member(RB2, [b1, b1b, b7])
+                {c, _RP2, <<"1">>, RB2} -> true = lists:member(RB2, [b1, b1b, b7])
                 after 100 -> error(?LINE) 
             end
         end,
@@ -650,7 +643,7 @@ test2() ->
         fun(_) ->
             call(Reg#event{obj_id=2}),
             receive 
-                {c, RP3, 2, RB2} -> 
+                {c, RP3, <<"2">>, RB2} -> 
                     true = lists:member(RB2, [b2, b7]),
                     true = lists:member(RP3, [P4, P7])
                 after 100 -> 
@@ -663,7 +656,7 @@ test2() ->
         fun(_) ->
             call(Reg#event{obj_id=3}),
             receive 
-                {c, _RP3, 3, RB2} -> true = lists:member(RB2, [b3, b3b, b7])
+                {c, _RP3, <<"3">>, RB2} -> true = lists:member(RB2, [b3, b3b, b7])
                 after 100 -> error(?LINE) 
             end
         end,
@@ -673,42 +666,44 @@ test2() ->
         fun(_) ->
             call(Reg#event{obj_id=25}),
             receive 
-                {c, P7, 25, b7} -> ok
+                {c, P7, <<"25">>, b7} -> ok
                 after 100 -> error(?LINE) 
             end
         end,
         lists:seq(1, 100)),
 
     send(Reg#event{obj_id=0}),
-    receive {c, P1, 0, b1} -> ok after 100 -> error(?LINE) end,
-    receive {c, P2, 0, b1} -> ok after 100 -> error(?LINE) end,
-    receive {c, P3, 0, b1b} -> ok after 100 -> error(?LINE) end,
-    receive {c, P4, 0, b2} -> ok after 100 -> error(?LINE) end,
-    receive {c, P5, 0, b3} -> ok after 100 -> error(?LINE) end,
-    receive {c, P6, 0, b3b} -> ok after 100 -> error(?LINE) end,
-    receive {c, P7, 0, b7} -> ok after 100 -> error(?LINE) end,
+    receive {c, P1, <<"0">>, b1} -> ok after 100 -> error(?LINE) end,
+    receive {c, P2, <<"0">>, b1} -> ok after 100 -> error(?LINE) end,
+    receive {c, P3, <<"0">>, b1b} -> ok after 100 -> error(?LINE) end,
+    receive {c, P4, <<"0">>, b2} -> ok after 100 -> error(?LINE) end,
+    receive {c, P5, <<"0">>, b3} -> ok after 100 -> error(?LINE) end,
+    receive {c, P6, <<"0">>, b3b} -> ok after 100 -> error(?LINE) end,
+    receive {c, P7, <<"0">>, b7} -> ok after 100 -> error(?LINE) end,
 
     send(Reg#event{obj_id=1}),
-    receive {c, P1, 1, b1} -> ok after 100 -> error(?LINE) end,
-    receive {c, P2, 1, b1} -> ok after 100 -> error(?LINE) end,
-    receive {c, P3, 1, b1b} -> ok after 100 -> error(?LINE) end,
-    receive {c, P7, 1, b7} -> ok after 100 -> error(?LINE) end,
+    receive {c, P1, <<"1">>, b1} -> ok after 100 -> error(?LINE) end,
+    receive {c, P2, <<"1">>, b1} -> ok after 100 -> error(?LINE) end,
+    receive {c, P3, <<"1">>, b1b} -> ok after 100 -> error(?LINE) end,
+    receive {c, P7, <<"1">>, b7} -> ok after 100 -> error(?LINE) end,
 
     send(Reg#event{obj_id=2}),
-    receive {c, P4, 2, b2} -> ok after 100 -> error(?LINE) end,
-    receive {c, P7, 2, b7} -> ok after 100 -> error(?LINE) end,
+    receive {c, P4, <<"2">>, b2} -> ok after 100 -> error(?LINE) end,
+    receive {c, P7, <<"2">>, b7} -> ok after 100 -> error(?LINE) end,
 
     send(Reg#event{obj_id=3}),
-    receive {c, P5, 3, b3} -> ok after 100 -> error(?LINE) end,
-    receive {c, P6, 3, b3b} -> ok after 100 -> error(?LINE) end,
-    receive {c, P7, 3, b7} -> ok after 100 -> error(?LINE) end,
+    receive {c, P5, <<"3">>, b3} -> ok after 100 -> error(?LINE) end,
+    receive {c, P6, <<"3">>, b3b} -> ok after 100 -> error(?LINE) end,
+    receive {c, P7, <<"3">>, b7} -> ok after 100 -> error(?LINE) end,
 
     send(Reg#event{obj_id=33}),
-    receive {c, P7, 33, b7} -> ok after 100 -> error(?LINE) end,
+    receive {c, P7, <<"33">>, b7} -> ok after 100 -> error(?LINE) end,
 
     receive _ -> error(?LINE) after 100 -> ok end,
 
     [P ! stop || P <- [P1, P2, P3, P4, P5, P6, P7]],
+    timer:sleep(50),
+    {[], []} = dump(c, s, t),
     ok.
 
 
@@ -719,26 +714,31 @@ test3() ->
     P4 = test_reg(2, b2),
     P5 = test_reg(3, b3),
     P6 = test_reg(3, b3b),
-    P7 = test_reg(<<"*">>, b7),
+    P7 = test_reg(<<>>, b7),
     timer:sleep(50),
 
     {
         [
-            {{srv, 0}, 
-                [{P1, b1}, {P2, b1}, {P3, b1b}, {P4, b2}, {P5, b3}, {P6, b3b}, {P7, b7}]},
-            {{srv, 1}, [{P1, b1}, {P2, b1}, {P3, b1b}]},
-            {{srv, 2}, [{P4, b2}]},
-            {{srv, 3}, [{P5, b3}, {P6, b3b}]},
-            {{srv, <<"*">>}, [{P7, b7}]}
+            {{srv, <<>>}, 
+                [{P7, #{b7:=1}}]},
+            {{srv, <<"0">>}, 
+                [{P1, #{b1:=1}}, {P2, #{b1:=1}}, {P3, #{b1b:=1}}, {P4, #{b2:=1}}, 
+                 {P5, #{b3:=1}}, {P6, #{b3b:=1}}, {P7, #{b7:=1}}]},
+            {{srv, <<"1">>}, 
+                [{P1, #{b1:=1}}, {P2, #{b1:=1}}, {P3, #{b1b:=1}}]},
+            {{srv, <<"2">>}, 
+                [{P4, #{b2:=1}}]},
+            {{srv, <<"3">>}, 
+                [{P5, #{b3:=1}}, {P6, #{b3b:=1}}]}
         ],
         [
-            {P1, {_, [{srv, 0}, {srv, 1}]}},
-            {P2, {_, [{srv, 0}, {srv, 1}]}},
-            {P3, {_, [{srv, 0}, {srv, 1}]}},
-            {P4, {_, [{srv, 0}, {srv, 2}]}},
-            {P5, {_, [{srv, 0}, {srv, 3}]}},
-            {P6, {_, [{srv, 0}, {srv, 3}]}},
-            {P7, {_, [{srv, 0}, {srv, <<"*">>}]}}
+            {P1, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
+            {P2, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
+            {P3, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
+            {P4, {_, [{srv, <<"0">>}, {srv, <<"2">>}]}},
+            {P5, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
+            {P6, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
+            {P7, {_, [{srv, <<"0">>}, {srv, <<>>}]}}
         ]
     }
         = dump(c, s, t),
@@ -748,18 +748,23 @@ test3() ->
     timer:sleep(100),
     {
         [
-            {{srv, 0}, [{P2, b1}, {P3, b1b}, {P4, b2}, {P5, b3}, {P6, b3b}, {P7, b7}]},
-            {{srv, 1}, [{P2, b1}, {P3, b1b}]},
-            {{srv, 3}, [{P5, b3}, {P6, b3b}]},
-            {{srv, <<"*">>}, [{P7, b7}]}
+            {{srv, <<>>}, 
+                [{P7, #{b7:=1}}]},
+            {{srv, <<"0">>}, 
+                [{P2, #{b1:=1}}, {P3, #{b1b:=1}}, {P4, #{b2:=1}}, 
+                 {P5, #{b3:=1}}, {P6, #{b3b:=1}}, {P7, #{b7:=1}}]},
+            {{srv, <<"1">>}, 
+                [{P2, #{b1:=1}}, {P3, #{b1b:=1}}]},
+            {{srv, <<"3">>}, 
+                [{P5, #{b3:=1}}, {P6, #{b3b:=1}}]}
         ],
         [
-            {P2, {_, [{srv, 0}, {srv, 1}]}},
-            {P3, {_, [{srv, 0}, {srv, 1}]}},
-            {P4, {_, [{srv, 0}]}},
-            {P5, {_, [{srv, 0}, {srv, 3}]}},
-            {P6, {_, [{srv, 0}, {srv, 3}]}},
-            {P7, {_, [{srv, 0}, {srv, <<"*">>}]}}
+            {P2, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
+            {P3, {_, [{srv, <<"0">>}, {srv, <<"1">>}]}},
+            {P4, {_, [{srv, <<"0">>}]}},
+            {P5, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
+            {P6, {_, [{srv, <<"0">>}, {srv, <<"3">>}]}},
+            {P7, {_, [{srv, <<"0">>}, {srv, <<>>}]}}
         ]
     } = 
         dump(c, s, t),
@@ -773,16 +778,18 @@ test_reg(I, B) ->
     Self = self(),
     spawn(
         fun() -> 
-            reg(Reg#event{obj_id=I, body=B}),
-            reg(Reg#event{obj_id=0, body=B}),
+            reg(Reg#event{obj_id=I, body=maps:put(B, 1, #{})}),
+            reg(Reg#event{obj_id=0, body=maps:put(B, 1, #{})}),
             test_reg_loop(Self, I)
         end).
 
 test_reg_loop(Pid, I) ->
     receive
         {nkservice_event, Event} -> 
-            #event{class=c, subclass=s, type=t, srv_id=srv, obj_id=Id, body=B} = Event,
-            Pid ! {c, self(), Id, B},
+            #event{class= <<"c">>, subclass= <<"s">>, type= <<"t">>, 
+                   srv_id=srv, obj_id=Id, body=B} = Event,
+            [{B1, 1}] = maps:to_list(B),
+            Pid ! {c, self(), Id, B1},
             test_reg_loop(Pid, I);
         stop ->
             ok;

@@ -22,7 +22,7 @@
 
 -module(nkservice_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([syntax/5]).
+-export([syntax/5, events/3]).
 
 
 %% ===================================================================
@@ -45,14 +45,14 @@ syntax(user, get, Syntax, Defaults, Mandatory) ->
     {Syntax#{user=>binary}, Defaults, [user|Mandatory]};
 
 syntax(event, subscribe, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
+    {S, D, M} = events(Syntax, Defaults, Mandatory),
     {S#{body => any}, D, M};
 
 syntax(event, unsubscribe, Syntax, Defaults, Mandatory) ->
-    syntax_events(Syntax, Defaults, Mandatory);
+    events(Syntax, Defaults, Mandatory);
   
 syntax(event, send, Syntax, Defaults, Mandatory) ->
-    {S, D, M} = syntax_events(Syntax, Defaults, Mandatory),
+    {S, D, M} = events(Syntax, Defaults, Mandatory),
     {S#{body => any}, D, M};
 
 syntax(user, send_event, Syntax, Defaults, Mandatory) ->
@@ -93,7 +93,7 @@ syntax(session, cmd, Syntax, Defaults, Mandatory) ->
             cmd => atom,
             data => any
         },
-        Defaults#{subclass => core},
+        Defaults,
         [session_id, class, cmd|Mandatory]
     };
 
@@ -129,7 +129,7 @@ syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
 
 
 %% @private
-syntax_events(Syntax, Defaults, Mandatory) ->
+events(Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             class => binary,
