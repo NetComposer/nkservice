@@ -75,7 +75,7 @@ start(Serv, Url, #{user:=User}=Login, Fun, UserData, Class, Sub) ->
         monitor => self(),
         idle_timeout => ?WS_TIMEOUT,
         user => {Fun, UserData#{user=>User}},
-        force_scheme => nkapi_c,
+        implicit_scheme => nkapi_c,
         debug => Debug
     },
     case nkpacket:connect(Url, ConnOpts) of
