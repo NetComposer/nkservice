@@ -981,7 +981,7 @@ send(Msg, NkPort, State) ->
         ok -> 
             {ok, State};
         _ -> 
-            ?LLOG(notice, "error sending reply:", [], State),
+            ?LLOG(notice, "error sending reply: ~p", [Msg], State),
             {stop, normal, State}
     end.
 

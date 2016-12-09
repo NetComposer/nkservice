@@ -28,13 +28,23 @@
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3, get_all/0, get_user_pids/1, find/1]).
 
+% To debug, set debug => [{nkservice_api_client, #{nkpacket=>true}}]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkservice_api_client_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkSERVICE API Client (~s) "++Txt, [State#state.remote| Args])).
 
--define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
-        ok).
+
+-define(MSG(Txt, Args, State),
+    case erlang:get(nkservice_api_client_debug) of
+        true -> print(Txt, Args, State);
+        _ -> ok
+    end).
 
 
 -define(OP_TIME, 5).            % Maximum operation time (without ACK)
@@ -184,7 +194,9 @@ conn_init(NkPort) ->
         callback = CB,
         userdata = UserData
     },
-    ?LLOG(info, "new session (~p)", [self()], State),
+    set_log(State),
+    nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("new session (~p)", [self()], State),
     nklib_proc:put(?MODULE),
     {ok, State}.
 
@@ -204,7 +216,7 @@ conn_parse({text, Text}, NkPort, #state{srv_id=SrvId}=State) ->
         Json ->
             Json
     end,
-    ?PRINT("received ~s", [Msg], State),
+    ?MSG("received ~s", [Msg], State),
     case Msg of
         #{<<"class">> := <<"event">>, <<"data">> := Data} ->
             {ok, Event} = nkservice_events:parse(SrvId, Data, none),
@@ -307,13 +319,16 @@ conn_handle_cast(Msg, _NkPort, State) ->
 
 conn_handle_info({timeout, _, {op_timeout, TId}}, _NkPort, State) ->
     case extract_op(TId, State) of
-        {#trans{from=From}, State2} ->
+        {#trans{from=From, op=Op}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation ~p timeout!", [TId], State),
+            ?LLOG(warning, "operation ~p (~p) timeout!", [Op, TId], State),
             {stop, normal, State2};
         not_found ->
             {ok, State}
     end;
+
+conn_handle_info({nkservice_updated, _SrvId}, _NkPort, State) ->
+    {ok, set_log(State)};
 
 conn_handle_info(Info, _NkPort, State) ->
     ?LLOG(error, "unexpected handle_info: ~p", [Info], State),
@@ -383,6 +398,16 @@ process_server_resp(<<"error">>, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkservice_api_client_debug, Debug),
+    State.
 
 
 %% @private
@@ -529,12 +554,12 @@ send_ack(TId, NkPort, State) ->
 
 %% @private
 send(Msg, NkPort, State) ->
-    ?PRINT("sending ~s", [Msg], State),
+    ?MSG("sending ~s", [Msg], State),
     case send(Msg, NkPort) of
         ok -> 
             {ok, State};
         error -> 
-            ?LLOG(notice, "error sending reply:", [], State),
+            ?LLOG(notice, "error sending reply: ~p", [Msg], State),
             {stop, normal, State}
     end.
 
@@ -548,7 +573,7 @@ send(Msg, NkPort) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
-    ?LLOG(info, Txt, Args, State).
+    ?LLOG(debug, Txt, Args, State).
 
 
 
