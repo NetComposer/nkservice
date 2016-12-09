@@ -26,7 +26,7 @@
 -export([reply_ok/3, reply_login/5, reply_error/3, reply_ack/2]).
 -export([stop/1, stop_all/0, start_ping/2, stop_ping/1]).
 -export([register/2, unregister/2]).
--export([subscribe/2, subscribe/3, unsubscribe/2, unsubscribe/3]).
+-export([subscribe/2, unsubscribe/2, unsubscribe_fun/2]).
 -export([find_user/1, find_session/1, get_subscriptions/1]).
 -export([do_register_http/1]).
 -export([transports/1, default_port/1]).
@@ -210,49 +210,37 @@ unregister(Id, Link) ->
 -spec subscribe(id(), nkservice:event()) ->
     ok.
 
-subscribe(Id, Event) ->
-    subscribe(Id, Event, none).
-
-
-%% @doc Registers with the Events system
-%% For each event 'type' (all fields except body, pid and meta), you can subsribe
-%% several times, with different InstanceId.
-%% When you unsubscribe, only when all registered instances are unsubscribed the
-%% real unsubscription will be performed.
--spec subscribe(id(), nkservice:event(), term()) ->
-    ok.
-
-subscribe(Id, #event{type=[F|_]=Types}=Event, InstanceId)
+subscribe(Id, #event{type=[F|_]=Types}=Event)
           when not is_integer(F) ->
     lists:foreach(
-        fun(Type) -> subscribe(Id, Event#event{type=Type}, InstanceId) end,
+        fun(Type) -> subscribe(Id, Event#event{type=Type}) end,
         Types);
 
-subscribe(Id, Event, InstanceId) ->
-    do_cast(Id, {nkservice_subscribe, Event, InstanceId}).
+subscribe(Id, Event) ->
+    do_cast(Id, {nkservice_subscribe, Event}).
 
 
 %% @doc Unregisters with the Events systtem
 -spec unsubscribe(id(),  nkservice:event()) ->
     ok.
 
-unsubscribe(Id, Event) ->
-    unsubscribe(Id, Event, none).
-
-
-%% @doc See subscribe/3
-%% Use 'all' to remove all instances
--spec unsubscribe(id(),  nkservice:event(), term()|all) ->
-    ok.
-
-unsubscribe(Id, #event{type=[F|_]=Types}=Event, InstanceId)
+unsubscribe(Id, #event{type=[F|_]=Types}=Event)
           when not is_integer(F) ->
     lists:foreach(
-        fun(Type) -> unsubscribe(Id, Event#event{type=Type}, InstanceId) end,
+        fun(Type) -> unsubscribe(Id, Event#event{type=Type}) end,
         Types);
 
-unsubscribe(Id, Event, InstanceId) ->
-    do_cast(Id, {nkservice_unsubscribe, Event, InstanceId}).
+unsubscribe(Id, Event) ->
+    do_cast(Id, {nkservice_unsubscribe, Event}).
+
+
+%% @doc Unregisters with the Events systtem
+-spec unsubscribe_fun(id(), fun((#event{}) -> boolean())) ->
+    ok.
+
+unsubscribe_fun(Id, Fun) ->
+    do_cast(Id, {nkservice_unsubscribe_fun, Fun}).
+
 
 
 %% @private
@@ -331,7 +319,6 @@ do_register_http(SessId) ->
 -record(reg, {
     index :: integer(),
     event :: #event{},
-    ids :: [term()],
     mon :: reference()
 }).
 
@@ -581,7 +568,7 @@ conn_handle_cast({nkservice_start_ping, Time}, _NkPort, #state{ping=Ping}=State)
 conn_handle_cast(nkservice_stop_ping, _NkPort, State) ->
     {ok, State#state{ping=undefined}};
 
-conn_handle_cast({nkservice_subscribe, Event, Id}, _NkPort, State) ->
+conn_handle_cast({nkservice_subscribe, Event}, _NkPort, State) ->
     #state{regs=Regs} = State,
     Pid = nkservice_events:reg(Event),
     Index = event_index(Event),
@@ -589,34 +576,37 @@ conn_handle_cast({nkservice_subscribe, Event, Id}, _NkPort, State) ->
         false ->
             ?DEBUG("registered event ~p", [Event], State),
             Mon = monitor(process, Pid),
-            [#reg{index=Index, event=Event, mon=Mon, ids=[Id]}|Regs];
-        #reg{ids=OldsIds}=Reg ->
+            [#reg{index=Index, event=Event, mon=Mon}|Regs];
+        #reg{} ->
             ?DEBUG("event ~p already registered", [Event], State),
-            Reg2 = Reg#reg{event=Event, ids=nklib_util:store_value(Id, OldsIds)},
-            lists:keystore(Index, #reg.index, Regs, Reg2)
+            Regs
     end,
     {ok, State#state{regs=Regs2}};
 
-conn_handle_cast({nkservice_unsubscribe, Event, Id}, _NkPort, State) ->
+conn_handle_cast({nkservice_unsubscribe, Event}, _NkPort, State) ->
     #state{regs=Regs} = State,
     Index = event_index(Event),
     case lists:keytake(Index, #reg.index, Regs) of
-        {value, #reg{ids=[Id], mon=Mon}, Regs2} ->
+        {value, #reg{mon=Mon}, Regs2} ->
             demonitor(Mon),
             ok = nkservice_events:unreg(Event),
             ?DEBUG("unregistered event ~p", [Event], State),
             {ok, State#state{regs=Regs2}};
-        {value, #reg{mon=Mon}, Regs2} when Id==all ->
-            demonitor(Mon),
-            ?DEBUG("unregistered event ~p", [Event], State),
-            ok = nkservice_events:unreg(Event),
-            {ok, State#state{regs=Regs2}};
-        {value, #reg{ids=Ids}=Reg, Regs2} ->
-            Reg2 = Reg#reg{ids=Ids -- [Id]},
-            {ok, State#state{regs=[Reg2|Regs2]}};
         false ->
             {ok, State}
     end;
+
+conn_handle_cast({nkservice_unsubscribe_fun, Fun}, _NkPort, State) ->
+    #state{regs=Regs} = State,
+    lists:foreach(
+        fun(#reg{event=Event}) -> 
+            case Fun(Event) of 
+                true -> unsubscribe(self(), Event#event{body=#{}});
+                false -> ok
+            end
+        end,
+        Regs),
+    {ok, State};
 
 conn_handle_cast({nkservice_register, Link}, _NkPort, State) ->
     ?DEBUG("registered ~p", [Link], State),
@@ -667,8 +657,8 @@ conn_handle_info({'EXIT', _PId, normal}, _NkPort, State) ->
 conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     #state{regs=Regs} = State,
     case lists:keytake(Ref, #reg.mon, Regs) of
-        {value, #reg{event=Event, ids=Ids}, Regs2} ->
-            lists:foreach(fun(Id) -> subscribe(self(), Event, Id) end, Ids),
+        {value, #reg{event=Event}, Regs2} ->
+            subscribe(self(), Event),
             {ok, State#state{regs=Regs2}};
         false ->
             case links_down(Ref, State) of
