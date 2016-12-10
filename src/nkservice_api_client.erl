@@ -367,7 +367,8 @@ process_server_event(Event, State) ->
     ApiReq = #api_req{class=event, user_id=User, session_id=SessId, data=Event},
     case CB(ApiReq, UserData) of
         {ok, UserData2}  -> ok;
-        {ok, _, UserData2} -> ok
+        {ok, _, UserData2} -> ok;
+        {error, _, UserData2} -> ok
     end,
     {ok, State#state{userdata=UserData2}}.
 

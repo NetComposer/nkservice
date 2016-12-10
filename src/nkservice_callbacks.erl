@@ -211,12 +211,13 @@ error_code(unknown_peer) 			-> {100071, "Unknown peer"};
 error_code(invalid_json) 			-> {100072, "Invalid JSON"};
 error_code(data_not_available)   	-> {100073, "Data is not available"};
 
-
-error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
-	{Code, Txt};
+% error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
+% 	{Code, Txt};
 
 error_code(Other) -> 
-	{999999, nklib_util:to_binary(Other)}.
+	Ref = nklib_util:uid(),
+	lager:warning("Unrecognized error ~s: ~p", [Ref, nklib_util:to_binary(Other)]),
+	{100003, "Internal error: ~s", [Ref]}.
 
 
 
