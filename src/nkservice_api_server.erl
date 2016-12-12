@@ -36,7 +36,7 @@
 
 
 % To debug, set debug => [nkservice_api_server]
-% To debug nkpacket, set debug in listener (get_api_sockets)
+% To debug nkpacket, set debug in listener (nkservice_util:get_api_sockets())
 
 -define(DEBUG(Txt, Args, State),
     case erlang:get(nkservice_api_server_debug) of

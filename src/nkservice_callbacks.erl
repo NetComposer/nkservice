@@ -35,8 +35,8 @@
 		 api_server_reg_down/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_server_http_download/4, api_server_http_upload/6]).
--export([api_server_http_get/2, api_server_http_post/4]).
+-export([api_server_http_download/5, api_server_http_upload/7]).
+-export([api_server_http_get/4, api_server_http_post/6]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -226,6 +226,11 @@ error_code(Other) ->
 %% ===================================================================
 
 
+-type http_response() ::
+	{http, Code::integer(), Hds::[{binary(), binary()}], Body::map()|binary(), 
+	 state()}.
+
+
 %% @doc Called when a new connection starts
 -spec api_server_init(nkpacket:nkport(), state()) ->
 	{ok, state()} | {stop, term()}.
@@ -361,38 +366,42 @@ api_server_terminate(_Reason, State) ->
 
 
 %% @doc called when a new download request has been received
--spec api_server_http_download(Mod::atom(), ObjId::term(), Name::term(), state()) ->
-	{ok, CT::binary(), Bin::binary(), state()} |
-	{error, nkservice:error(), state()}.
+%% Should include [{<<"content-type">>, CT2}],
 
-api_server_http_download(_Mod, _ObjId, _Name, State) ->
-	{error, not_found, State}.
+-spec api_server_http_download(User::binary(), Mod::atom(), ObjId::term(), Name::term(), 
+							   state()) ->
+	{ok, CT::binary(), Body::binary(), state()} | 
+	{error, forbidden | not_found, state()}.
+
+api_server_http_download(_User, _Mod, _ObjId, _Name, State) ->
+	{error, forbidden, State}.
 
 
 %% @doc called when a new upload request has been received
--spec api_server_http_upload(Mod::atom(), ObjId::term(), Name::term(), 
+-spec api_server_http_upload(User::binary(), Mod::atom(), ObjId::term(), Name::term(), 
 							 CT::binary(), Bin::binary(), state()) ->
-	{ok, state()} |
-	{error, nkservice:error(), state()}.
+	{ok, state()} | 
+	{error, forbidden | not_found, state()}.
 
-api_server_http_upload(_Mod, _ObjId, _Name, _CT, _Bin, State) ->
-	{error, not_found, State}.
+api_server_http_upload(_User, _Mod, _ObjId, _Name, _CT, _Bin, State) ->
+	{error, forbidden, State}.
 
 
 %% @doc called when a GET is received
--spec api_server_http_get([binary()], state()) ->
-	{ok, Code::integer(), Hds::[{binary(), binary()}], Body::map()|binary(), state()}.
+-spec api_server_http_get(binary(), [binary()], term(), state()) ->
+	http_response().
 
-api_server_http_get(_Path, State) ->
-	{ok, 404, [], <<"Unhandled Request">>, State}.
+api_server_http_get(_User, _Path, _Req, State) ->
+	{http, 403, [], <<"Forbidden">>, State}.
 
 
 %% @doc called when a PUT is received
--spec api_server_http_post([binary()], CT::binary(), Body::binary(), state()) ->
-	{ok, Code::integer(), Hds::[{binary(), binary()}], Body::map()|binary(), state()}.
+-spec api_server_http_post(binary(), [binary()], CT::binary(), Body::binary(), 
+						   term(), state()) ->
+	http_response().
 
-api_server_http_post(_Path, _CT, _Body, State) ->
-	{ok, 404, [], <<"Unhandled Request">>, State}.
+api_server_http_post(_User, _Path, _CT, _Body, _Req, State) ->
+	{http, 403, [], <<"Forbidden">>, State}.
 
 
 %% ===================================================================

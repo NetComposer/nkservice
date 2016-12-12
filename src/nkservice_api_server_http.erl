@@ -28,6 +28,18 @@
 -include("nkservice.hrl").
 
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkservice_api_server_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(LLOG(Type, Txt, Args, State),
+    lager:Type("NkSERVICE API Server HTTP (~s, ~s) "++Txt, 
+               [State#state.user, State#state.id|Args])).
+
+
+
 
 %% ===================================================================
 %% Public
@@ -64,86 +76,102 @@ filename_decode(Term) ->
 %% Incoming
 %% ===================================================================
 
+
+-record(state, {
+    id :: binary(),
+    srv_id :: nkservice:id(),
+    session_type :: atom(),
+    remote :: binary(),
+    user :: binary(),
+    user_state :: map(),
+    req :: term(),
+    method :: binary(),
+    path :: [binary()],
+    ct :: binary(),
+    body :: binary() | map()
+}).
+
+
 %% @private
-incoming(SrvId, <<"POST">>, [], _CT, Msg, Req, State) when is_map(Msg) ->
-    case Msg of
-        #{<<"class">> := Class, <<"cmd">> := Cmd} ->
-            #{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-            TId = erlang:phash2(make_ref()),
-            ApiReq = #api_req{
-                srv_id = SrvId,
-                class = Class,
-                subclass = maps:get(<<"subclass">>, Msg, <<>>),
-                cmd = Cmd,
-                tid = TId,
-                data = maps:get(<<"data">>, Msg, #{}), 
-                user_id = User,
-                session_id = SessId
-            },
-            case nkservice_api_lib:process_req(ApiReq, State) of
-                {ok, Reply, _State2} when is_map(Reply); is_list(Reply) ->
-                    send_msg_ok(SrvId, Reply, Req);
-                {ack, _State2} ->
-                    #{session_id:=SessId} = State,
-                    nkservice_api_server:do_register_http(SessId),
-                    ack_wait(SrvId, TId, Req);
-                {error, Error, _State2} ->
-                    send_msg_error(SrvId, Error, Req)
-            end;
-        _ ->
-            throw(cowboy_req:reply(400, [], <<"Invalid Command">>, Req))
+incoming(post, [], #state{user = <<>>}) ->
+    throw(forbidden);
+
+incoming(post, [], #state{body=#{<<"class">>:=Class, <<"cmd">>:=Cmd}=Body}=State) ->
+    #state{srv_id=SrvId, user=User, id=SessId, user_state=UserState} = State,
+    TId = erlang:phash2(make_ref()),
+    ApiReq = #api_req{
+        srv_id = SrvId,
+        class = Class,
+        subclass = maps:get(<<"subclass">>, Body, <<>>),
+        cmd = Cmd,
+        tid = TId,
+        data = maps:get(<<"data">>, Body, #{}), 
+        user_id = User,
+        session_id = SessId
+    },
+    case nkservice_api_lib:process_req(ApiReq, UserState) of
+        {ok, Reply, UserState2} ->
+            {ok, Reply, State#state{user_state=UserState2}};
+        {ack, UserState2} ->
+            nkservice_api_server:do_register_http(SessId),
+            ack_wait(TId, State#state{user_state=UserState2});
+        {error, Error, UserState2} ->
+            {error, Error, State#state{user_state=UserState2}}
     end;
 
-incoming(SrvId, <<"GET">>, [<<"download">>, File], _CT, _Body, Req, State) ->
+incoming(post, [<<"upload">>, _], #state{user = <<>>}) ->
+    throw(forbidden);
+
+incoming(post, [<<"upload">>, File], #state{user=User, ct=CT, body=Body}=State) ->
     case filename_decode(File) of
         {Mod, ObjId, Name} ->
-            case handle(api_server_http_download, [Mod, ObjId, Name], State) of
-                {ok, CT2, Bin, _State2} when is_binary(Bin) ->
+            ?DEBUG("decoded upload ~s:~s:~s", [Mod, ObjId, Name], State),
+            Args = [User, Mod, ObjId, Name, CT, Body],
+            case handle(api_server_http_upload, Args, State) of
+                {ok, State2} ->
+                    {http, 200, [], <<>>, State2};
+                {error, Error, _State2} ->
+                    throw(Error)
+            end;
+        error ->
+            throw(invalid_file_name)
+    end;
+
+incoming(get, [<<"download">>, _], #state{user = <<>>}) ->
+    throw(forbidden);
+
+incoming(get, [<<"download">>, File], #state{user=User}=State) ->
+    case filename_decode(File) of
+        {Mod, ObjId, Name} ->
+            ?DEBUG("decoded download ~s:~s:~s", [Mod, ObjId, Name], State),
+            case handle(api_server_http_download, [User, Mod, ObjId, Name], State) of
+                {ok, CT2, Bin, State2} ->
                     Hds = [{<<"content-type">>, CT2}],
-                    cowboy_req:reply(200, Hds, Bin, Req);
+                    {http, 200, Hds, Bin, State2};
                 {error, Error, _State2} ->
-                    send_http_error(SrvId, Error, Req)
+                    throw(Error)
             end;
         error ->
-            cowboy_req:reply(400, [], <<"Invalid file name">>, Req)
+            throw(invalid_file_name)
     end;
 
-incoming(SrvId, <<"POST">>, [<<"upload">>, File], CT, Body, Req, State) ->
-    case filename_decode(File) of
-        {Mod, ObjId, Name} ->
-            case handle(api_server_http_upload, [Mod, ObjId, Name, CT, Body], State) of
-                {ok, _State2} ->
-                    cowboy_req:reply(200, [], <<>>, Req);
-                {error, Error, _State2} ->
-                    send_http_error(SrvId, Error, Req)
-            end;
-        error ->
-            cowboy_req:reply(400, [], <<"Invalid file name">>, Req)
-    end;
+incoming(get, Path, #state{user=User, req=Req}=State) ->
+    handle(api_server_http_get, [User, Path, Req], State);
 
-incoming(_SrvId, <<"GET">>, Path, _CT, _Body, Req, State) ->
-    {ok, Code, Hds, Body2} = handle(api_server_http_get, [Path], State),        
-    cowboy_req:reply(Code, Hds, Body2, Req);
-
-incoming(_SrvId, <<"POST">>, Path, CT, Body, Req, State) ->
-    {ok, Code, Hds, Body2} = handle(api_server_http_post, [Path, CT, Body], State),
-    cowboy_req:reply(Code, Hds, Body2, Req);
-
-incoming(_SrvId, Method, Path, CT, Body, Req, _State) ->
-    lager:notice("Unhandled request: ~s, ~s, ~s, ~s", [Method, Path, CT, Body]),
-    cowboy_req:reply(404, [], <<"Unhandled Request">>, Req).
+incoming(post, Path, #state{user=User, ct=CT, body=Body, req=Req}=State) ->
+    handle(api_server_http_post, [User, Path, CT, Body, Req], State).
 
 
 %% @private
-ack_wait(SrvId, TId, Req) ->
+ack_wait(TId, State) ->
     receive
         {'$gen_cast', {nkservice_reply_ok, TId, Reply}} ->
-            send_msg_ok(SrvId, Reply, Req);
+            send_msg_ok(Reply, State);
         {'$gen_cast', {nkservice_reply_error, TId, Error}} ->
-            send_msg_error(SrvId, Error, Req)
+            send_msg_error(Error, State)
     after 
         1000*?MAX_ACK_TIME -> 
-            send_msg_error(SrvId, timeout, Req)
+            send_msg_error(timeout, State)
     end.
 
 
@@ -155,17 +183,50 @@ ack_wait(SrvId, TId, Req) ->
 
 %% @private
 init(Req, [{srv_id, SrvId}]) ->
+    {Ip, Port} = cowboy_req:peer(Req),
+    Transp = tls,
+    Remote = <<
+        (nklib_util:to_binary(Transp))/binary, ":",
+        (nklib_util:to_host(Ip))/binary, ":",
+        (nklib_util:to_binary(Port))/binary
+    >>,
+    SessId = nklib_util:luid(),
+    Method = case cowboy_req:method(Req) of
+        <<"POST">> -> post;
+        <<"GET">> -> get;
+        _ -> throw(invalid_method)
+    end,
+    Path = cowboy_req:path_info(Req),
+    UserState = #{srv_id=>SrvId, id=>SessId, remote=>Remote},
+    State1 = #state{
+        id = SessId,
+        srv_id = SrvId, 
+        session_type = ?MODULE,
+        remote = Remote,
+        user = <<>>,
+        user_state = UserState,
+        req = Req,
+        method = Method,
+        path = Path,
+        ct = cowboy_req:header(<<"content-type">>, Req)
+    },
+    set_log(State1),
+    ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], State1),
     try
-        State = auth(SrvId, Req),
-        Method = cowboy_req:method(Req),
-        PathInfo = cowboy_req:path_info(Req),
-        CT = cowboy_req:header(<<"content-type">>, Req),
-        Body = get_body(CT, Req),
-        Req2 = incoming(SrvId, Method, PathInfo, CT, Body, Req, State),
-        {ok, Req2, []}
+        State2 = auth(State1),
+        State3 = get_body(State2),
+        case incoming(Method, Path, State3) of
+            {ok, Reply, State4} ->
+                send_msg_ok(Reply, State4);
+            {error, Error, State4} ->
+                send_msg_error(Error, State4);
+            {http, Code, Hds, Body, State4} ->
+                http_reply(Code, Hds, Body, State4)
+        end
     catch
-        throw:ReqF -> 
-            {ok, ReqF, []}
+        throw:TError ->
+            {http, TCode, THds, TBody, TState} = http_error(TError, State1),
+            http_reply(TCode, THds, TBody, TState)
     end.
 
 
@@ -180,40 +241,38 @@ terminate(_Reason, _Req, _Opts) ->
 
 
 %% @private
-auth(SrvId, Req) ->
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, nkservice_api_server) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    % lager:error("DEBUG: ~p", [Debug]),
+    put(nkservice_api_server_debug, Debug),
+    State.
+
+
+%% @private
+auth(#state{req=Req, remote=Remote}=State) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {basic, User, Pass} ->
-            Data = #{user=>User, password=>Pass, meta=>#{}},
-            SessId = nklib_util:luid(),
-            {Ip, Port} = cowboy_req:peer(Req),
-            Transp = tls,
-            Remote = <<
-                (nklib_util:to_binary(Transp))/binary, ":",
-                (nklib_util:to_host(Ip))/binary, ":",
-                (nklib_util:to_binary(Port))/binary
-            >>,
-            State = #{
-                srv_id => SrvId, 
-                session_type => ?MODULE,
-                session_id => SessId,
-                remote => Remote
-            },
+            Data = #{module=>?MODULE, user=>User, password=>Pass, meta=>#{}},
+            % We do the same as nkservice_api:cmd(user, login, _),
             case handle(api_server_login, [Data], State) of
                 {true, User2, _Meta, State2} ->
-                    State2#{user=>User2};
+                    State3 = State2#state{user=User2},
+                    ?LLOG(info, "user authenticated (~s)", [Remote], State3),
+                    State3;
                 {false, _State2} ->
-                    lager:warning("HTTP RPC forbidden"),
-                    throw(cowboy_req:reply(403, [], <<>>, Req))
+                    ?LLOG(info, "user forbidden (~s)", [Remote], State),
+                    throw(forbidden)
             end;
         _Other ->
-            lager:warning("RPC not authorized: ~p", [_Other]),
-            Hds = [{<<"www-authenticate">>, <<"Basic realm=\"netcomposer\"">>}],
-            throw(cowboy_req:reply(401, Hds, <<>>, Req))
+            State
     end.
 
 
 %% @private
-get_body(CT, Req) ->
+get_body(#state{ct=CT, req=Req}=State) ->
     case cowboy_req:body_length(Req) of
         BL when is_integer(BL), BL =< ?MAX_BODY ->
             {ok, Body, _} = cowboy_req:body(Req),
@@ -221,33 +280,31 @@ get_body(CT, Req) ->
                 <<"application/json">> ->
                     case nklib_json:decode(Body) of
                         error ->
-                            Req2 = cowboy_req:reply(400, [], <<"Invalid Json">>, Req),
-                            throw(Req2);
+                            throw(invalid_json);
                         Json ->
-                            Json
+                            State#state{body=Json}
                     end;
                 _ ->
-                    Body
+                    State#state{body=Body}
             end;
         _ ->
-            Req2 = cowboy_req:reply(400, [], <<"Body Too Large">>, Req),
-            throw(Req2)
+            throw(body_too_large)
     end.
 
 
 %% @private
-send_msg_ok(_SrvId, Data, Req) ->
+send_msg_ok(Reply, State) ->
     Msg1 = #{result=>ok},
-    Msg2 = case Data of
-        #{} when map_size(Data)==0 -> Msg1;
-        #{} -> Msg1#{data=>Data};
-        List when is_list(List) -> Msg1#{data=>Data}
+    Msg2 = case Reply of
+        #{} when map_size(Reply)==0 -> Msg1;
+        #{} -> Msg1#{data=>Reply};
+        List when is_list(List) -> Msg1#{data=>Reply}
     end,
-    send_http_msg(Msg2, Req).
+    http_reply(200, [], Msg2, State).
 
 
 %% @private
-send_msg_error(SrvId, Error, Req) ->
+send_msg_error(Error, #state{srv_id=SrvId}=State) ->
     {Code, Text} = nkservice_util:error_code(SrvId, Error),
     Msg = #{
         result => error,
@@ -256,30 +313,52 @@ send_msg_error(SrvId, Error, Req) ->
             error => Text
         }
     },
-    send_http_msg(Msg, Req).
+    http_reply(200, [], Msg, State).
 
 
 %% @private
-send_http_msg(Resp, Req) ->
-    Hds = [{<<"content-type">>, <<"application/json">>}],
-    Resp2 = nklib_json:encode(Resp),
-    cowboy_req:reply(200, Hds, Resp2, Req).
+http_reply(Code, Hds, Body, #state{req=Req}) ->
+    {Hds2, Body2} = case is_map(Body) of
+        true -> 
+            {
+                [{<<"content-type">>, <<"application/json">>}|Hds],
+                nklib_json:encode(Body)
+            };
+        false -> 
+            {
+                Hds,
+                nklib_util:to_binary(Body)
+            }
+    end,
+    {ok, cowboy_req:reply(Code, Hds2, Body2, Req), []}.
+
 
 
 %% @private
-send_http_error(SrvId, Error, Req) ->
+http_error(Error, #state{srv_id=SrvId}=State) ->
     case Error of
-        not_found ->
-            cowboy_req:reply(404, [], <<"Not found">>, Req);
+        unauthorized ->
+            ?LLOG(info, "missing authorization", [], State),
+            Hds0 = [{<<"www-authenticate">>, <<"Basic realm=\"netcomposer\"">>}],
+            {http, 401, Hds0, <<>>, State};
+        invalid_request ->
+            {http, 400, [], <<"Invalid Request">>, State};
+        invalid_json ->
+            {http, 400, [], <<"Invalid JSON">>, State};
         forbidden ->
-            cowboy_req:reply(403, [], <<"Forbidden">>, Req);
+            {http, 403, [], <<"Forbidden">>, State};
+        invalid_file_name ->
+            {http, 400, [], <<"Invalid file name">>, State};
+        body_too_large ->
+            {http, 400, [], <<"Body Too Large">>, State};
         _ ->
             {_Code, Text} = nkservice_util:error_code(SrvId, Error),
-            cowboy_req:reply(400, [], Text, Req)
+            {http, 400, [], Text, State}
     end.
 
+
 %% @private
-handle(Fun, Args, #{srv_id:=SrvId}=State) ->
-    apply(SrvId, Fun, Args++[State]).
+handle(Fun, Args, State) ->
+    nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.user_state).
 
 
