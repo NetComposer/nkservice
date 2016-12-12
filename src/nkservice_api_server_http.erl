@@ -196,7 +196,10 @@ init(Req, [{srv_id, SrvId}]) ->
         <<"GET">> -> get;
         _ -> throw(invalid_method)
     end,
-    Path = cowboy_req:path_info(Req),
+    Path = case cowboy_req:path_info(Req) of
+        [<<>>|Rest] -> Rest;
+        Rest -> Rest
+    end,
     UserState = #{srv_id=>SrvId, id=>SessId, remote=>Remote},
     State1 = #state{
         id = SessId,
