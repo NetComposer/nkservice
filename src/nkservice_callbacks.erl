@@ -180,6 +180,7 @@ error_code(registered_down) 	    -> {100010, "Registered process stopped"};
 error_code(user_stop) 				-> {100011, "User stop"};
 error_code(member_stop)				-> {100012, "Member stop"};
 error_code(api_stop) 				-> {100013, "API stop received"};
+error_code(not_found) 				-> {100014, "Not found"};
 
 error_code(service_not_found) 		-> {100020, "Service not found"};
 
@@ -210,6 +211,9 @@ error_code(invalid_uri) 			-> {100070, "Invalid Uri"};
 error_code(unknown_peer) 			-> {100071, "Unknown peer"};
 error_code(invalid_json) 			-> {100072, "Invalid JSON"};
 error_code(data_not_available)   	-> {100073, "Data is not available"};
+error_code(already_uploaded)   		-> {100074, "Already uploaded"};
+error_code(file_read_error)   		-> {100075, "File read error"};
+
 
 % error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
 % 	{Code, Txt};

@@ -19,7 +19,6 @@
 %% -------------------------------------------------------------------
 
 -module(nkservice_api_server_http).
--export([filename_encode/3, filename_decode/1]).
 -export([init/2, terminate/3]).
 
 -define(MAX_BODY, 100000).
@@ -40,36 +39,6 @@
 
 
 
-
-%% ===================================================================
-%% Public
-%% ===================================================================
-
-
-%% @private
--spec filename_encode(Module::atom(), Id::term(), Name::term()) ->
-    binary().
-
-filename_encode(Module, ObjId, Name) ->
-    Term1 = term_to_binary({Module, ObjId, Name}),
-    Term2 = base64:encode(Term1),
-    Term3 = http_uri:encode(binary_to_list(Term2)),
-    list_to_binary(Term3).
-
-
-%% @private
--spec filename_decode(binary()|string()) ->
-    {Module::atom(), Id::term(), Name::term()}.
-
-filename_decode(Term) ->
-    try
-        Uri = http_uri:decode(nklib_util:to_list(Term)),
-        BinTerm = base64:decode(Uri),
-        {Module, Id, Name} = binary_to_term(BinTerm),
-        {Module, Id, Name}
-    catch
-        error:_ -> error
-    end.
 
 
 %% ===================================================================
@@ -123,7 +92,7 @@ incoming(post, [<<"upload">>, _], #state{user = <<>>}) ->
     throw(forbidden);
 
 incoming(post, [<<"upload">>, File], #state{user=User, ct=CT, body=Body}=State) ->
-    case filename_decode(File) of
+    case nkservice_util:filename_decode(File) of
         {Mod, ObjId, Name} ->
             ?DEBUG("decoded upload ~s:~s:~s", [Mod, ObjId, Name], State),
             Args = [User, Mod, ObjId, Name, CT, Body],
@@ -141,7 +110,7 @@ incoming(get, [<<"download">>, _], #state{user = <<>>}) ->
     throw(forbidden);
 
 incoming(get, [<<"download">>, File], #state{user=User}=State) ->
-    case filename_decode(File) of
+    case nkservice_util:filename_decode(File) of
         {Mod, ObjId, Name} ->
             ?DEBUG("decoded download ~s:~s:~s", [Mod, ObjId, Name], State),
             case handle(api_server_http_download, [User, Mod, ObjId, Name], State) of

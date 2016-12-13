@@ -21,6 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([filename_encode/3, filename_decode/1]).
 -export([http/3, http_upload/7, http_download/6]).
 -export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
@@ -40,6 +41,34 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+%% @private
+-spec filename_encode(Module::atom(), Id::term(), Name::term()) ->
+    binary().
+
+filename_encode(Module, ObjId, Name) ->
+    ObjId2 = nklib_util:to_binary(ObjId),
+    Name2 = nklib_util:to_binary(Name),
+    Term1 = term_to_binary({Module, ObjId2, Name2}),
+    Term2 = base64:encode(Term1),
+    Term3 = http_uri:encode(binary_to_list(Term2)),
+    list_to_binary(Term3).
+
+
+%% @private
+-spec filename_decode(binary()|string()) ->
+    {Module::atom(), Id::term(), Name::term()}.
+
+filename_decode(Term) ->
+    try
+        Uri = http_uri:decode(nklib_util:to_list(Term)),
+        BinTerm = base64:decode(Uri),
+        {Module, Id, Name} = binary_to_term(BinTerm),
+        {Module, Id, Name}
+    catch
+        error:_ -> error
+    end.
+
 
 
 %% @private
