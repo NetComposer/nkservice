@@ -86,10 +86,16 @@ http(Method, Url, Opts) ->
                 Headers1,
                 nklib_util:to_binary(Body)                
             };
+        #{form:=Form} ->
+            {Headers1, {form, Form}};
+        #{multipart:=Parts} ->
+            {Headers1, {multipart, Parts}};
         _ ->
             {[{<<"Content-Length">>, <<"0">>}|Headers1], <<>>}
     end,
     Headers3 = case Opts of
+        #{bearer:=Bearer} ->
+            [{<<"Authorization">>, <<"Bearer ", Bearer/binary>>}|Headers2];
         #{user:=User, pass:=Pass} ->
             Auth = base64:encode(list_to_binary([User, ":", Pass])),
             [{<<"Authorization">>, <<"Basic ", Auth/binary>>}|Headers2];
