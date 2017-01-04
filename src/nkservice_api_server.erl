@@ -908,6 +908,7 @@ send_event(Event, NkPort, State) ->
             _ -> {obj_id, ObjId}
         end,
         case EvSrvId of
+            undefined -> [];
             SrvId -> [];
             _ -> {service, nkservice_srv:get_item(EvSrvId, name)}
         end,
