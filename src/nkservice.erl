@@ -86,6 +86,9 @@
 %% See nkservice_callbacks:error_code/1
 -type error() :: term().
 
+%% See nkservice_callbacks:error_code/1
+-type lang() :: atom().
+
 
 -type service_select() :: id() | name().
 

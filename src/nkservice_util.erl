@@ -26,7 +26,7 @@
 -export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
 -export([get_core_listeners/2, make_id/1, update_uuid/2]).
--export([error_code/2, get_debug_info/2]).
+-export([error_code/2, error_reason/2, get_debug_info/2]).
 -export([register_for_changes/1, notify_updated_service/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -257,29 +257,54 @@ save_uuid(Path, Name, UUID) ->
 
 %% @private
 -spec error_code(nkservice:id(), nkservice:error()) ->
-    {binary(), binary()}.
+    {integer(), binary()}.
 
 error_code(SrvId, Error) ->
     case SrvId:error_code(Error) of
-        {Code, Text} when is_binary(Text) ->
-            {to_bin(Code), Text};
-        {Code, Text} when is_list(Text) ->
-            {to_bin(Code), list_to_binary(Text)};
+        {Code, Text} ->
+            {Code, to_bin(Text)};
         {Code, Fmt, List} ->
             case catch io_lib:format(nklib_util:to_list(Fmt), List) of
                 {'EXIT', _} ->
-                    {<<"unknown">>, <<"Invalid format: ", (to_bin(Fmt))/binary>>};
+                    {Code, <<"Invalid format: ", (to_bin(Fmt))/binary>>};
                 Val ->
-                    {to_bin(Code), list_to_binary(Val)}
-            end;
-        Text when is_atom(Error), is_binary(Text) ->
-            {to_bin(Error), Text};
-        Text when is_atom(Error), is_list(Text) ->
-            {to_bin(Error), list_to_binary(Text)};
-        Other ->
-            lager:warning("Unknown error: ~p (~p)", [Error, Other]),
-            {<<"unknown_error">>, <<"Unknown error">>}
+                    {Code, list_to_binary(Val)}
+            end
     end.
+
+
+%% @private
+-spec error_reason(nkservice:id(), nkservice:error()) ->
+    {binary(), binary()}.
+
+error_reason(SrvId, Error) ->
+    Code = get_error_code(Error),
+    Reason = case SrvId:error_code(Error) of
+        Text when is_binary(Text) ->
+            Text;
+        Text when is_list(Text) ->
+            list_to_binary(Text);
+        {Fmt, List} ->
+            case catch io_lib:format(nklib_util:to_list(Fmt), List) of
+                {'EXIT', _} ->
+                    <<"Invalid format: ", (to_bin(Fmt))/binary>>;
+                Val ->
+                    list_to_binary(Val)
+            end;
+        continue ->
+            {_Code, Txt} = error_code(SrvId, Error),
+            Txt
+    end,
+    {Code, Reason}.
+
+
+%% @private
+get_error_code(Error) when is_tuple(Error) ->
+    get_error_code(element(1, Error));
+
+get_error_code(Error) ->
+    to_bin(Error).
+
 
 
 %% @doc Registers a pid to receive changes in service config
