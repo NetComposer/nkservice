@@ -26,7 +26,7 @@
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([error_code/1]).
+-export([error_code/1, error_reason/2]).
 -export([api_server_init/2, api_server_terminate/2, 
 		 api_server_syntax/4, api_server_allow/2, 
 		 api_server_cmd/2, api_server_login/2,
@@ -35,7 +35,7 @@
 		 api_server_reg_down/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_server_http/4]).
+-export([api_server_http/3]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -187,8 +187,8 @@ error_code(unauthorized) 			-> {100030, "Unauthorized"};
 error_code(not_authenticated)		-> {100031, "Not authenticated"};
 error_code(already_authenticated)	-> {100032, "Already authenticated"};
 error_code(user_not_found)			-> {100033, "User not found"};
-error_code(duplicated_session_id)	-> {100034, "Duplicated session id"};
-error_code(invalid_session_id)		-> {100035, "Invalid session id"};
+error_code(duplicated_session_id)	-> {100034, "Duplicated session"};
+error_code(invalid_session_id)		-> {100035, "Invalid session"};
 error_code(member_not_found)		-> {100036, "Member not found"};
 error_code(invalid_role)			-> {100037, "Invalid role"};
 error_code(invalid_password) 		-> {100038, "Invalid password"};
@@ -197,9 +197,9 @@ error_code(invalid_operation) 		-> {100040, "Invalid operation"};
 error_code(invalid_parameters) 		-> {100041, "Invalid parameters"};
 error_code({unknown_command, Txt})	-> {100042, "Unknown command '~s'", [Txt]};
 error_code({invalid_action, Txt})   -> {100043, "Invalid action '~s'", [Txt]};
-error_code({syntax_error, Txt})		-> {100044, "Syntax error: ~s", [Txt]};
-error_code({missing_field, Txt})	-> {100045, "Missing field: ~s", [Txt]};
-error_code({invalid_value, V}) 		-> {100046, "Invalid value: ~s", [V]};
+error_code({syntax_error, Txt})		-> {100044, "Syntax error: '~s'", [Txt]};
+error_code({missing_field, Txt})	-> {100045, "Missing field: '~s'", [Txt]};
+error_code({invalid_value, V}) 		-> {100046, "Invalid value: '~s'", [V]};
 error_code(invalid_reply) 			-> {100047, "Invalid reply"};
 
 error_code(session_timeout) 		-> {100060, "Session timeout"};
@@ -221,6 +221,17 @@ error_code(Other) ->
 	Ref = nklib_util:uid(),
 	lager:warning("Unrecognized error ~s: ~p", [Ref, nklib_util:to_binary(Other)]),
 	{100003, "Internal error: ~s", [Ref]}.
+
+
+
+%% @doc
+-spec error_reason(nkservice:lang(), nkservice:error()) ->
+	{binary(), binary()} | continue.
+
+error_reason(_Lang, _Error) ->
+	continue.
+
+
 
 
 
@@ -363,19 +374,19 @@ api_server_terminate(_Reason, State) ->
 	{ok, State}.
 
 
--type http_method() :: nkservice_api_server_http:method().
+-type http_method() :: nkservice_api_server_http:http_method().
 -type http_path() :: nkservice_api_server_http:path().
 -type http_req() :: nkservice_api_server_http:req().
 -type http_reply() :: nkservice_api_server_http:rely().
 
 
-%% @doc called when a new upload request has been received
--spec api_server_http(http_method(), http_path(), http_req(), state()) ->
+%% @doc called when a new http request has been received
+-spec api_server_http(http_method(), http_path(), http_req()) ->
 	http_reply().
 
-api_server_http(_Method, _Path, _Req, State) ->
+api_server_http(_Method, _Path, Req) ->
 	lager:error("HTTP: ~p", [_Path]),
-	{http_error, forbidden, State}.
+	{http, 404, [], <<"Not Found">>, Req}.
 
 
 

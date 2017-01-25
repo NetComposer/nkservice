@@ -36,7 +36,7 @@
 -module(nkservice_api_server_http).
 -export([get_body/2, get_qs/1, get_ct/1, get_user/1]).
 -export([init/2, terminate/3]).
--export_type([reply/0, http_method/0, http_error/0, http_qs/0]).
+-export_type([reply/0, method/0, code/0, http_qs/0]).
 
 -define(MAX_BODY, 10000000).
 -define(MAX_ACK_TIME, 180).
@@ -75,28 +75,21 @@
 }).
 
 
--type http_method() :: get | post | head | delete | put.
+-type method() :: get | post | head | delete | put.
 
+-type code() :: 100 .. 599.
 
--type http_error() ::
-    unauthorized |
-    invalid_request |
-    invalid_json |
-    forbidden |
-    not_found |
-    body_too_large.
+-type header() :: [{binary(), binary()}].
 
+-type body() ::  Body::binary()|map().
 
 -type state() :: map().
 
 -type reply() ::
     {ok, Reply::map(), state()} |
     {error, nkservice:error(), state()} |
-    {http_ok, state()} |
-    {http_error, http_error(), state()} |
-    {http, Code::integer(), Hds::[{binary(), binary()}], Body::binary()|map(), state()} |
+    {http, code(), [header()], body(), state()} |
     {rpc, state()}.
-
 
 -type http_qs() ::
     [{binary(), binary()|true}].
@@ -124,7 +117,7 @@ get_body(#state{ct=CT, req=Req}, Opts) ->
                         <<"application/json">> ->
                             case nklib_json:decode(Body) of
                                 error ->
-                                    throw(invalid_json);
+                                    throw({400, [], <<"Invalid json">>});
                                 Json ->
                                     Json
                             end;
@@ -135,7 +128,7 @@ get_body(#state{ct=CT, req=Req}, Opts) ->
                     Body
             end;
         _ ->
-            throw(body_too_large)
+            throw({400, [], <<"Body too large">>})
     end.
 
 
@@ -183,7 +176,7 @@ init(Req, [{srv_id, SrvId}]) ->
         <<"HEAD">> -> head;
         <<"DELETE">> -> delete;
         <<"PUT">> -> put;
-        _ -> throw(invalid_method)
+        _ -> throw({400, [], <<"Invalid Method">>})
     end,
     Path = case cowboy_req:path_info(Req) of
         [<<>>|Rest] -> Rest;
@@ -206,11 +199,11 @@ init(Req, [{srv_id, SrvId}]) ->
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], State1),
     try
         {User, State2} = auth(State1),
-        Reply = handle(api_server_http, [Method, Path, State2], State2),
+        Reply = handle(api_server_http, [Method, Path], State2),
         process(Reply)
     catch
-        throw:TError ->
-            send_http_error(TError, State1)
+        throw:{Code, Hds, Body} ->
+            send_http_reply(Code, Hds, Body, State1)
     end.
 
 
@@ -248,7 +241,7 @@ auth(#state{req=Req, remote=Remote}=State) ->
                     {User2, State3};
                 {false, _State2} ->
                     ?LLOG(info, "user forbidden (~s)", [Remote], State),
-                    throw(forbidden)
+                    throw({403, [], <<"Forbidden">>})
             end;
         _Other ->
             {<<>>, State}
@@ -264,8 +257,8 @@ process({error, Error, State}) ->
 process({http_ok, State}) ->
     send_http_reply(200, [], <<>>, State);
 
-process({http_error, Error, State}) ->
-    send_http_error(Error, State);
+% process({http_error, Error, State}) ->
+%     send_http_error(Error, State);
 
 process({http, Code, Hds, Body, State}) ->
     send_http_reply(Code, Hds, Body, State);
@@ -295,7 +288,7 @@ process({rpc, State}) ->
                     send_msg_error(Error, State#state{user_state=UserState2})
             end;
         _ ->
-            send_http_error(invalid_request, State)
+            send_http_reply(400, [], <<>>, State)
     end.
 
 
@@ -336,6 +329,7 @@ send_msg_error(Error, #state{srv_id=SrvId}=State) ->
     send_http_reply(200, [], Msg, State).
 
 
+
 %% @private
 send_http_reply(Code, Hds, Body, #state{req=Req}) ->
     {Hds2, Body2} = case is_map(Body) of
@@ -353,34 +347,34 @@ send_http_reply(Code, Hds, Body, #state{req=Req}) ->
     {ok, cowboy_req:reply(Code, Hds2, Body2, Req), []}.
 
 
-%% @private
-send_http_error(Error, #state{srv_id=SrvId}=State) ->
-    {Code, Hds, Body} = case Error of
-        unauthorized ->
-            ?LLOG(info, "missing authorization", [], State),
-            Hds0 = [{<<"www-authenticate">>, <<"Basic realm=\"netcomposer\"">>}],
-            {401, Hds0, <<>>};
-        invalid_request ->
-            {400, [], <<"Invalid Request">>};
-        {invalid_request, Msg} ->
-            {400, [], Msg};
-        internal_error ->
-            {500, [], <<"Internal Error">>};
-        {internal_error, Msg} ->
-            {500, [], Msg};
-        invalid_json ->
-            {400, [], <<"Invalid JSON">>};
-        forbidden ->
-            {403, [], <<"Forbidden">>};
-        not_found ->
-            {404, [], <<"Not found">>};
-        body_too_large ->
-            {400, [], <<"Body Too Large">>};
-        _ ->
-            {_Code, Text} = nkservice_util:error_code(SrvId, Error),
-            {400, [], Text}
-    end,
-    send_http_reply(Code, Hds, Body, State).
+% %% @private
+% send_http_error(Error, #state{srv_id=SrvId}=State) ->
+%     {Code, Hds, Body} = case Error of
+%         unauthorized ->
+%             ?LLOG(info, "missing authorization", [], State),
+%             Hds0 = [{<<"www-authenticate">>, <<"Basic realm=\"netcomposer\"">>}],
+%             {401, Hds0, <<>>};
+%         invalid_request ->
+%             {400, [], <<"Invalid Request">>};
+%         {invalid_request, Msg} ->
+%             {400, [], Msg};
+%         internal_error ->
+%             {500, [], <<"Internal Error">>};
+%         {internal_error, Msg} ->
+%             {500, [], Msg};
+%         invalid_json ->
+%             {400, [], <<"Invalid JSON">>};
+%         forbidden ->
+%             {403, [], <<"Forbidden">>};
+%         not_found ->
+%             {404, [], <<"Not found">>};
+%         body_too_large ->
+%             {400, [], <<"Body Too Large">>};
+%         _ ->
+%             {_Code, Text} = nkservice_util:error_code(SrvId, Error),
+%             {400, [], Text}
+%     end,
+%     send_http_reply(Code, Hds, Body, State).
 
 
 
