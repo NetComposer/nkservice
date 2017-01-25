@@ -18,10 +18,27 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_api_server_http).
--export([init/2, terminate/3]).
+%% @doc
+%% When an http listener is configured for api_server, and a request arrives,
+%% init/2 is called
+%% - if the header "authorization" is present, api_server_login is called,
+%%   and the 'user' field is populated if valid
+%% - if the body is present, and size is correct, is captured and the if JSON, decoded
+%% - incoming/3 is called
+%%
+%% By default:
+%% - If an authenticated POST is received for "/", is is managed as an API call
+%% - If an authenticated POST to /upload/name 
+%% - Otherwhise, api_server_http_get or api_server_http_post are invoked
 
--define(MAX_BODY, 100000).
+
+
+-module(nkservice_api_server_http).
+-export([get_body/2, get_qs/1, get_ct/1, get_user/1]).
+-export([init/2, terminate/3]).
+-export_type([reply/0, http_method/0, http_error/0, http_qs/0]).
+
+-define(MAX_BODY, 10000000).
 -define(MAX_ACK_TIME, 180).
 
 -include("nkservice.hrl").
@@ -38,11 +55,8 @@
                [State#state.user, State#state.id|Args])).
 
 
-
-
-
 %% ===================================================================
-%% Incoming
+%% Types
 %% ===================================================================
 
 
@@ -52,96 +66,101 @@
     session_type :: atom(),
     remote :: binary(),
     user :: binary(),
+    user_meta = #{} :: map(),
     user_state :: map(),
     req :: term(),
     method :: binary(),
     path :: [binary()],
-    ct :: binary(),
-    body :: binary() | map()
+    ct :: binary()
 }).
 
 
-%% @private
-incoming(post, [], #state{user = <<>>}) ->
-    throw(forbidden);
+-type http_method() :: get | post | head | delete | put.
 
-incoming(post, [], #state{body=#{<<"class">>:=Class, <<"cmd">>:=Cmd}=Body}=State) ->
-    #state{srv_id=SrvId, user=User, id=SessId, user_state=UserState} = State,
-    TId = erlang:phash2(make_ref()),
-    ApiReq = #api_req{
-        srv_id = SrvId,
-        class = Class,
-        subclass = maps:get(<<"subclass">>, Body, <<>>),
-        cmd = Cmd,
-        tid = TId,
-        data = maps:get(<<"data">>, Body, #{}), 
-        user_id = User,
-        session_id = SessId
-    },
-    case nkservice_api_lib:process_req(ApiReq, UserState) of
-        {ok, Reply, UserState2} ->
-            {ok, Reply, State#state{user_state=UserState2}};
-        {ack, UserState2} ->
-            nkservice_api_server:do_register_http(SessId),
-            ack_wait(TId, State#state{user_state=UserState2});
-        {error, Error, UserState2} ->
-            {error, Error, State#state{user_state=UserState2}}
-    end;
 
-incoming(post, [<<"upload">>, _], #state{user = <<>>}) ->
-    throw(forbidden);
+-type http_error() ::
+    unauthorized |
+    invalid_request |
+    invalid_json |
+    forbidden |
+    not_found |
+    body_too_large.
 
-incoming(post, [<<"upload">>, File], #state{user=User, ct=CT, body=Body}=State) ->
-    case nkservice_util:filename_decode(File) of
-        {Mod, ObjId, Name} ->
-            ?DEBUG("decoded upload ~s:~s:~s", [Mod, ObjId, Name], State),
-            Args = [User, Mod, ObjId, Name, CT, Body],
-            case handle(api_server_http_upload, Args, State) of
-                {ok, State2} ->
-                    {http, 200, [], <<>>, State2};
-                {error, Error, _State2} ->
-                    throw(Error)
+
+-type state() :: map().
+
+-type reply() ::
+    {ok, Reply::map(), state()} |
+    {error, nkservice:error(), state()} |
+    {http_ok, state()} |
+    {http_error, http_error(), state()} |
+    {http, Code::integer(), Hds::[{binary(), binary()}], Body::binary()|map(), state()} |
+    {rpc, state()}.
+
+
+-type http_qs() ::
+    [{binary(), binary()|true}].
+
+-type req() :: #state{}.
+
+
+
+%% ===================================================================
+%% Public
+%% ===================================================================
+
+%% @doc
+-spec get_body(req(), #{max_size=>integer(), parse=>boolean()}) ->
+    binary() | map().
+
+get_body(#state{ct=CT, req=Req}, Opts) ->
+    MaxBody = maps:get(max_size, Opts, 100000),
+    case cowboy_req:body_length(Req) of
+        BL when is_integer(BL), BL =< MaxBody ->
+            {ok, Body, _} = cowboy_req:body(Req),
+            case maps:get(parse, Opts, false) of
+                true ->
+                    case CT of
+                        <<"application/json">> ->
+                            case nklib_json:decode(Body) of
+                                error ->
+                                    throw(invalid_json);
+                                Json ->
+                                    Json
+                            end;
+                        _ ->
+                            Body
+                    end;
+                _ ->
+                    Body
             end;
-        error ->
-            throw(invalid_file_name)
-    end;
-
-incoming(get, [<<"download">>, _], #state{user = <<>>}) ->
-    throw(forbidden);
-
-incoming(get, [<<"download">>, File], #state{user=User}=State) ->
-    case nkservice_util:filename_decode(File) of
-        {Mod, ObjId, Name} ->
-            ?DEBUG("decoded download ~s:~s:~s", [Mod, ObjId, Name], State),
-            case handle(api_server_http_download, [User, Mod, ObjId, Name], State) of
-                {ok, CT2, Bin, State2} ->
-                    Hds = [{<<"content-type">>, CT2}],
-                    {http, 200, Hds, Bin, State2};
-                {error, Error, _State2} ->
-                    throw(Error)
-            end;
-        error ->
-            throw(invalid_file_name)
-    end;
-
-incoming(get, Path, #state{user=User, req=Req}=State) ->
-    handle(api_server_http_get, [User, Path, Req], State);
-
-incoming(post, Path, #state{user=User, ct=CT, body=Body, req=Req}=State) ->
-    handle(api_server_http_post, [User, Path, CT, Body, Req], State).
-
-
-%% @private
-ack_wait(TId, State) ->
-    receive
-        {'$gen_cast', {nkservice_reply_ok, TId, Reply}} ->
-            send_msg_ok(Reply, State);
-        {'$gen_cast', {nkservice_reply_error, TId, Error}} ->
-            send_msg_error(Error, State)
-    after 
-        1000*?MAX_ACK_TIME -> 
-            send_msg_error(timeout, State)
+        _ ->
+            throw(body_too_large)
     end.
+
+
+%% @doc
+-spec get_qs(req()) ->
+    http_qs().
+
+get_qs(#state{req=Req}) ->
+    cowboy_req:parse_qs(Req).
+
+
+%% @doc
+-spec get_ct(req()) ->
+    binary().
+
+get_ct(#state{ct=CT}) ->
+    CT.
+
+
+%% @doc
+-spec get_user(req()) ->
+    {binary(), map()}.
+
+get_user(#state{user=User, user_meta=Meta}) ->
+    {User, Meta}.
 
 
 
@@ -153,9 +172,7 @@ ack_wait(TId, State) ->
 %% @private
 init(Req, [{srv_id, SrvId}]) ->
     {Ip, Port} = cowboy_req:peer(Req),
-    Transp = tls,
     Remote = <<
-        (nklib_util:to_binary(Transp))/binary, ":",
         (nklib_util:to_host(Ip))/binary, ":",
         (nklib_util:to_binary(Port))/binary
     >>,
@@ -163,6 +180,9 @@ init(Req, [{srv_id, SrvId}]) ->
     Method = case cowboy_req:method(Req) of
         <<"POST">> -> post;
         <<"GET">> -> get;
+        <<"HEAD">> -> head;
+        <<"DELETE">> -> delete;
+        <<"PUT">> -> put;
         _ -> throw(invalid_method)
     end,
     Path = case cowboy_req:path_info(Req) of
@@ -185,20 +205,12 @@ init(Req, [{srv_id, SrvId}]) ->
     set_log(State1),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], State1),
     try
-        State2 = auth(State1),
-        State3 = get_body(State2),
-        case incoming(Method, Path, State3) of
-            {ok, Reply, State4} ->
-                send_msg_ok(Reply, State4);
-            {error, Error, State4} ->
-                send_msg_error(Error, State4);
-            {http, Code, Hds, Body, State4} ->
-                http_reply(Code, Hds, Body, State4)
-        end
+        {User, State2} = auth(State1),
+        Reply = handle(api_server_http, [Method, Path, State2], State2),
+        process(Reply)
     catch
         throw:TError ->
-            {http, TCode, THds, TBody, TState} = http_error(TError, State1),
-            http_reply(TCode, THds, TBody, TState)
+            send_http_error(TError, State1)
     end.
 
 
@@ -230,37 +242,73 @@ auth(#state{req=Req, remote=Remote}=State) ->
             Data = #{module=>?MODULE, user=>User, password=>Pass, meta=>#{}},
             % We do the same as nkservice_api:cmd(user, login, _),
             case handle(api_server_login, [Data], State) of
-                {true, User2, _Meta, State2} ->
-                    State3 = State2#state{user=User2},
+                {true, User2, Meta, State2} ->
+                    State3 = State2#state{user=User2, user_meta=Meta},
                     ?LLOG(info, "user authenticated (~s)", [Remote], State3),
-                    State3;
+                    {User2, State3};
                 {false, _State2} ->
                     ?LLOG(info, "user forbidden (~s)", [Remote], State),
                     throw(forbidden)
             end;
         _Other ->
-            State
+            {<<>>, State}
+    end.
+
+%% @private
+process({ok, Reply, State}) ->
+    send_msg_ok(Reply, State);
+
+process({error, Error, State}) ->
+    send_msg_error(Error, State);
+
+process({http_ok, State}) ->
+    send_http_reply(200, [], <<>>, State);
+
+process({http_error, Error, State}) ->
+    send_http_error(Error, State);
+
+process({http, Code, Hds, Body, State}) ->
+    send_http_reply(Code, Hds, Body, State);
+
+process({rpc, State}) ->
+    #state{srv_id=SrvId, user=User, id=SessId, user_state=UserState} = State,
+    case get_body(State, 100000) of
+        #{<<"class">>:=Class, <<"cmd">>:=Cmd} = Body ->
+            TId = erlang:phash2(make_ref()),
+            ApiReq = #api_req{
+                srv_id = SrvId,
+                class = Class,
+                subclass = maps:get(<<"subclass">>, Body, <<>>),
+                cmd = Cmd,
+                tid = TId,
+                data = maps:get(<<"data">>, Body, #{}), 
+                user_id = User,
+                session_id = SessId
+            },
+            case nkservice_api_lib:process_req(ApiReq, UserState) of
+                {ok, Reply, UserState2} ->
+                    send_msg_ok(Reply, State#state{user_state=UserState2});
+                {ack, UserState2} ->
+                    nkservice_api_server:do_register_http(SessId),
+                    ack_wait(TId, State#state{user_state=UserState2});
+                {error, Error, UserState2} ->
+                    send_msg_error(Error, State#state{user_state=UserState2})
+            end;
+        _ ->
+            send_http_error(invalid_request, State)
     end.
 
 
 %% @private
-get_body(#state{ct=CT, req=Req}=State) ->
-    case cowboy_req:body_length(Req) of
-        BL when is_integer(BL), BL =< ?MAX_BODY ->
-            {ok, Body, _} = cowboy_req:body(Req),
-            case CT of
-                <<"application/json">> ->
-                    case nklib_json:decode(Body) of
-                        error ->
-                            throw(invalid_json);
-                        Json ->
-                            State#state{body=Json}
-                    end;
-                _ ->
-                    State#state{body=Body}
-            end;
-        _ ->
-            throw(body_too_large)
+ack_wait(TId, State) ->
+    receive
+        {'$gen_cast', {nkservice_reply_ok, TId, Reply}} ->
+            send_msg_ok(Reply, State);
+        {'$gen_cast', {nkservice_reply_error, TId, Error}} ->
+            send_msg_error(Error, State)
+    after 
+        1000*?MAX_ACK_TIME -> 
+            send_msg_error(timeout, State)
     end.
 
 
@@ -272,7 +320,7 @@ send_msg_ok(Reply, State) ->
         #{} -> Msg1#{data=>Reply};
         List when is_list(List) -> Msg1#{data=>Reply}
     end,
-    http_reply(200, [], Msg2, State).
+    send_http_reply(200, [], Msg2, State).
 
 
 %% @private
@@ -285,11 +333,11 @@ send_msg_error(Error, #state{srv_id=SrvId}=State) ->
             error => Text
         }
     },
-    http_reply(200, [], Msg, State).
+    send_http_reply(200, [], Msg, State).
 
 
 %% @private
-http_reply(Code, Hds, Body, #state{req=Req}) ->
+send_http_reply(Code, Hds, Body, #state{req=Req}) ->
     {Hds2, Body2} = case is_map(Body) of
         true -> 
             {
@@ -305,28 +353,35 @@ http_reply(Code, Hds, Body, #state{req=Req}) ->
     {ok, cowboy_req:reply(Code, Hds2, Body2, Req), []}.
 
 
-
 %% @private
-http_error(Error, #state{srv_id=SrvId}=State) ->
-    case Error of
+send_http_error(Error, #state{srv_id=SrvId}=State) ->
+    {Code, Hds, Body} = case Error of
         unauthorized ->
             ?LLOG(info, "missing authorization", [], State),
             Hds0 = [{<<"www-authenticate">>, <<"Basic realm=\"netcomposer\"">>}],
-            {http, 401, Hds0, <<>>, State};
+            {401, Hds0, <<>>};
         invalid_request ->
-            {http, 400, [], <<"Invalid Request">>, State};
+            {400, [], <<"Invalid Request">>};
+        {invalid_request, Msg} ->
+            {400, [], Msg};
+        internal_error ->
+            {500, [], <<"Internal Error">>};
+        {internal_error, Msg} ->
+            {500, [], Msg};
         invalid_json ->
-            {http, 400, [], <<"Invalid JSON">>, State};
+            {400, [], <<"Invalid JSON">>};
         forbidden ->
-            {http, 403, [], <<"Forbidden">>, State};
-        invalid_file_name ->
-            {http, 400, [], <<"Invalid file name">>, State};
+            {403, [], <<"Forbidden">>};
+        not_found ->
+            {404, [], <<"Not found">>};
         body_too_large ->
-            {http, 400, [], <<"Body Too Large">>, State};
+            {400, [], <<"Body Too Large">>};
         _ ->
             {_Code, Text} = nkservice_util:error_code(SrvId, Error),
-            {http, 400, [], Text, State}
-    end.
+            {400, [], Text}
+    end,
+    send_http_reply(Code, Hds, Body, State).
+
 
 
 %% @private

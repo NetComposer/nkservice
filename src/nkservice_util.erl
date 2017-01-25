@@ -47,8 +47,8 @@
     binary().
 
 filename_encode(Module, ObjId, Name) ->
-    ObjId2 = nklib_util:to_binary(ObjId),
-    Name2 = nklib_util:to_binary(Name),
+    ObjId2 = to_bin(ObjId),
+    Name2 = to_bin(Name),
     Term1 = term_to_binary({Module, ObjId2, Name2}),
     Term2 = base64:encode(Term1),
     Term3 = http_uri:encode(binary_to_list(Term2)),
@@ -84,7 +84,7 @@ http(Method, Url, Opts) ->
         #{body:=Body} ->
             {
                 Headers1,
-                nklib_util:to_binary(Body)                
+                to_bin(Body)                
             };
         #{form:=Form} ->
             {Headers1, {form, Form}};
@@ -110,11 +110,13 @@ http(Method, Url, Opts) ->
         {recv_timeout, ?RECV_TIMEOUT},
         insecure,
         with_body,
+        {pool, default},
         {ssl_options, [{ciphers, Ciphers}]}
     ],
     Start = nklib_util:l_timestamp(),
-    case hackney:request(Method, Url, Headers3, Body2, HttpOpts) of
-        {ok, 200, Headers, RespBody} ->
+    Url2 = list_to_binary([Url]),
+    case hackney:request(Method, Url2, Headers3, Body2, HttpOpts) of
+        {ok, Code, Headers, RespBody} when Code==200; Code==201 ->
             Time = nklib_util:l_timestamp() - Start,
             {ok, Headers, RespBody, Time div 1000};
         {ok, Code, Headers, RespBody} ->
@@ -130,8 +132,8 @@ http_upload(Url, User, Pass, Class, ObjId, Name, Body) ->
     <<"/", Base/binary>> = nklib_parse:path(Url),
     Url2 = list_to_binary([Base, "/upload/", Id]),
     Opts = #{
-        user => nklib_util:to_binary(User),
-        pass => nklib_util:to_binary(Pass),
+        user => to_bin(User),
+        pass => to_bin(Pass),
         body => Body
     },
     http(post, Url2, Opts).
@@ -143,8 +145,8 @@ http_download(Url, User, Pass, Class, ObjId, Name) ->
     <<"/", Base/binary>> = nklib_parse:path(Url),
     Url2 = list_to_binary([Base, "/download/", Id]),
     Opts = #{
-        user => nklib_util:to_binary(User),
-        pass => nklib_util:to_binary(Pass)
+        user => to_bin(User),
+        pass => to_bin(Pass)
     },
     http(get, Url2, Opts).
 
@@ -243,7 +245,7 @@ read_uuid(Path) ->
 
 %% @private
 save_uuid(Path, Name, UUID) ->
-    Content = [UUID, $,, nklib_util:to_binary(Name)],
+    Content = [UUID, $,, to_bin(Name)],
     case file:write_file(Path, Content) of
         ok ->
             ok;
@@ -255,21 +257,28 @@ save_uuid(Path, Name, UUID) ->
 
 %% @private
 -spec error_code(nkservice:id(), nkservice:error()) ->
-    {integer(), binary()}.
+    {binary(), binary()}.
 
 error_code(SrvId, Error) ->
     case SrvId:error_code(Error) of
         {Code, Text} when is_binary(Text) ->
-            {Code, Text};
+            {to_bin(Code), Text};
         {Code, Text} when is_list(Text) ->
-            {Code, list_to_binary(Text)};
+            {to_bin(Code), list_to_binary(Text)};
         {Code, Fmt, List} ->
             case catch io_lib:format(nklib_util:to_list(Fmt), List) of
                 {'EXIT', _} ->
-                    {0, <<"Invalid format: ", (nklib_util:to_binary(Fmt))/binary>>};
+                    {<<"unknown">>, <<"Invalid format: ", (to_bin(Fmt))/binary>>};
                 Val ->
-                    {Code, list_to_binary(Val)}
-            end
+                    {to_bin(Code), list_to_binary(Val)}
+            end;
+        Text when is_atom(Error), is_binary(Text) ->
+            {to_bin(Error), Text};
+        Text when is_atom(Error), is_list(Text) ->
+            {to_bin(Error), list_to_binary(Text)};
+        Other ->
+            lager:warning("Unknown error: ~p (~p)", [Error, Other]),
+            {<<"unknown_error">>, <<"Unknown error">>}
     end.
 
 
@@ -385,7 +394,8 @@ get_api_sockets(SrvId, [{List, Opts}|Rest], Config, Acc) ->
     get_api_sockets(SrvId, Rest, Config, [{List2, maps:merge(Opts, Opts2)}|Acc]).
 
 
-
+%% @private
+to_bin(Term) -> nklib_util:to_binary(Term).
 
 
 
