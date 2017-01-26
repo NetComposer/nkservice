@@ -244,7 +244,7 @@ auth(#state{req=Req, remote=Remote}=State) ->
                 {true, User2, Meta, State2} ->
                     State3 = State2#state{user=User2, user_meta=Meta},
                     ?LLOG(info, "user authenticated (~s)", [Remote], State3),
-                    {User2, State3};
+                    State3;
                 {false, _State2} ->
                     ?LLOG(info, "user forbidden (~s)", [Remote], State),
                     throw({403, [], <<"Forbidden">>})

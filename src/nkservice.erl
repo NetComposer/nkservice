@@ -25,7 +25,8 @@
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export([get_listeners/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
--export_type([id/0, name/0, class/0, spec/0, config/0, service/0, error/0]).
+-export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
+-export_type([lang/0, error/0]).
 -export_type([user_id/0, user_session/0, event/0]).
 
 
@@ -87,7 +88,7 @@
 -type error() :: term().
 
 %% See nkservice_callbacks:error_code/1
--type lang() :: atom().
+-type lang() :: any | atom().
 
 
 -type service_select() :: id() | name().
