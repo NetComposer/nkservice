@@ -35,7 +35,7 @@
 		 api_server_reg_down/3,
 		 api_server_handle_call/3, api_server_handle_cast/2, 
 		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_server_http/3]).
+-export([api_server_http/4]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -187,6 +187,7 @@ error_code(unauthorized) 			-> {100030, "Unauthorized"};
 error_code(not_authenticated)		-> {100031, "Not authenticated"};
 error_code(already_authenticated)	-> {100032, "Already authenticated"};
 error_code(user_not_found)			-> {100033, "User not found"};
+error_code({user_not_found, User})	-> {100033, "User not found: '~s'", [User]};
 error_code(duplicated_session_id)	-> {100034, "Duplicated session"};
 error_code(invalid_session_id)		-> {100035, "Invalid session"};
 error_code(member_not_found)		-> {100036, "Member not found"};
@@ -374,19 +375,19 @@ api_server_terminate(_Reason, State) ->
 	{ok, State}.
 
 
--type http_method() :: nkservice_api_server_http:http_method().
+-type http_method() :: nkservice_api_server_http:method().
 -type http_path() :: nkservice_api_server_http:path().
 -type http_req() :: nkservice_api_server_http:req().
--type http_reply() :: nkservice_api_server_http:rely().
+-type http_reply() :: nkservice_api_server_http:reply().
 
 
 %% @doc called when a new http request has been received
--spec api_server_http(http_method(), http_path(), http_req()) ->
+-spec api_server_http(http_method(), http_path(), http_req(), state()) ->
 	http_reply().
 
-api_server_http(_Method, _Path, Req) ->
+api_server_http(_Method, _Path, _Req, State) ->
 	lager:error("HTTP: ~p", [_Path]),
-	{http, 404, [], <<"Not Found">>, Req}.
+	{http, 404, [], <<"Not Found">>, State}.
 
 
 

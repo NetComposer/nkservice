@@ -944,7 +944,7 @@ send_reply_error(Error, #api_req{tid=TId}, NkPort, State) ->
     send_reply_error(Error, TId, NkPort, State);
 
 send_reply_error(Error, TId, NkPort, #state{srv_id=SrvId}=State) ->
-    {Code, Text} = nkservice_util:error_code(SrvId, Error),
+    {Code, Text} = nkservice_util:error_reason(SrvId, Error),
     Msg = #{
         result => error,
         tid => TId,

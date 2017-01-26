@@ -279,7 +279,7 @@ error_code(SrvId, Error) ->
 
 error_reason(SrvId, Error) ->
     Code = get_error_code(Error),
-    Reason = case SrvId:error_code(Error) of
+    Reason = case SrvId:error_reason(any, Error) of
         Text when is_binary(Text) ->
             Text;
         Text when is_list(Text) ->
