@@ -36,7 +36,7 @@
 -module(nkservice_api_server_http).
 -export([get_body/2, get_qs/1, get_ct/1, get_user/1]).
 -export([init/2, terminate/3]).
--export_type([reply/0, method/0, code/0, http_qs/0]).
+-export_type([reply/0, method/0, code/0, path/0, http_qs/0]).
 
 -define(MAX_BODY, 10000000).
 -define(MAX_ACK_TIME, 180).
@@ -96,6 +96,7 @@
 
 -type req() :: #state{}.
 
+-type path() :: [binary()].
 
 
 %% ===================================================================
@@ -198,8 +199,13 @@ init(Req, [{srv_id, SrvId}]) ->
     set_log(State1),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], State1),
     try
-        {User, State2} = auth(State1),
-        Reply = handle(api_server_http, [Method, Path], State2),
+        State2 = auth(State1),
+        Reply = case {Method, Path} of
+            {post, [<<"rpc">>]} ->
+                {rpc, State2};
+            _ ->
+                handle(api_server_http, [Method, Path, State2], State2)
+        end,
         process(Reply)
     catch
         throw:{Code, Hds, Body} ->
@@ -232,7 +238,7 @@ set_log(#state{srv_id=SrvId}=State) ->
 auth(#state{req=Req, remote=Remote}=State) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {basic, User, Pass} ->
-            Data = #{module=>?MODULE, user=>User, password=>Pass, meta=>#{}},
+            Data = #{module=>?MODULE, user=>User, password=>Pass},
             % We do the same as nkservice_api:cmd(user, login, _),
             case handle(api_server_login, [Data], State) of
                 {true, User2, Meta, State2} ->
@@ -244,7 +250,7 @@ auth(#state{req=Req, remote=Remote}=State) ->
                     throw({403, [], <<"Forbidden">>})
             end;
         _Other ->
-            {<<>>, State}
+            State
     end.
 
 %% @private
@@ -265,7 +271,7 @@ process({http, Code, Hds, Body, State}) ->
 
 process({rpc, State}) ->
     #state{srv_id=SrvId, user=User, id=SessId, user_state=UserState} = State,
-    case get_body(State, 100000) of
+    case get_body(State, #{max_size=>100000, parse=>true}) of
         #{<<"class">>:=Class, <<"cmd">>:=Cmd} = Body ->
             TId = erlang:phash2(make_ref()),
             ApiReq = #api_req{
@@ -318,7 +324,7 @@ send_msg_ok(Reply, State) ->
 
 %% @private
 send_msg_error(Error, #state{srv_id=SrvId}=State) ->
-    {Code, Text} = nkservice_util:error_code(SrvId, Error),
+    {Code, Text} = nkservice_util:error_reason(SrvId, Error),
     Msg = #{
         result => error,
         data => #{ 
