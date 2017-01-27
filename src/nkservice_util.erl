@@ -34,8 +34,8 @@
 
 -define(API_TIMEOUT, 30).
 
--define(CONNECT_TIMEOUT, 5000).
--define(RECV_TIMEOUT, 3000).
+-define(CONNECT_TIMEOUT, 15000).
+-define(RECV_TIMEOUT, 5000).
 
 
 %% ===================================================================

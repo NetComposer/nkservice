@@ -170,6 +170,7 @@ error_code(normal_termination) 		-> {100001, "Normal termination"};
 error_code(internal_error)			-> {100002, "Internal error"};
 error_code({internal_error, Ref})	-> {100003, "Internal error: ~s", [Ref]};
 error_code(invalid_state) 			-> {100004, "Invalid state"};
+error_code({invalid_state, St}) 	-> {100004, "Invalid state: ~s", [St]};
 error_code(timeout) 				-> {100005, "Timeout"};
 error_code(not_implemented) 		-> {100006, "Not implemented"};
 error_code({exit, _Exit}) 			-> {100007, "Internal error"};
@@ -221,7 +222,7 @@ error_code(file_read_error)   		-> {100075, "File read error"};
 error_code(Other) -> 
 	Ref = nklib_util:uid(),
 	lager:warning("Unrecognized error ~s: ~p", [Ref, nklib_util:to_binary(Other)]),
-	{100003, "Internal error: ~s", [Ref]}.
+	{100003, "Internal error code: ~s", [Ref]}.
 
 
 

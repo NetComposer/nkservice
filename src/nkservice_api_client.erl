@@ -68,7 +68,7 @@
 
 %% @doc Starts a new verto session to FS
 -spec start(term(), binary(), map(), function(), term()) ->
-    {ok, SessId::binary(), pid()} | {error, term()}.
+    {ok, SessId::binary(), pid(), map()} | {error, term()}.
 
 start(Serv, Url, Login, Fun, UserData) ->
     start(Serv, Url, Login, Fun, UserData, core, user).
@@ -83,6 +83,7 @@ start(Serv, Url, #{user:=User}=Login, Fun, UserData, Class, Sub) ->
     ConnOpts = #{
         class => {?MODULE, SrvId},
         monitor => self(),
+        connect_timeout => 60000,
         idle_timeout => ?WS_TIMEOUT,
         user => {Fun, UserData#{user=>User}},
         implicit_scheme => nkapi_c,
@@ -91,8 +92,8 @@ start(Serv, Url, #{user:=User}=Login, Fun, UserData, Class, Sub) ->
     case nkpacket:connect(Url, ConnOpts) of
         {ok, Pid} -> 
             case cmd(Pid, Class, Sub, login, Login) of
-                {ok, #{<<"session_id">>:=SessId}} ->
-                    {ok, SessId, Pid};
+                {ok, #{<<"session_id">>:=SessId}=Data} ->
+                    {ok, SessId, Pid, Data};
                 {error, Error} ->
                     {error, Error}
             end;
