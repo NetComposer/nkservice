@@ -278,32 +278,38 @@ error_code(SrvId, Error) ->
     {binary(), binary()}.
 
 error_reason(SrvId, Error) ->
-    Code = get_error_code(Error),
-    Reason = case SrvId:error_reason(any, Error) of
-        Text when is_binary(Text) ->
-            Text;
-        Text when is_list(Text) ->
-            list_to_binary(Text);
+    case SrvId:error_reason(any, Error) of
+        {Code, Fmt, List} when is_list(List) ->
+            Reason = get_error_reason(Fmt, List);
         {Fmt, List} ->
-            case catch io_lib:format(nklib_util:to_list(Fmt), List) of
-                {'EXIT', _} ->
-                    <<"Invalid format: ", (to_bin(Fmt))/binary>>;
-                Val ->
-                    list_to_binary(Val)
-            end;
+            Code = get_error_code(Error),
+            Reason = get_error_reason(Fmt, List);
         continue ->
-            {_Code, Txt} = error_code(SrvId, Error),
-            Txt
+            Code = get_error_code(Error),
+            {_Code, Reason} = error_code(SrvId, Error);
+        Other ->
+            Code = get_error_code(Error),
+            Reason = to_bin(Other)
     end,
-    {Code, Reason}.
+    {to_bin(Code), Reason}.
 
 
 %% @private
 get_error_code(Error) when is_tuple(Error) ->
     get_error_code(element(1, Error));
-
 get_error_code(Error) ->
-    to_bin(Error).
+    Error.
+
+
+%% private
+get_error_reason(Fmt, List) ->
+    case catch io_lib:format(nklib_util:to_list(Fmt), List) of
+        {'EXIT', _} ->
+            lager:notice("Invalid format in error_reason: ~p, ~p", [Fmt, List]),
+            <<>>;
+        Val ->
+            list_to_binary(Val)
+    end.
 
 
 
