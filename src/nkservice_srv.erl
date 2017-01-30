@@ -51,7 +51,7 @@ find_name(Name) ->
 
 %% @doc Gets the internal name of an existing service
 -spec get_srv_id(service_select()) ->
-    {ok, nkservice:id(), pid()} | not_found.
+    {ok, nkservice:id()} | not_found.
 
 get_srv_id(Srv) ->
     case 
