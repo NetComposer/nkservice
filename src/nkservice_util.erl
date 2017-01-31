@@ -337,7 +337,6 @@ notify_updated_service(SrvId) ->
     {ok, term()} | not_found.
 
 get_debug_info(SrvId, Module) ->
-    % We could check for services not yet started
     try nkservice_srv:get_item(SrvId, debug) of
         Debug ->
             case lists:keyfind(Module, 1, Debug) of
@@ -345,8 +344,30 @@ get_debug_info(SrvId, Module) ->
                 false -> false
             end
     catch
-        _:_ -> false
+        error:{service_not_found, _} ->
+            % Service module not yet created
+            get_debug_info2(SrvId, Module)
     end.
+
+
+%% @private
+get_debug_info2(SrvId, Module) ->
+    try
+        Debug = nkservice_srv:get(SrvId, nkservice_debug, []),
+        case lists:keyfind(Module, 1, Debug) of
+            {_, Data} -> {true, Data};
+            false -> false
+        end
+    catch
+        _:_ -> 
+            % Service does not exists
+            not_found
+    end.
+
+
+
+
+
 
 
 

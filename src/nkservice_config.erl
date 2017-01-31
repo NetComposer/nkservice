@@ -39,7 +39,7 @@
 -spec config_service(nkservice:user_spec(), nkservice:service()) ->
     {ok, nkservice:service()}.
 
-config_service(Config, Service) ->
+config_service(Config, #{id:=Id}=Service) ->
     try
         Config2 = maps:merge(#{debug=>[]}, Config),
         Syntax = nkservice_syntax:syntax(), 
@@ -50,6 +50,9 @@ config_service(Config, Service) ->
         GlobalKeys = [class, plugins, callback, log_level, debug],
         % Extract global key values from Config, if present
         Service2 = maps:with(GlobalKeys, Config3),
+        % We store global config to be used early in plugins
+        Debug = maps:get(debug, Service2, []),
+        nkservice_srv:put(Id, nkservice_debug, Debug),
         % Global keys are first-level keys on Service map
         Service3 = maps:merge(Service, Service2),
         Plugins = maps:get(plugins, Service3, []),
