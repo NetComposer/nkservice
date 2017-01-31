@@ -281,17 +281,18 @@ error_reason(SrvId, Error) ->
     case SrvId:error_reason(any, Error) of
         {Code, Fmt, List} when is_list(List) ->
             Reason = get_error_reason(Fmt, List);
-        {Fmt, List} ->
+        {Fmt, List} when is_list(List) ->
             Code = get_error_code(Error),
             Reason = get_error_reason(Fmt, List);
+        {Code, Reason} when is_atom(Code) ->
+            ok;
         continue ->
             Code = get_error_code(Error),
             {_Code, Reason} = error_code(SrvId, Error);
-        Other ->
-            Code = get_error_code(Error),
-            Reason = to_bin(Other)
+        Reason ->
+            Code = get_error_code(Error)
     end,
-    {to_bin(Code), Reason}.
+    {to_bin(Code), to_bin(Reason)}.
 
 
 %% @private
