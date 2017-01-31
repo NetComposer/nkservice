@@ -223,6 +223,7 @@ get_all(Class) ->
 get(ServiceId, Key) ->
     get(ServiceId, Key, undefined).
 
+
 %% @doc Gets a value from service's store
 -spec get(service_select(), term(), term()) ->
     term().
@@ -230,11 +231,7 @@ get(ServiceId, Key) ->
 get(ServiceId, Key, Default) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:lookup(Id, Key) of
-                [{_, Value}] -> Value;
-                [] -> Default;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:get(Id, Key, Default);
         not_found ->
             error(service_not_found)
     end.
@@ -247,10 +244,8 @@ get(ServiceId, Key, Default) ->
 put(ServiceId, Key, Value) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:insert(Id, {Key, Value}) of
-                true -> ok;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:put(Id, Key, Value),
+            ok;
         not_found ->
             error(service_not_found)
     end.
@@ -263,11 +258,7 @@ put(ServiceId, Key, Value) ->
 put_new(ServiceId, Key, Value) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:insert_new(Id, {Key, Value}) of
-                true -> true;
-                false -> false;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:put_new(Id, Key, Value);
         not_found ->
             error(service_not_found)
     end.
@@ -280,10 +271,8 @@ put_new(ServiceId, Key, Value) ->
 del(ServiceId, Key) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:delete(Id, Key) of
-                true -> ok;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:delete(Id, Key),
+            ok;
         not_found ->
             error(service_not_found)
     end.

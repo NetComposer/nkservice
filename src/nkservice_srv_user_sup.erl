@@ -34,14 +34,7 @@
     {ok, pid()} | {error, term()}.
 
 start_link(SrvId) ->
-    Childs = nkservice:get(SrvId, {?MODULE, childs}, []),
-    case Childs of
-        [] -> 
-            ok;
-        _ -> 
-            lager:warning("Restarting ~p with childs: ~p", 
-                          [?MODULE, Childs])
-    end,
+    Childs = nkservice_srv:get(SrvId, {?MODULE, childs}, []),
     ChildSpec = {{one_for_one, 10, 60}, Childs},
     supervisor:start_link(?MODULE, {SrvId, ChildSpec}).
 
@@ -77,9 +70,9 @@ start_child(SrvId, Spec) ->
     case supervisor:start_child(SupPid, Spec) of
         {ok, Pid} ->
             Name = element(1, Spec),
-            Specs1 = nkservice:get(SrvId, {?MODULE, childs}, []),
+            Specs1 = nkservice_srv:get(SrvId, {?MODULE, childs}, []),
             Specs2 = lists:keystore(Name, 1, Specs1, Spec),
-            nkservice:put(SrvId, {?MODULE, childs}, Specs2),
+            nkservice_srv:put(SrvId, {?MODULE, childs}, Specs2),
             {ok, Pid};
         {error, {Error, _}} -> 
             {error, Error};
@@ -94,6 +87,5 @@ start_child(SrvId, Spec) ->
 
 get_pid(SrvId) ->
     nklib_proc:whereis_name({?MODULE, SrvId}).
-
 
 

@@ -24,6 +24,7 @@
 -behaviour(gen_server).
 
 -export([find_name/1, get_srv_id/1, get_item/2, has_plugin/2]).
+-export([get/3, put/3, put_new/3, del/2]).
 -export([start_link/1, stop_all/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
@@ -93,7 +94,39 @@ has_plugin(Srv, Plugin) ->
     end.
 
 
+%% @doc Gets a value from service's store
+-spec get(nkservice:id(), term(), term()) ->
+    term().
 
+get(SrvId, Key, Default) ->
+    case ets:lookup(SrvId, Key) of
+        [{_, Value}] -> Value;
+        [] -> Default
+    end.
+
+
+%% @doc Inserts a value in service's store
+-spec put(service_select(), term(), term()) ->
+    ok.
+
+put(SrvId, Key, Value) ->
+    ets:insert(SrvId, {Key, Value}).
+
+
+%% @doc Inserts a value in service's store
+-spec put_new(service_select(), term(), term()) ->
+    true | false.
+
+put_new(SrvId, Key, Value) ->
+    ets:insert_new(SrvId, {Key, Value}).
+
+
+%% @doc Deletes a value from service's store
+-spec del(service_select(), term()) ->
+    ok.
+
+del(SrvId, Key) ->
+    ets:delete(SrvId, Key).
 
 
 %% ===================================================================
