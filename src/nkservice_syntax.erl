@@ -139,13 +139,16 @@ do_parse_debug([], Acc) ->
 
 do_parse_debug([{Mod, Data}|Rest], Acc) ->
     Mod2 = nklib_util:to_atom(Mod),
-    case code:ensure_loaded(Mod2) of
-        {module, Mod2} ->
-            do_parse_debug(Rest, [{Mod, Data}|Acc]);
-        _ ->
-            lager:warning("Module ~p could not be loaded", [Mod2]),
-            error
-    end;
+    do_parse_debug(Rest, [{Mod2, Data}|Acc]);
+
+
+    % case code:ensure_loaded(Mod2) of
+    %     {module, Mod2} ->
+    %         do_parse_debug(Rest, [{Mod, Data}|Acc]);
+    %     _ ->
+    %         lager:warning("Module ~p could not be loaded", [Mod2]),
+    %         error
+    % end;
 
 do_parse_debug([Mod|Rest], Acc) ->
     do_parse_debug([{Mod, []}|Rest], Acc).
