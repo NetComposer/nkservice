@@ -91,7 +91,7 @@ plugin_start(Config, #{id:=Id}) ->
             Port = maps:get(api_gelf_port, Config, 12201),
             Opts = #{server=>Server, port=>Port},
             Args = [{?MODULE, Id}, nklib_log_gelf, Opts],
-            case nkservice_srv_user_sup:start_proc(Id, api_gelf, nklib_log, Args) of
+            case nkservice_srv:start_proc(Id, api_gelf, nklib_log, Args) of
                 {ok, _} ->
                     {ok, Config};
                 {error, Error} ->

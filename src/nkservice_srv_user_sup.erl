@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_link/1, init/1, start_proc/4, start_child/2]).
+-export([start_link/1, init/1, start_proc/2, stop_proc/2]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
@@ -45,27 +45,27 @@ init({Id, ChildSpecs}) ->
     {ok, ChildSpecs}.
 
 
+% %% @private Starts a new child under this supervisor
+% -spec start_proc(nkservice:id(), term(), module(), list()) ->
+%     {ok, pid()} | {error, term()}.
+
+% start_proc(SrvId, Name, Module, Args) ->
+%     Spec = {
+%         Name, 
+%         {Module, start_link, Args},
+%         transient,
+%         5000,
+%         worker,
+%         [Module]
+%     },
+%     start_child(SrvId, Spec).
+
+
 %% @private Starts a new child under this supervisor
--spec start_proc(nkservice:id(), term(), module(), list()) ->
+-spec start_proc(nkservice:id(), any()) ->
     {ok, pid()} | {error, term()}.
 
-start_proc(SrvId, Name, Module, Args) ->
-    Spec = {
-        Name, 
-        {Module, start_link, Args},
-        transient,
-        5000,
-        worker,
-        [Module]
-    },
-    start_child(SrvId, Spec).
-
-
-%% @private Starts a new child under this supervisor
--spec start_child(nkservice:id(), any()) ->
-    {ok, pid()} | {error, term()}.
-
-start_child(SrvId, Spec) ->
+start_proc(SrvId, Spec) ->
     SupPid = get_pid(SrvId),
     case supervisor:start_child(SupPid, Spec) of
         {ok, Pid} ->
@@ -79,6 +79,25 @@ start_child(SrvId, Spec) ->
         {error, Error} -> 
             {error, Error}
     end.
+
+
+%% @private Starts a new child under this supervisor
+-spec stop_proc(nkservice:id(), any()) ->
+    ok | {error, term()}.
+
+stop_proc(SrvId, Name) ->
+    Specs1 = nkservice_srv:get(SrvId, {?MODULE, childs}, []),
+    Specs2 = lists:keydelete(Name, 1, Specs1),
+    nkservice_srv:put(SrvId, {?MODULE, childs}, Specs2),
+    SupPid = get_pid(SrvId),
+    lager:info("Service ~p stopping proc ~p", [SrvId, Name]),
+    Result = supervisor:terminate_child(SupPid, Name),
+    lager:error("Stopped"),
+    spawn(fun() -> 
+        R = supervisor:delete_child(SrvId, Name),
+        lager:error("Deleted: ~p", [R])
+    end),
+    Result.
 
 
 %% @private Gets the service's transport supervisor's pid()

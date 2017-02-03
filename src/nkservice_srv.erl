@@ -25,6 +25,7 @@
 
 -export([find_name/1, get_srv_id/1, get_item/2, has_plugin/2]).
 -export([get/3, put/3, put_new/3, del/2]).
+-export([start_proc/4, start_proc/2, stop_proc/2]).
 -export([start_link/1, stop_all/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
@@ -127,6 +128,39 @@ put_new(SrvId, Key, Value) ->
 
 del(SrvId, Key) ->
     ets:delete(SrvId, Key).
+
+
+
+%% @private Starts a new supervised process
+-spec start_proc(nkservice:id(), term(), module(), list()) ->
+    {ok, pid()} | {error, term()}.
+
+start_proc(SrvId, Name, Module, Args) ->
+    Spec = {
+        Name, 
+        {Module, start_link, Args},
+        transient,
+        5000,
+        worker,
+        [Module]
+    },
+    start_proc(SrvId, Spec).
+
+
+%% @private Starts a new child under this supervisor
+-spec start_proc(nkservice:id(), any()) ->
+    {ok, pid()} | {error, term()}.
+
+start_proc(SrvId, Spec) ->
+    nkservice_srv_user_sup:start_proc(SrvId, Spec).
+
+
+%% @private Starts a new child under this supervisor
+-spec stop_proc(nkservice:id(), any()) ->
+    {ok, pid()} | {error, term()}.
+
+stop_proc(SrvId, Name) ->
+    nkservice_srv_user_sup:stop_proc(SrvId, Name).
 
 
 %% ===================================================================
