@@ -114,7 +114,7 @@ plugin_listen(Config, #{id:=SrvId}) ->
 %% @doc Called during service's start
 %% The plugin must start and can update the service's config
 -spec plugin_start(config(), service()) ->
-	{ok, service()} | {error, term()}.
+	{ok, config()} | {error, term()}.
 
 plugin_start(Config, _Service) ->
 	{ok, Config}.
@@ -122,7 +122,7 @@ plugin_start(Config, _Service) ->
 
 %% @doc Called during service's update
 -spec plugin_update(config(), service()) ->
-	{ok, service()} | {error, term()}.
+	{ok, config()} | {error, term()}.
 
 plugin_update(Config, _Service) ->
 	{ok, Config}.
@@ -131,7 +131,7 @@ plugin_update(Config, _Service) ->
 %% @doc Called during service's stop
 %% The plugin must remove any key from the service
 -spec plugin_stop(config(), service()) ->
-	{ok, service()}.
+	{ok, config()}.
 
 plugin_stop(Config, _Service) ->
 	{ok, Config}.
