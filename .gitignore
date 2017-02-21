@@ -10,3 +10,4 @@ ebin
 nimcache
 _build
 rebar.lock
+/nkservice.version

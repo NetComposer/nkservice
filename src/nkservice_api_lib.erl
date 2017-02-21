@@ -65,7 +65,7 @@
 
 process_req(Req, State) ->
     case set_atoms(Req) of
-        #api_req{srv_id=SrvId, user_id=User, data=Data} = Req2 ->
+        #api_req{srv_id=SrvId, user_id=_User, data=Data} = Req2 ->
             {Syntax, Defaults, Mandatory} = SrvId:api_server_syntax(Req2, #{}, #{}, []),
             Opts = #{
                 return => map, 
