@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,11 +21,13 @@
 -module(nkservice).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, stop/1, update/2, get_all/0, get_all/1]).
+-export([start/2, stop/1, reload/1, update/2, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export([get_listeners/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
 -export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
+-export_type([lang/0, error/0]).
+-export_type([user_id/0, user_session/0, event/0]).
 
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -81,7 +83,21 @@
         term() => term()           % "config_(plugin)" values
     }.
 
+
+%% See nkservice_callbacks:error_code/1
+-type error() :: term().
+
+%% See nkservice_callbacks:error_code/1
+-type lang() :: any | atom().
+
+
 -type service_select() :: id() | name().
+
+-type user_id() :: binary().
+-type user_session() :: binary().
+
+-type event() :: nkservice_events:event().
+
 
 
 %% ===================================================================
@@ -105,16 +121,20 @@ start(Name, UserSpec) ->
             not_found -> 
                 ok
         end,
+        case nkservice_srv_sup:pre_start_service(Id) of
+            ok -> ok;
+            {error, PreError} -> throw(PreError)
+        end,
         Service = #{
             id => Id,
             name => Name,
             uuid => nkservice_util:update_uuid(Id, Name)
         },
-        case nkservice_util:config_service(UserSpec, Service) of
+        case nkservice_config:config_service(UserSpec, Service) of
             {ok, Service2} ->
                 case nkservice_srv_sup:start_service(Service2) of
                     ok ->
-                        lager:info("Service ~s (~p) has started", [Name, Id]),
+                        lager:notice("Service '~s' (~p) has started", [Name, Id]),
                         {ok, Id};
                     {error, Error} -> 
                         {error, Error}
@@ -123,7 +143,14 @@ start(Name, UserSpec) ->
                 throw(Error)
         end
     catch
-        throw:Throw -> {error, Throw}
+        throw:already_started ->
+            {error, already_started};
+        throw:Throw -> 
+            nkservice_srv_sup:stop_service(Id),
+            {error, Throw};
+        error:EError -> 
+            nkservice_srv_sup:stop_service(Id),
+            {error, EError}
     end.
 
 
@@ -145,6 +172,14 @@ stop(Service) ->
             {error, not_running}
     end.
 
+
+
+%% @doc Reloads a configuration
+-spec reload(service_select()) ->
+    ok | {error, term()}.
+
+reload(ServiceId) ->
+    update(ServiceId, #{}).
 
 
 %% @doc Updates a service configuration
@@ -188,6 +223,7 @@ get_all(Class) ->
 get(ServiceId, Key) ->
     get(ServiceId, Key, undefined).
 
+
 %% @doc Gets a value from service's store
 -spec get(service_select(), term(), term()) ->
     term().
@@ -195,11 +231,7 @@ get(ServiceId, Key) ->
 get(ServiceId, Key, Default) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:lookup(Id, Key) of
-                [{_, Value}] -> Value;
-                [] -> Default;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:get(Id, Key, Default);
         not_found ->
             error(service_not_found)
     end.
@@ -212,10 +244,8 @@ get(ServiceId, Key, Default) ->
 put(ServiceId, Key, Value) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:insert(Id, {Key, Value}) of
-                true -> ok;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:put(Id, Key, Value),
+            ok;
         not_found ->
             error(service_not_found)
     end.
@@ -228,11 +258,7 @@ put(ServiceId, Key, Value) ->
 put_new(ServiceId, Key, Value) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:insert_new(Id, {Key, Value}) of
-                true -> true;
-                false -> false;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:put_new(Id, Key, Value);
         not_found ->
             error(service_not_found)
     end.
@@ -245,10 +271,8 @@ put_new(ServiceId, Key, Value) ->
 del(ServiceId, Key) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            case catch ets:delete(Id, Key) of
-                true -> ok;
-                _ -> error(service_not_found)
-            end;
+            nkservice_srv:delete(Id, Key),
+            ok;
         not_found ->
             error(service_not_found)
     end.

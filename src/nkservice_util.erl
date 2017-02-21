@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,20 +21,152 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([filename_encode/3, filename_decode/1]).
+-export([http/3, http_upload/7, http_download/6]).
+-export([call/2, call/3]).
 -export([parse_syntax/3, parse_transports/1]).
--export([get_core_listeners/2]).
--export([make_id/1, get_callback/1, config_service/2, stop_plugins/2]).
--export([update_uuid/2, make_cache/1]).
+-export([get_core_listeners/2, make_id/1, update_uuid/2]).
+-export([error_code/2, error_reason/2, get_debug_info/2]).
+-export([register_for_changes/1, notify_updated_service/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 
 
 -define(API_TIMEOUT, 30).
 
+-define(CONNECT_TIMEOUT, 15000).
+-define(RECV_TIMEOUT, 5000).
+
 
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+%% @private
+-spec filename_encode(Module::atom(), Id::term(), Name::term()) ->
+    binary().
+
+filename_encode(Module, ObjId, Name) ->
+    ObjId2 = to_bin(ObjId),
+    Name2 = to_bin(Name),
+    Term1 = term_to_binary({Module, ObjId2, Name2}),
+    Term2 = base64:encode(Term1),
+    Term3 = http_uri:encode(binary_to_list(Term2)),
+    list_to_binary(Term3).
+
+
+%% @private
+-spec filename_decode(binary()|string()) ->
+    {Module::atom(), Id::term(), Name::term()}.
+
+filename_decode(Term) ->
+    try
+        Uri = http_uri:decode(nklib_util:to_list(Term)),
+        BinTerm = base64:decode(Uri),
+        {Module, Id, Name} = binary_to_term(BinTerm),
+        {Module, Id, Name}
+    catch
+        error:_ -> error
+    end.
+
+
+
+%% @private
+http(Method, Url, Opts) ->
+    Headers1 = maps:get(headers, Opts, []),
+    {Headers2, Body2} = case Opts of
+        #{body:=Body} when is_map(Body) ->
+            {
+                [{<<"Content-Type">>, <<"application/json">>}|Headers1],
+                nklib_json:encode(Body)
+
+            };
+        #{body:=Body} ->
+            {
+                Headers1,
+                to_bin(Body)                
+            };
+        #{form:=Form} ->
+            {Headers1, {form, Form}};
+        #{multipart:=Parts} ->
+            {Headers1, {multipart, Parts}};
+        _ ->
+            {[{<<"Content-Length">>, <<"0">>}|Headers1], <<>>}
+    end,
+    Headers3 = case Opts of
+        #{bearer:=Bearer} ->
+            [{<<"Authorization">>, <<"Bearer ", Bearer/binary>>}|Headers2];
+        #{user:=User, pass:=Pass} ->
+            Auth = base64:encode(list_to_binary([User, ":", Pass])),
+            [{<<"Authorization">>, <<"Basic ", Auth/binary>>}|Headers2];
+        _ ->
+            Headers2
+    end,
+    Ciphers = ssl:cipher_suites(),
+    % Hackney fails with its default set of ciphers
+    % See hackney.ssl#44
+    HttpOpts = [
+        {connect_timeout, ?CONNECT_TIMEOUT},
+        {recv_timeout, ?RECV_TIMEOUT},
+        insecure,
+        with_body,
+        {pool, default},
+        {ssl_options, [{ciphers, Ciphers}]}
+    ],
+    Start = nklib_util:l_timestamp(),
+    Url2 = list_to_binary([Url]),
+    case hackney:request(Method, Url2, Headers3, Body2, HttpOpts) of
+        {ok, Code, Headers, RespBody} when Code==200; Code==201 ->
+            Time = nklib_util:l_timestamp() - Start,
+            {ok, Headers, RespBody, Time div 1000};
+        {ok, Code, Headers, RespBody} ->
+            {error, {http_code, Code, Headers, RespBody}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
+http_upload(Url, User, Pass, Class, ObjId, Name, Body) ->
+    Id = nkservice_api_server_http:filename_encode(Class, ObjId, Name),
+    <<"/", Base/binary>> = nklib_parse:path(Url),
+    Url2 = list_to_binary([Base, "/upload/", Id]),
+    Opts = #{
+        user => to_bin(User),
+        pass => to_bin(Pass),
+        body => Body
+    },
+    http(post, Url2, Opts).
+
+
+%% @doc
+http_download(Url, User, Pass, Class, ObjId, Name) ->
+    Id = nkservice_api_server_http:filename_encode(Class, ObjId, Name),
+    <<"/", Base/binary>> = nklib_parse:path(Url),
+    Url2 = list_to_binary([Base, "/download/", Id]),
+    Opts = #{
+        user => to_bin(User),
+        pass => to_bin(Pass)
+    },
+    http(get, Url2, Opts).
+
+
+%% @doc Safe call (no exceptions)
+call(Dest, Msg) ->
+    call(Dest, Msg, 5000).
+
+
+%% @doc Safe call (no exceptions)
+call(Dest, Msg, Timeout) ->
+    case nklib_util:call(Dest, Msg, Timeout) of
+        {error, {exit, {{timeout, _Fun}, _Stack}}} ->
+            {error, timeout};
+        {error, {exit, {{noproc, _Fun}, _Stack}}} ->
+            {error, process_not_found};
+        Other ->
+            Other
+    end.
+
 
 
 parse_syntax(Spec, Syntax, Defaults) ->
@@ -58,29 +190,14 @@ parse_transports(Spec) ->
     end.
 
 
-%% ===================================================================
-%% Private
-%% ===================================================================
-
 %% @private
 get_core_listeners(SrvId, Config) ->
-    Web1 = maps:get(web_server, Config, []),
-    WebPath1 = list_to_binary(code:priv_dir(nkservice)),
-    WebPath2 = <<WebPath1/binary, "/www">>,
-    WebOpts2 = #{
-        class => {nkservice_web_server, SrvId},
-        http_proto => {static, #{path=>WebPath2, index_file=><<"index.html">>}}
-    },
-    Web2 = [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- Web1],
-    Api1 = maps:get(api_server, Config, []),
-    ApiTimeout = maps:get(api_server_timeout, Config, ?API_TIMEOUT),
-    ApiOpts = #{
-        class => {nkservice_api_server, SrvId},
-        get_headers => [<<"user-agent">>],
-        idle_timeout => 1000 * ApiTimeout
-    },
-    Api2 = [{Conns, maps:merge(ConnOpts, ApiOpts)} || {Conns, ConnOpts} <- Api1],
-    Web2 ++ Api2.
+    {multi, WebSrv} = maps:get(web_server, Config, {multi, []}),
+    WebSrvs = get_web_servers(SrvId, WebSrv, Config),
+    {multi, ApiSrv} = maps:get(api_server, Config, {multi, []}),
+    ApiSrvs1 = get_api_webs(SrvId, ApiSrv, []),
+    ApiSrvs2 = get_api_sockets(SrvId, ApiSrv, Config, []),
+    WebSrvs ++ ApiSrvs1 ++ ApiSrvs2.
 
 
 %% @doc Generates the service id from any name
@@ -96,225 +213,7 @@ make_id(Name) ->
             end)).
 
 
-get_callback(Plugin) ->
-    Mod = list_to_atom(atom_to_list(Plugin)++"_callbacks"),
-    case code:ensure_loaded(Mod) of
-        {module, _} ->
-            {ok, Mod};
-        {error, nofile} ->
-            case code:ensure_loaded(Plugin) of
-                {module, _} ->
-                    {ok, Plugin};
-                {error, nofile} ->
-                    error
-            end
-    end.
 
-
-%% @doc Starts or update the configuration for the service
-%% OldService must contain id, name and uuid, and can contain 
-%% cache, plugins and transports
--spec config_service(nkservice:user_spec(), nkservice:service()) ->
-    {ok, nkservice:service()}.
-
-config_service(Config, Service) ->
-    try
-        Syntax = nkservice_syntax:syntax(), 
-        Config2 = case parse_syntax(Config, Syntax, #{}) of
-            {ok, Parsed} -> Parsed;
-            {error, Error1} -> throw(Error1)
-        end,
-        GlobalKeys = [class, plugins, callback, log_level],
-        Service2 = maps:with(GlobalKeys, Config2),
-        Service3 = maps:merge(Service, Service2),
-        Plugins = maps:get(plugins, Service3, []),
-        CallBack = maps:get(callback, Service3, none),
-        DownToTop = case expand_plugins([nkservice|Plugins], CallBack) of
-            {ok, Expanded} -> Expanded;
-            {error, Error2} -> throw(Error2)
-        end,
-        OldPlugins = maps:get(plugins, Service, []),
-        ToStop = lists:reverse(OldPlugins -- DownToTop),
-        Service4 = stop_plugins(ToStop, Service3),
-        OldConfig = maps:get(config, Service4, #{}),
-        UserConfig1 = maps:without(GlobalKeys, Config2),
-        UserConfig2 = maps:merge(OldConfig, UserConfig1),
-        Service5 = Service4#{plugins=>DownToTop, config=>UserConfig2},
-        TopToDown = lists:reverse(DownToTop),
-        Service6 = config_plugins(TopToDown, Service5),
-        Service7 = start_plugins(DownToTop, OldPlugins, Service6),
-        Defaults = #{log_level=>notice, listen_ids=>#{}},
-        Service8 = maps:merge(Defaults, Service7),
-        {ok, Service8}
-    catch
-        throw:Throw -> {error, Throw}
-    end.
-
-
-%% @private
-config_plugins([], Service) ->
-    Service;
-
-config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
-    % lager:warning("Config Plugin: ~p", [Plugin]),
-    Mod = get_mod(Plugin),
-    Config2 = case nklib_util:apply(Mod, plugin_syntax, []) of
-        not_exported -> 
-            Config;
-        Syntax when is_map(Syntax), map_size(Syntax)==0 ->
-            Config;
-        Syntax when is_map(Syntax) ->
-            Defaults = case nklib_util:apply(Mod, plugin_defaults, []) of
-                not_exported -> #{};
-                Apply1 when is_map(Apply1) -> Apply1
-            end,
-            case parse_syntax(Config, Syntax, Defaults) of
-                {ok, Parsed1} -> Parsed1;
-                {error, Error1} -> throw({{Plugin, Error1}})
-            end
-    end,
-    Service2 = Service#{config:=Config2},
-    Service3 = case nklib_util:apply(Mod, plugin_config, [Config2, Service2]) of
-        not_exported -> 
-            Service2;
-        {ok, ApplyConfig} ->
-            Service2#{config=>ApplyConfig};
-        {ok, ApplyConfig, ApplyCache} ->
-            Key = list_to_atom("config_"++atom_to_list(Plugin)),
-            maps:put(Key, ApplyCache, Service2#{config=>ApplyConfig});
-        {error, Error2} ->
-            throw({{Plugin, Error2}})
-    end,
-    #{config:=Config3} = Service3,
-    Service4 = case nklib_util:apply(Mod, plugin_listen, [Config3, Service3]) of
-        not_exported -> 
-            Service3;
-        Apply3 ->
-            case parse_transports(Apply3) of
-                {ok, Parsed2} -> 
-                    OldListen = maps:get(listen, Service, #{}),
-                    Listen = maps:put(Plugin, Parsed2, OldListen),
-                    Service3#{listen=>Listen};
-                error -> 
-                    throw({invalid_plugin_listen, Plugin})
-            end
-    end,
-    config_plugins(Rest, Service4).
-
-
-%% @private
-start_plugins([], _OldPlugins, Service) ->
-    Service;
-
-start_plugins([Plugin|Rest], OldPlugins, #{config:=Config}=Service) ->
-    Mod = get_mod(Plugin),
-    Service2 = case lists:member(Plugin, OldPlugins) of
-        false ->
-            % lager:warning("Start Plugin: ~p", [Plugin]),
-            case nklib_util:apply(Mod, plugin_start, [Config, Service]) of
-                {ok, Config2} -> Service#{config:=Config2};
-                {stop, Error} -> throw({plugin_stop, {Plugin, Error}});
-                not_exported -> Service
-            end;
-        true ->
-            % lager:warning("Update Plugin: ~p", [Plugin]),
-            case nklib_util:apply(Mod, plugin_update, [Config, Service]) of
-                {ok, Config2} -> Service#{config:=Config2};
-                {stop, Error} -> throw({plugin_stop, {Plugin, Error}});
-                not_exported -> Service
-            end
-    end,
-    start_plugins(Rest, OldPlugins, Service2).
-    
-
-%% @private
-stop_plugins([], Service) ->
-    Service;
-
-stop_plugins([Plugin|Rest], Service) ->
-    % lager:warning("Stop Plugin: ~p", [Plugin]),
-    #{config:=Config, listen:=Listen, listen_ids:=ListenIds} = Service,
-    Listen2 = maps:remove(Plugin, Listen),
-    case maps:find(Plugin, ListenIds) of
-        {ok, PluginIds} ->
-            lists:foreach(
-                fun(ListenId) -> nkpacket:stop_listener(ListenId) end, PluginIds);
-        error -> 
-            ok
-    end,
-    ListenIds2 = maps:remove(Plugin, ListenIds),
-    Mod = get_mod(Plugin),
-    Service2 = case nklib_util:apply(Mod, plugin_stop, [Config, Service]) of
-        {ok, Config2} -> Service#{config:=Config2};
-        not_exported -> Service
-    end,
-    Key = list_to_atom("config_"++atom_to_list(Plugin)),
-    Service3 = maps:remove(Key, Service2),
-    stop_plugins(Rest, Service3#{listen=>Listen2, listen_ids=>ListenIds2}).
-
-
-%% @private
-get_mod(Plugin) ->
-    case get_callback(Plugin) of
-        {ok, Callback} -> Callback;
-        error -> throw({unknown_plugin, Plugin})
-    end.
-
-
-%% @private
--spec expand_plugins([module()], module()|none) ->
-    {ok, [module()]} | {error, term()}.
-
-expand_plugins(ModuleList, CallBack) ->
-    try
-        List2 = case CallBack of
-            none -> ModuleList;
-            _ -> [{CallBack, ModuleList}|ModuleList]
-        end,
-        List3 = do_expand_plugins(List2, []),
-        case nklib_sort:top_sort(List3) of
-            {ok, List} -> {ok, List};
-            {error, Error} -> {error, Error}
-        end
-    catch
-        throw:Throw -> {error, Throw}
-    end.
-
-
-%% @private
-do_expand_plugins([], Acc) ->
-    Acc;
-
-do_expand_plugins([Name|Rest], Acc) when is_atom(Name) ->
-    do_expand_plugins([{Name, []}|Rest], Acc);
-
-do_expand_plugins([{Name, List}|Rest], Acc) when is_atom(Name), is_list(List) ->
-    case lists:keymember(Name, 1, Acc) of
-        true ->
-            do_expand_plugins(Rest, Acc);
-        false ->
-            Deps = get_plugin_deps(Name, List),
-            do_expand_plugins(Deps++Rest, [{Name, Deps}|Acc])
-    end;
-
-do_expand_plugins([Other|_], _Acc) ->
-    throw({invalid_plugin_name, Other}).
-
-
-%% @private
-get_plugin_deps(Name, BaseDeps) ->
-    Deps = case get_callback(Name) of
-        {ok, Mod} ->
-            case nklib_util:apply(Mod, plugin_deps, []) of
-                List when is_list(List) ->
-                    List;
-                not_exported ->
-                    []
-            end;
-        error ->
-            throw({unknown_plugin, Name})
-    end,
-    lists:usort(BaseDeps ++ [nkservice|Deps]) -- [Name].
 
 
 %% @private
@@ -346,7 +245,7 @@ read_uuid(Path) ->
 
 %% @private
 save_uuid(Path, Name, UUID) ->
-    Content = [UUID, $,, nklib_util:to_binary(Name)],
+    Content = [UUID, $,, to_bin(Name)],
     case file:write_file(Path, Content) of
         ok ->
             ok;
@@ -356,95 +255,200 @@ save_uuid(Path, Name, UUID) ->
     end.
 
 
-%% @doc Generates and compiles in-memory cache module
-make_cache(#{id:=Id}=Service) ->
-    Service2 = Service#{timestamp => nklib_util:l_timestamp()},
-    BaseSyntax = make_base_syntax(Service2),
-    % Gather all fun specs from all callbacks modules on all plugins
-    Plugins = maps:get(plugins, Service),
-    PluginSyntax = plugin_callbacks_syntax(Plugins),
-    FullSyntax = PluginSyntax ++ BaseSyntax,
-    {ok, Tree} = nklib_code:compile(Id, FullSyntax),
-    LogPath = nkservice_app:get(log_path),
-    ok = nklib_code:write(Id, Tree, LogPath).
+%% @private
+-spec error_code(nkservice:id(), nkservice:error()) ->
+    {integer(), binary()}.
 
-
-%% @private Generates a ready-to-compile config getter functions
-%% with a function for each member of the map, plus defauls and configs
-make_base_syntax(Service) ->
-    maps:fold(
-        fun(Key, Value, Acc) -> 
-            % Maps not yet suported in 17 (supported in 18)
-            Value1 = case is_map(Value) of
-                true -> {map, term_to_binary(Value)};
-                false -> Value
-            end,
-            [nklib_code:getter(Key, Value1)|Acc] 
-        end,
-        [],
-        Service).
-
-
-
-%% @private Generates the ready-to-compile syntax of the generated callback module
-%% taking all plugins' callback functions
-plugin_callbacks_syntax(Plugins) ->
-    plugin_callbacks_syntax(Plugins, #{}).
+error_code(SrvId, Error) ->
+    case SrvId:error_code(Error) of
+        {Code, Text} ->
+            {Code, to_bin(Text)};
+        {Code, Fmt, List} ->
+            case catch io_lib:format(nklib_util:to_list(Fmt), List) of
+                {'EXIT', _} ->
+                    {Code, <<"Invalid format: ", (to_bin(Fmt))/binary>>};
+                Val ->
+                    {Code, list_to_binary(Val)}
+            end
+    end.
 
 
 %% @private
-plugin_callbacks_syntax([Name|Rest], Map) ->
-    Mod = list_to_atom(atom_to_list(Name)++"_callbacks"),
-    code:ensure_loaded(Mod),
-    case nklib_code:get_funs(Mod) of
-        error ->
-            code:ensure_loaded(Name),
-            case nklib_code:get_funs(Name) of
-                error ->
-                    plugin_callbacks_syntax(Rest, Map);
-                List ->
-                    Map1 = plugin_callbacks_syntax(List, Name, Map),
-                    plugin_callbacks_syntax(Rest, Map1)
-            end;
-        List ->
-            Map1 = plugin_callbacks_syntax(List, Mod, Map),
-            plugin_callbacks_syntax(Rest, Map1)
-    end;
+-spec error_reason(nkservice:id(), nkservice:error()) ->
+    {binary(), binary()}.
 
-plugin_callbacks_syntax([], Map) ->
-    maps:fold(
-        fun({Fun, Arity}, {Value, Pos}, Acc) ->
-            [nklib_code:fun_expr(Fun, Arity, Pos, [Value])|Acc]
-        end,
-        [],
-        Map).
+error_reason(SrvId, Error) ->
+    case SrvId:error_reason(any, Error) of
+        {Code, Fmt, List} when is_list(List) ->
+            Reason = get_error_reason(Fmt, List);
+        {Fmt, List} when is_list(List) ->
+            Code = get_error_code(Error),
+            Reason = get_error_reason(Fmt, List);
+        {Code, Reason} when is_atom(Code) ->
+            ok;
+        continue ->
+            Code = get_error_code(Error),
+            {_Code, Reason} = error_code(SrvId, Error);
+        Reason ->
+            Code = get_error_code(Error)
+    end,
+    {to_bin(Code), to_bin(Reason)}.
 
 
 %% @private
-plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
-    FunStr = atom_to_list(Fun),
-    case FunStr of
-        "plugin_" ++ _ ->
-            plugin_callbacks_syntax(Rest, Mod, Map);
+get_error_code(Error) when is_tuple(Error) ->
+    get_error_code(element(1, Error));
+get_error_code(Error) ->
+    Error.
+
+
+%% private
+get_error_reason(Fmt, List) ->
+    case catch io_lib:format(nklib_util:to_list(Fmt), List) of
+        {'EXIT', _} ->
+            lager:notice("Invalid format in error_reason: ~p, ~p", [Fmt, List]),
+            <<>>;
+        Val ->
+            list_to_binary(Val)
+    end.
+
+
+
+%% @doc Registers a pid to receive changes in service config
+-spec register_for_changes(nkservice:id()) ->
+    ok.
+
+register_for_changes(SrvId) ->
+    nklib_proc:put({notify_updated_service, SrvId}).
+
+
+%% @doc 
+-spec notify_updated_service(nkservice:id()) ->
+    ok.
+
+notify_updated_service(SrvId) ->
+    lists:foreach(
+        fun({_, Pid}) -> Pid ! {nkservice_updated, SrvId} end,
+        nklib_proc:values({notify_updated_service, SrvId})).
+
+
+%% @doc
+-spec get_debug_info(nkservice:id(), module()) ->
+    {ok, term()} | not_found.
+
+get_debug_info(SrvId, Module) ->
+    try nkservice_srv:get_item(SrvId, debug) of
+        Debug ->
+            case lists:keyfind(Module, 1, Debug) of
+                {_, Data} -> {true, Data};
+                false -> false
+            end
+    catch
+        error:{service_not_found, _} ->
+            % Service module not yet created
+            get_debug_info2(SrvId, Module)
+    end.
+
+
+%% @private
+get_debug_info2(SrvId, Module) ->
+    try
+        Debug = nkservice_srv:get(SrvId, nkservice_debug, []),
+        case lists:keyfind(Module, 1, Debug) of
+            {_, Data} -> {true, Data};
+            false -> false
+        end
+    catch
+        _:_ -> 
+            % Service does not exists
+            not_found
+    end.
+
+
+
+
+
+
+
+
+%% ===================================================================
+%% internal
+%% ===================================================================
+
+
+
+%% @private
+get_web_servers(SrvId, List, Config) ->
+    WebPath = case Config of
+        #{web_server_path:=UserPath} -> 
+            UserPath;
         _ ->
-            case maps:find({Fun, Arity}, Map) of
-                error ->
-                    Pos = 1,
-                    Value = nklib_code:call_expr(Mod, Fun, Arity, Pos);
-                {ok, {Syntax, Pos0}} ->
-                    Case = case Arity==2 andalso lists:reverse(FunStr) of
-                        "tini_"++_ -> case_expr_ok;         % Fun is ".._init"
-                        "etanimret_"++_ -> case_expr_ok;    % Fun is ".._terminate"
-                        _ -> case_expr
-                    end,
-                    Pos = Pos0+1,
-                    Value = nklib_code:Case(Mod, Fun, Arity, Pos, [Syntax])
-            end,
-            Map1 = maps:put({Fun, Arity}, {Value, Pos}, Map),
-            plugin_callbacks_syntax(Rest, Mod, Map1)
-    end;
+            Priv = list_to_binary(code:priv_dir(nkservice)),
+            <<Priv/binary, "/www">>
+    end,
+    WebOpts2 = #{
+        class => {nkservice_web_server, SrvId},
+        http_proto => {static, #{path=>WebPath, index_file=><<"index.html">>}}
+    },
+    [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- List].
 
-plugin_callbacks_syntax([], _, Map) ->
-    Map.
+
+
+%% @private
+get_api_webs(_SrvId, [], Acc) ->
+    Acc;
+
+get_api_webs(SrvId, [{List, Opts}|Rest], Acc) ->
+    List2 = [
+        {nkpacket_protocol_http, Proto, Ip, Port}
+        ||
+        {nkservice_api_server, Proto, Ip, Port} <- List, 
+        Proto==http orelse Proto==https
+    ],
+    Acc2 = case List2 of
+        [] ->
+            [];
+        _ ->
+            Path1 = nklib_util:to_list(maps:get(path, Opts, <<>>)),
+            Path2 = case lists:reverse(Path1) of
+                [$/|R] -> lists:reverse(R);
+                _ -> Path1
+            end,
+            CowPath = Path2 ++ "/[...]",
+            Routes = [{'_', [{CowPath, nkservice_api_server_http, [{srv_id, SrvId}]}]}],
+            Opts2 = #{
+                class => {nkservice_api_server, SrvId},
+                http_proto => {dispatch, #{routes => Routes}}
+            },
+            [{List2, Opts2}|Acc]
+    end,
+    get_api_webs(SrvId, Rest, Acc2).
+
+
+%% @private
+get_api_sockets(_SrvId,[], _Config, Acc) ->
+    Acc;
+
+get_api_sockets(SrvId, [{List, Opts}|Rest], Config, Acc) ->
+    List2 = [
+        {nkservice_api_server, Proto, Ip, Port}
+        ||
+        {nkservice_api_server, Proto, Ip, Port} <- List, 
+        Proto==ws orelse Proto==wss orelse Proto==tcp orelse Proto==tls
+    ],
+    Timeout = maps:get(api_server_tiemout, Config, 180),
+    Opts2 = #{
+        path => maps:get(path, Opts, <<"/">>),
+        class => {nkservice_api_server, SrvId},
+        get_headers => [<<"user-agent">>],
+        idle_timeout => 1000 * Timeout,
+        debug => false
+    },
+    get_api_sockets(SrvId, Rest, Config, [{List2, maps:merge(Opts, Opts2)}|Acc]).
+
+
+%% @private
+to_bin(Term) -> nklib_util:to_binary(Term).
+
 
 

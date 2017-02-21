@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -32,7 +32,9 @@
 %% @private
 app_syntax() ->
     #{
-        log_path => binary
+        log_path => binary,
+        api_ping_timeout => {integer, 5, none},
+        api_cmd_timeout => {integer, 5, none}
     }.
 
 
@@ -40,7 +42,9 @@ app_syntax() ->
 %% @private
 app_defaults() ->    
     #{
-        log_path => <<"log">>
+        log_path => <<"log">>,
+        api_ping_timeout => 60,
+        api_cmd_timeout => 10
     }.
 
 
@@ -51,11 +55,14 @@ syntax() ->
         class => any,
         plugins => {list, atom},
         callback => atom,
-        log_level => log_level,
+        debug => fun parse_debug/1,
+        log_level => log_level,     %% TO REMOVE
 
         api_server => fun parse_api_server/3,
         api_server_timeout => {integer, 5, none},
         web_server => fun parse_web_server/3,
+        web_server_path => binary,
+        rest_server => fun parse_api_server/3,
 
         service_idle_timeout => pos_integer,
         service_connect_timeout => nat_integer,
@@ -83,23 +90,23 @@ parse_fun_listen(_Key, Multi, _Ctx) ->
 
 
 
-parse_web_server(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
-    {ok, Multi};
+parse_web_server(_Key, {multi, Multi}, _Ctx) ->
+    {ok, {multi, Multi}};
 
 parse_web_server(web_server, Url, _Ctx) ->
     Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
-        {ok, List} -> {ok, List};
+        {ok, List} -> {ok, {multi, List}};
         _ -> error
     end.
 
 
 
     %% @private
-parse_api_server(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
-    {ok, Multi};
+parse_api_server(api_server, {multi, Multi}, _Ctx) ->
+    {ok, {multi, Multi}};
 
-parse_api_server(_Key, Url, _Ctx) ->
+parse_api_server(api_server, Url, _Ctx) ->
     case nklib_parse:uris(Url) of
         error ->
             error;
@@ -108,12 +115,43 @@ parse_api_server(_Key, Url, _Ctx) ->
                 error ->
                     error;
                 List2 ->
-                    case nkpacket:multi_resolve(List2, #{}) of
-                        {ok, List3} -> {ok, List3};
-                        _ -> error
+                    case nkpacket:multi_resolve(List2, #{resolve_type=>listen}) of
+                        {ok, List3} -> 
+                            {ok, {multi, List3}};
+                        _ -> 
+                            error
                     end
             end
     end.
+
+
+%% @private
+parse_debug(Term) when is_list(Term) ->
+    do_parse_debug(Term, []);
+
+parse_debug(Term) ->
+    parse_debug([Term]).
+
+
+%% @private
+do_parse_debug([], Acc) ->
+    {ok, Acc};
+
+do_parse_debug([{Mod, Data}|Rest], Acc) ->
+    Mod2 = nklib_util:to_atom(Mod),
+    do_parse_debug(Rest, [{Mod2, Data}|Acc]);
+
+
+    % case code:ensure_loaded(Mod2) of
+    %     {module, Mod2} ->
+    %         do_parse_debug(Rest, [{Mod, Data}|Acc]);
+    %     _ ->
+    %         lager:warning("Module ~p could not be loaded", [Mod2]),
+    %         error
+    % end;
+
+do_parse_debug([Mod|Rest], Acc) ->
+    do_parse_debug([{Mod, []}|Rest], Acc).
 
 
 %% @private
@@ -124,10 +162,12 @@ make_api_listen([#uri{scheme=nkapi}=Uri|Rest], Acc) ->
     make_api_listen(Rest, [Uri|Acc]);
 
 make_api_listen([#uri{scheme=Sc, ext_opts=Opts}=Uri|Rest], Acc)
-        when Sc==tcp; Sc==tls; Sc==ws; Sc==wss ->
+        when Sc==tcp; Sc==tls; Sc==ws; Sc==wss; Sc==http; Sc==https ->
     Uri2 = Uri#uri{scheme=nkapi, opts=[{<<"transport">>, Sc}|Opts]},
-    make_api_listen(Rest, [Uri2|Acc]).
+    make_api_listen(Rest, [Uri2|Acc]);
 
+make_api_listen(_D, _Acc) ->
+    error.
 
 
 %% @private

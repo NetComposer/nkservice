@@ -1,6 +1,7 @@
+
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -22,7 +23,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([find_name/1, get_srv_id/1, get_item/2]).
+-export([find_name/1, get_srv_id/1, get_item/2, has_plugin/2]).
+-export([get/3, put/3, put_new/3, del/2]).
+-export([start_proc/4, start_proc/2, stop_proc/2]).
 -export([start_link/1, stop_all/1]).
 -export([pending_msgs/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
@@ -50,7 +53,7 @@ find_name(Name) ->
 
 %% @doc Gets the internal name of an existing service
 -spec get_srv_id(service_select()) ->
-    {ok, nkservice:id(), pid()} | not_found.
+    {ok, nkservice:id()} | not_found.
 
 get_srv_id(Srv) ->
     case 
@@ -78,7 +81,86 @@ get_item(Srv, Field) ->
             error({service_not_found, Srv})
     end.
 
-    
+
+%% @doc 
+-spec has_plugin(service_select(), atom()) ->
+    boolean().
+
+has_plugin(Srv, Plugin) ->
+    case get_srv_id(Srv) of
+        {ok, SrvId} ->
+            lists:member(Plugin, SrvId:plugins());
+        not_found ->
+            error({service_not_found, Srv})
+    end.
+
+
+%% @doc Gets a value from service's store
+-spec get(nkservice:id(), term(), term()) ->
+    term().
+
+get(SrvId, Key, Default) ->
+    case ets:lookup(SrvId, Key) of
+        [{_, Value}] -> Value;
+        [] -> Default
+    end.
+
+
+%% @doc Inserts a value in service's store
+-spec put(service_select(), term(), term()) ->
+    ok.
+
+put(SrvId, Key, Value) ->
+    ets:insert(SrvId, {Key, Value}).
+
+
+%% @doc Inserts a value in service's store
+-spec put_new(service_select(), term(), term()) ->
+    true | false.
+
+put_new(SrvId, Key, Value) ->
+    ets:insert_new(SrvId, {Key, Value}).
+
+
+%% @doc Deletes a value from service's store
+-spec del(service_select(), term()) ->
+    ok.
+
+del(SrvId, Key) ->
+    ets:delete(SrvId, Key).
+
+
+
+%% @private Starts a new supervised process
+-spec start_proc(nkservice:id(), term(), module(), list()) ->
+    {ok, pid()} | {error, term()}.
+
+start_proc(SrvId, Name, Module, Args) ->
+    Spec = {
+        Name, 
+        {Module, start_link, Args},
+        transient,
+        5000,
+        worker,
+        [Module]
+    },
+    start_proc(SrvId, Spec).
+
+
+%% @private Starts a new child under this supervisor
+-spec start_proc(nkservice:id(), any()) ->
+    {ok, pid()} | {error, term()}.
+
+start_proc(SrvId, Spec) ->
+    nkservice_srv_user_sup:start_proc(SrvId, Spec).
+
+
+%% @private Starts a new child under this supervisor
+-spec stop_proc(nkservice:id(), any()) ->
+    {ok, pid()} | {error, term()}.
+
+stop_proc(SrvId, Name) ->
+    nkservice_srv_user_sup:stop_proc(SrvId, Name).
 
 
 %% ===================================================================
@@ -131,16 +213,20 @@ pending_msgs() ->
 %% @private
 init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
+    % io:format("SRV: ~p", [Service]),
     case nkservice_srv_listen_sup:update_transports(Service) of
         {ok, Listen} ->
             Service2 = Service#{listen_ids=>Listen},
             Class = maps:get(class, Service, undefined),
             nklib_proc:put(?MODULE, {Id, Class}),   
             nklib_proc:put({?MODULE, Name}, Id),   
-            nkservice_util:make_cache(Service2),
+            nkservice_config:make_cache(Service2),
             case Id:service_init(Service, #{id=>Id}) of
                 {ok, User} ->
-                    % io:format("Started Service: ~p\n", [Service2]),
+                    % Someone could be listening (like events)
+                    nkservice_util:notify_updated_service(Id),
+                    % Ensure all atoms are loaded
+                    _ = Id:api_server_syntax(#api_req{class=none}, #{}, #{}, []),
                     {ok, #state{id=Id, service=Service2, user=User}};
                 {stop, Reason} ->
                     {stop, Reason}
@@ -155,16 +241,25 @@ init(#{id:=Id, name:=Name}=Service) ->
     term().
 
 handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) ->
-    case nkservice_util:config_service(UserSpec, Service) of
+    #{id:=Id, name:=Name} = Service,
+    case nkservice_config:config_service(UserSpec, Service) of
         {ok, Service2} ->
             case nkservice_srv_listen_sup:update_transports(Service2) of
                 {ok, Listen} ->
                     Service3 = Service2#{listen_ids=>Listen},
-                    nkservice_util:make_cache(Service3),
+                    nkservice_config:make_cache(Service3),
                     {Added, Removed} = get_diffs(Service3, Service),
-                    lager:info("Added config: ~p", [Added]),
-                    lager:info("Removed config: ~p", [Removed]),
-                    % io:format("Updated Service: ~p\n", [Service3]),
+                    Added2 = case maps:is_key(lua_state, Added) of
+                        true -> Added#{lua_state:=<<"...">>};
+                        false -> Added
+                    end,
+                    Removed2 = case maps:is_key(lua_state, Removed) of
+                        true -> Removed#{lua_state:=<<"...">>};
+                        false -> Removed
+                    end,
+                    lager:info("Service '~s' added config: ~p", [Name, Added2]),
+                    lager:info("Service '~s' removed config: ~p", [Name, Removed2]),
+                    nkservice_util:notify_updated_service(Id),
                     {reply, ok, State#state{service=Service3}};
                 {error, Error} ->
                     {reply, {error, Error}, State}
@@ -175,7 +270,7 @@ handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) 
 
 handle_call(nkservice_stop_all, _From, #state{service=Service}=State) ->
     #{plugins:=Plugins} = Service,
-    Service2 = nkservice_util:stop_plugins(Plugins, Service),
+    Service2 = nkservice_config:stop_plugins(Plugins, Service),
     {reply, ok, State#state{service=Service2}};
 
 handle_call(nkservice_state, _From, State) ->
@@ -200,7 +295,7 @@ handle_cast(Msg, State) ->
     nklib_util:gen_server_info(nkservice:service()).
 
 handle_info(Msg, State) ->
-    nklib_gen_server:handle_cast(service_handle_info, Msg, State, ?P1, ?P2).
+    nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2).
     
 
 %% @private
@@ -218,8 +313,8 @@ code_change(OldVsn, State, Extra) ->
 terminate(Reason, #state{id=Id, service=Service}=State) ->  
     catch nklib_gen_server:terminate(nkservice_terminate, Reason, State, ?P1, ?P2),
     #{name:=Name, plugins:=Plugins} = Service,  
-    _Service2 = nkservice_util:stop_plugins(Plugins, Service),
-    lager:debug("Service ~s (~p) has terminated (~p)", [Name, Id, Reason]).
+    _Service2 = nkservice_config:stop_plugins(Plugins, Service),
+    lager:notice("Service '~s' (~p) has terminated (~p)", [Name, Id, Reason]).
     
 
 

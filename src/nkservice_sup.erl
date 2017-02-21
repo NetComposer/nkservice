@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -27,7 +27,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([init/1, start_link/0, start_services_sup/0]).
+-export([init/1, start_link/0, start_services_sup/0, start_events_sup/0]).
 
 -include("nkservice.hrl").
 
@@ -41,6 +41,12 @@ start_link() ->
             permanent,
             infinity,
             supervisor,
+            [?MODULE]},
+        {nkservice_events_sup,
+            {?MODULE, start_events_sup, []},
+            permanent,
+            infinity,
+            supervisor,
             [?MODULE]}
     ],
     supervisor:start_link({local, ?MODULE}, ?MODULE, 
@@ -50,6 +56,11 @@ start_link() ->
 %% @private
 start_services_sup() ->
     supervisor:start_link({local, nkservice_all_srvs_sup}, 
+                            ?MODULE, {{one_for_one, 10, 60}, []}).
+
+%% @private
+start_events_sup() ->
+    supervisor:start_link({local, nkservice_events_sup}, 
                             ?MODULE, {{one_for_one, 10, 60}, []}).
 
 

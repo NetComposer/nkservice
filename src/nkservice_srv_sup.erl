@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -28,20 +28,20 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_service/1, stop_service/1]).
+-export([pre_start_service/1, start_service/1, stop_service/1]).
 -export([get_pid/1, init/1, start_link/1]).
 
 -include("nkservice.hrl").
 
 
 %% @private Starts a new service supervisor
--spec start_service(nkservice:service()) ->
+-spec pre_start_service(nkservice:id()) ->
     ok | {error, term()}.
 
-start_service(#{id:=Id}=Service) ->
+pre_start_service(Id) ->
     SupSpec = {
         Id,
-        {?MODULE, start_link, [Service]},
+        {?MODULE, start_link, [Id]},
         permanent,
         infinity,
         supervisor,
@@ -82,21 +82,14 @@ get_pid(Id) ->
 -spec start_link(nkservice:service()) ->
     {ok, pid()}.
 
-start_link(#{id:=Id}=Service) ->
+start_link(Id) ->
     Childs = [     
-        {listen,
-            {nkservice_srv_listen_sup, start_link, [Service]},
+        {user,
+            {nkservice_srv_user_sup, start_link, [Id]},
             permanent,
             infinity,
             supervisor,
-            [nkservice_srv_listen_sup]
-        },
-        {server,
-            {nkservice_srv, start_link, [Service]},
-            permanent,
-            30000,
-            worker,
-            [nkservice_srv]
+            [nkservice_srv_user_sup]
         }
     ],
     ChildSpec = {Id, {{one_for_one, 10, 60}, Childs}},
@@ -110,5 +103,58 @@ init({Id, ChildsSpec}) ->
     ets:new(Id, [named_table, public]),
     yes = nklib_proc:register_name({?MODULE, Id}, self()),
     {ok, ChildsSpec}.
+
+
+%% @doc
+start_service(#{id:=Id}=Service) ->
+    ListenSup = {
+        listen,
+        {nkservice_srv_listen_sup, start_link, [Service]},
+        permanent,
+        infinity,
+        supervisor,
+        [nkservice_srv_listen_sup]
+    },
+    Server = {
+        server,
+        {nkservice_srv, start_link, [Service]},
+        permanent,
+        30000,
+        worker,
+        [nkservice_srv]
+    },
+    case start_child(Id, ListenSup) of
+        ok ->
+            case start_child(Id, Server) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+start_child(Id, Spec) ->
+    SupPid = get_pid(Id),
+    case supervisor:start_child(SupPid, Spec) of
+        {ok, _Pid} ->
+            ok;
+        {error, {Error, _}} -> 
+            stop_service(Id),
+            {error, Error};
+        {error, Error} -> 
+            stop_service(Id),
+            {error, Error}
+    end.
+
+
+
+
+
+
+
 
 

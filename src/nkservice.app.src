@@ -1,5 +1,5 @@
 {application, nkservice, [
-    {description, "NkCORE Service Framework"},
+    {description, "NetComposer Service Framework"},
     {vsn, "develop"},
     {modules, []},
     {registered, []},
@@ -10,9 +10,11 @@
         crypto,
         sasl,
         ssl,
+        luerl,
         lager,
         nkpacket,
-        nkdocker
+        hackney
+        % nkdocker
     ]},
     {env, [
     ]}

@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -60,7 +60,7 @@ start(Type) ->
 %% @private OTP standard start callback
 start(_Type, _Args) ->
     nkpacket:register_protocol(nkapi, nkservice_api_server),
-    nkpacket:register_protocol(nkapic, nkservice_api_client),
+    nkpacket:register_protocol(nkapi_c, nkservice_api_client),
     Syntax = nkservice_syntax:app_syntax(),
     Defaults = nkservice_syntax:app_defaults(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of

@@ -22,19 +22,29 @@
 -module(nkservice_api_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/4, cmd/4, reply_ok/3, reply_error/3, stop/1]).
+-export([start/5, start/7, cmd/5, reply_ok/3, reply_error/3, stop/1, stop_all/0]).
 -export([transports/1, default_port/1]).
--export([conn_init/1, conn_encode/2, conn_parse/3]).
+-export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
--export([print/3, get_all/0]).
+-export([print/3, get_all/0, get_user_pids/1, find/1]).
 
+% To debug, set debug => [{nkservice_api_client, #{nkpacket=>true}}]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkservice_api_client_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Admin Client (~s) "++Txt, [State#state.remote| Args])).
+    lager:Type("NkSERVICE API Client (~s) "++Txt, [State#state.remote| Args])).
 
--define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
-        ok).
+
+-define(MSG(Txt, Args, State),
+    case erlang:get(nkservice_api_client_debug) of
+        true -> print(Txt, Args, State);
+        _ -> ok
+    end).
 
 
 -define(OP_TIME, 5).            % Maximum operation time (without ACK)
@@ -42,11 +52,13 @@
 -define(CALL_TIMEOUT, 180).     % 
 -define(WS_TIMEOUT, 60*60*1000).
 
+-include("nkservice.hrl").
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
+-type id() :: pid() | binary().
 
 
 %% ===================================================================
@@ -55,24 +67,33 @@
 
 
 %% @doc Starts a new verto session to FS
--spec start(binary(), atom(), binary(), binary()) ->
-    {ok, SessId::binary(), pid()} | {error, term()}.
+-spec start(term(), binary(), map(), function(), term()) ->
+    {ok, SessId::binary(), pid(), map()} | {error, term()}.
 
-start(Url, Class, User, Pass) ->
+start(Serv, Url, Login, Fun, UserData) ->
+    start(Serv, Url, Login, Fun, UserData, core, user).
+
+    
+start(Serv, Url, #{user:=User}=Login, Fun, UserData, Class, Sub) ->
+    {ok, SrvId} = nkservice_srv:get_srv_id(Serv),
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, #{nkpacket:=true}} -> true;
+        _ -> false
+    end,
     ConnOpts = #{
-        class => ?MODULE,
+        class => {?MODULE, SrvId},
         monitor => self(),
-        idle_timeout => ?WS_TIMEOUT
+        connect_timeout => 60000,
+        idle_timeout => ?WS_TIMEOUT,
+        user => {Fun, UserData#{user=>User}},
+        implicit_scheme => nkapi_c,
+        debug => Debug
     },
     case nkpacket:connect(Url, ConnOpts) of
         {ok, Pid} -> 
-            Data = #{
-                user => nklib_util:to_binary(User), 
-                pass => nklib_util:to_binary(Pass)
-            },
-            case cmd(Pid, Class, login, Data) of
-                {ok, #{<<"session_id">>:=SessId}} ->
-                    {ok, SessId, Pid};
+            case cmd(Pid, Class, Sub, login, Login) of
+                {ok, #{<<"session_id">>:=SessId}=Data} ->
+                    {ok, SessId, Pid, Data};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -81,29 +102,44 @@ start(Url, Class, User, Pass) ->
     end.
 
 
-%% @doc
-cmd(Pid, Class, Cmd, Data) ->
-    nklib_util:call(Pid, {cmd, Class, Cmd, Data}, 190000).
+
+
+%% @doc 
+stop(Id) ->
+    do_cast(Id, stop).
+
+
+%% @doc 
+stop_all() ->
+    [stop(Pid) || {_, Pid} <- get_all()].
 
 
 %% @doc
-reply_ok(Pid, TId, Data) ->
-    gen_server:cast(Pid, {reply_ok, TId, Data}).
+-spec cmd(id(), atom(), atom(), atom(), map()) ->
+    {ok, map()} | {error, {integer(), binary()}} | {error, term()}.
+
+cmd(Id, Class, Sub, Cmd, Data) ->
+    Req = #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data},
+    do_call(Id, {cmd, Req}).
 
 
 %% @doc
-reply_error(Pid, TId, Code) ->
-    gen_server:cast(Pid, {reply_error, TId, Code}).
+reply_ok(Id, TId, Data) ->
+    do_cast(Id, {reply_ok, TId, Data}).
+
+
+%% @doc
+reply_error(Id, TId, Code) ->
+    do_cast(Id, {reply_error, TId, Code}).
 
 
 %% @dodc
 get_all() ->
-    [Pid || {_, Pid} <- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
 
 
-%% @doc 
-stop(Pid) ->
-    gen_server:cast(Pid, stop).
+get_user_pids(User) ->
+    [Pid || {_, Pid}<- nklib_proc:values({?MODULE, nklib_util:to_binary(User)})].
 
 
 
@@ -122,9 +158,14 @@ stop(Pid) ->
 }).
 
 -record(state, {
-    trans :: #{tid() => #trans{}},
-    tid :: integer(),
-    remote :: binary()
+    srv_id :: nkservice:id(),
+    trans = #{} :: #{tid() => #trans{}},
+    tid = 1000 :: integer(),
+    remote :: binary(),
+    callback :: function(),
+    user :: binary(),
+    session_id :: binary(),
+    userdata :: term()
 }).
 
 
@@ -137,8 +178,8 @@ transports(_) -> [wss, ws].
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
 
-default_port(ws) -> 9010;
-default_port(wss) -> 9011.
+default_port(ws) -> 80;
+default_port(wss) -> 443.
 
 
 -spec conn_init(nkpacket:nkport()) ->
@@ -146,13 +187,17 @@ default_port(wss) -> 9011.
 
 %% TODO: Send and receive pings from session when they are not in same cluster
 conn_init(NkPort) ->
+    {ok, {_, SrvId}, {CB, UserData}} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State = #state{
-        trans = #{}, 
-        tid = erlang:phash2(self()),
-        remote = Remote
+        srv_id = SrvId,
+        remote = Remote,
+        callback = CB,
+        userdata = UserData
     },
-    ?LLOG(info, "new session (~p)", [self()], State),
+    set_log(State),
+    nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("new session (~p)", [self()], State),
     nklib_proc:put(?MODULE),
     {ok, State}.
 
@@ -164,7 +209,7 @@ conn_init(NkPort) ->
 conn_parse(close, _NkPort, State) ->
     {ok, State};
 
-conn_parse({text, Text}, NkPort, State) ->
+conn_parse({text, Text}, NkPort, #state{srv_id=SrvId}=State) ->
     Msg = case nklib_json:decode(Text) of
         error ->
             ?LLOG(warning, "JSON decode error: ~p", [Text], State),
@@ -172,19 +217,21 @@ conn_parse({text, Text}, NkPort, State) ->
         Json ->
             Json
     end,
-    ?PRINT("received ~s", [Msg], State),
+    ?MSG("received ~s", [Msg], State),
     case Msg of
+        #{<<"class">> := <<"event">>, <<"data">> := Data} ->
+            {ok, Event} = nkservice_events:parse(SrvId, Data, none),
+            process_server_event(Event, State);
         #{<<"class">> := <<"core">>, <<"cmd">> := <<"ping">>, <<"tid">> := TId} ->
             send_reply_ok(#{}, TId, NkPort, State);
-        #{<<"class">> := <<"nkmedia">>, <<"cmd">> := Cmd, <<"tid">> := TId} ->
+        #{<<"class">> := Class, <<"cmd">> := Cmd, <<"tid">> := TId} ->
+            Sub = maps:get(<<"subclass">>, Msg, <<>>),
             Data = maps:get(<<"data">>, Msg, #{}),
-            case process_server_req(Cmd, Data, TId, NkPort, State) of
-                {ok, State2} ->
-                    {ok, State2};
-                unrecognized ->
-                    ?LLOG(warning, "unrecognized server request ~s: ~p", 
-                          [Cmd, Data], State),
-                    send_reply_error(1000, TId, NkPort, State)
+            case make_req(Class, Sub, Cmd, Data, TId, State) of
+                {ok, Req} ->
+                    process_server_req(Req, NkPort, State);
+                error ->
+                    send_reply_error(not_implemented, TId, NkPort, State)
             end;
         #{<<"result">> := Result, <<"tid">> := TId} ->
             case extract_op(TId, State) of
@@ -215,8 +262,13 @@ conn_parse({text, Text}, NkPort, State) ->
     {ok, nkpacket:outcoming()} | continue | {error, term()}.
 
 conn_encode(Msg, _NkPort) when is_map(Msg) ->
-    Json = nklib_json:encode(Msg),
-    {ok, {text, Json}};
+    case nklib_json:encode(Msg) of
+        error ->
+            lager:warning("invalid json in ~p: ~p", [?MODULE, Msg]),
+            {error, invalid_json};
+        Json ->
+            {ok, {text, Json}}
+    end;
 
 conn_encode(Msg, _NkPort) when is_binary(Msg) ->
     {ok, {text, Msg}}.
@@ -226,12 +278,8 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
 
-conn_handle_call({login, Class, User, Pass}, From, NkPort, State) ->
-    Data = #{user => nklib_util:to_binary(User), pass => nklib_util:to_binary(Pass)},
-    send_request(Class, login, Data, From, NkPort, State);
-
-conn_handle_call({cmd, Class, Cmd, Data}, From, NkPort, State) ->
-    send_request(Class, Cmd, Data, From, NkPort, State);
+conn_handle_call({cmd, Req}, From, NkPort, State) ->
+    send_request(Req, From, NkPort, State);
 
 conn_handle_call(Msg, _From, _NkPort, State) ->
     ?LLOG(error, "unexpected handle_call: ~p", [Msg], State),
@@ -259,6 +307,9 @@ conn_handle_cast({reply_error, TId, Code}, NkPort, State) ->
             {ok, State}
     end;
 
+conn_handle_cast(stop, _NkPort, State) ->
+    {stop, normal, State};
+
 conn_handle_cast(Msg, _NkPort, State) ->
     ?LLOG(error, "unexpected handle_cast: ~p", [Msg], State),
     {ok, State}.
@@ -269,18 +320,28 @@ conn_handle_cast(Msg, _NkPort, State) ->
 
 conn_handle_info({timeout, _, {op_timeout, TId}}, _NkPort, State) ->
     case extract_op(TId, State) of
-        {#trans{from=From}, State2} ->
+        {#trans{from=From, op=Op}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation ~p timeout!", [TId], State),
+            ?LLOG(warning, "operation ~p (~p) timeout!", [Op, TId], State),
             {stop, normal, State2};
         not_found ->
             {ok, State}
     end;
 
+conn_handle_info({nkservice_updated, _SrvId}, _NkPort, State) ->
+    {ok, set_log(State)};
+
 conn_handle_info(Info, _NkPort, State) ->
     ?LLOG(error, "unexpected handle_info: ~p", [Info], State),
     {ok, State}.
 
+
+%% @doc Called when the connection stops
+-spec conn_stop(Reason::term(), nkpacket:nkport(), #state{}) ->
+    ok.
+
+conn_stop(Reason, _NkPort, State) ->
+    ?LLOG(info, "client stop (~p)", [Reason], State).
 
 
 %% ===================================================================
@@ -288,14 +349,45 @@ conn_handle_info(Info, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-process_server_req(_Cmd, _Data, _TId, _NkPort, _State) ->
-    unrecognized.
+process_server_req(#api_req{tid=TId}=Req, NkPort, State) ->
+    #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
+    ApiReq = Req#api_req{user_id=User, session_id=SessId},
+    case CB(ApiReq, UserData) of
+        {ok, Reply, UserData2} ->
+            send_reply_ok(Reply, TId, NkPort, State#state{userdata=UserData2});
+        {ack, UserData2} ->
+            send_ack(TId, NkPort, State#state{userdata=UserData2});
+        {error, Error, UserData2} ->
+            send_reply_error(Error, TId, NkPort, State#state{userdata=UserData2})
+    end.
 
 
 %% @private
-process_server_resp(<<"ok">>, Data, #trans{from=From}, _NkPort, State) ->
+process_server_event(Event, State) ->
+    #state{callback=CB, userdata=UserData, user=User, session_id=SessId} = State,
+    ApiReq = #api_req{class=event, user_id=User, session_id=SessId, data=Event},
+    case CB(ApiReq, UserData) of
+        {ok, UserData2}  -> ok;
+        {ok, _, UserData2} -> ok;
+        {error, _, UserData2} -> ok
+    end,
+    {ok, State#state{userdata=UserData2}}.
+
+
+
+%% @private
+process_server_resp(<<"ok">>, Data, #trans{from=From}=Trans, _NkPort, State) ->
+    State2 = case Trans of
+        #trans{op=#{cmd:=login, data:=#{user:=User}}} ->
+            #{<<"session_id">>:=SessId} = Data,
+            nklib_proc:put(?MODULE, User),
+            nklib_proc:put({?MODULE, User}),
+            State#state{user=User, session_id=SessId};
+        _ ->
+            State
+    end,
     nklib_util:reply(From, {ok, Data}),
-    {ok, State};
+    {ok, State2};
 
 process_server_resp(<<"error">>, Data, #trans{from=From}, _NkPort, State) ->
     Code = maps:get(<<"code">>, Data, 0),
@@ -308,6 +400,50 @@ process_server_resp(<<"error">>, Data, #trans{from=From}, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkservice_api_client_debug, Debug),
+    State.
+
+
+%% @private
+do_call(Id, Msg) ->
+    case find(Id) of
+        {ok, Pid} ->
+            nklib_util:call(Pid, Msg, 1000*?CALL_TIMEOUT);
+        not_found ->
+            {error, not_found}
+    end.
+
+
+%% @private
+do_cast(Id, Msg) ->
+    case find(Id) of
+        {ok, Pid} ->
+            gen_server:cast(Pid, Msg);
+        not_found ->
+            ok
+    end.
+
+
+%% @private
+find(Pid) when is_pid(Pid) ->
+    {ok, Pid};
+
+find(Id) ->
+    case get_user_pids(Id) of
+        [Pid|_] ->
+            {ok, Pid};
+        [] ->
+            not_found
+    end.
+
 
 
 %% @private
@@ -341,18 +477,47 @@ extend_op(TId, #trans{timer=Timer}=Trans, #state{trans=AllTrans}=State) ->
 
 
 %% @private
-send_request(Class, Cmd, Data, From, NkPort, #state{tid=TId}=State) ->
+make_req(Class, Sub, Cmd, Data, TId, State) ->
+    try
+        Class2 = nklib_util:to_existing_atom(Class),
+        Sub2 = nklib_util:to_existing_atom(Sub),
+        Cmd2 = nklib_util:to_existing_atom(Cmd),
+        #state{srv_id=SrvId, user=User, session_id=Session} = State,
+        Req = #api_req{
+            srv_id = SrvId,
+            class = Class2,
+            subclass = Sub2,
+            cmd = Cmd2,
+            tid = TId,
+            data = Data, 
+            user_id = User,
+            session_id = Session
+        },
+        {ok, Req}
+    catch
+        _:_ -> error
+    end.
+
+
+%% @private
+send_request(Req, From, NkPort, #state{tid=TId}=State) ->
+    #api_req{class=Class, subclass=Sub, cmd=Cmd, data=Data} = Req,
     Msg1 = #{
         class => Class,
         cmd => Cmd,
         tid => TId
     },
-    Msg2 = case map_size(Data) of
-        0 -> Msg1;
-        _ -> Msg1#{data=>Data}
+    Msg2 = case Sub of
+        <<>> -> Msg1;
+        '' -> Msg1;
+        _ -> Msg1#{subclass=>Sub}
     end,
-    State2 = insert_op(TId, Msg2, From, State),
-    send(Msg2, NkPort, State2#state{tid=TId+1}).
+    Msg3 = case is_map(Data) andalso map_size(Data)>0  of
+        true -> Msg2#{data=>Data};
+        false -> Msg2
+    end,
+    State2 = insert_op(TId, Msg3, From, State),
+    send(Msg3, NkPort, State2#state{tid=TId+1}).
 
 
 %% @private
@@ -369,33 +534,34 @@ send_reply_ok(Data, TId, NkPort, State) ->
 
 
 %% @private
-send_reply_error(Code, TId, NkPort, State) ->
+send_reply_error(Error, TId, NkPort, #state{srv_id=SrvId}=State) ->
+    {Code, Text} = nkservice_util:error_reason(SrvId, Error),
     Msg = #{
         result => error,
         tid => TId,
         data => #{ 
             code => Code,
-            error => nklib_util:to_binary(Code)
+            error => Text
         }
     },
     send(Msg, NkPort, State).
 
 
-% %% @private
-% send_ack(TId, NkPort, State) ->
-%     Msg = #{ack => TId},
-%     _ = send(Msg, NkPort, State),
-%     ok.
+%% @private
+send_ack(TId, NkPort, State) ->
+    Msg = #{ack => TId},
+    _ = send(Msg, NkPort, State),
+    {ok, State}.
 
 
 %% @private
 send(Msg, NkPort, State) ->
-    ?PRINT("sending ~s", [Msg], State),
+    ?MSG("sending ~s", [Msg], State),
     case send(Msg, NkPort) of
         ok -> 
             {ok, State};
         error -> 
-            ?LLOG(notice, "error sending reply:", [], State),
+            ?LLOG(notice, "error sending reply: ~p", [Msg], State),
             {stop, normal, State}
     end.
 
@@ -409,5 +575,8 @@ send(Msg, NkPort) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
-    ?LLOG(info, Txt, Args, State).
+    ?LLOG(debug, Txt, Args, State).
+
+
+
 

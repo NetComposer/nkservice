@@ -62,7 +62,8 @@ basic() ->
 	[{SrvId, "serv1@root", class1, SrvPid}] = nkservice:get_all(),
 	[{SrvId, "serv1@root", SrvPid}] = nkservice:get_all(class1),
 
-	[plug2, plug1, plug3, serv1] = SrvId:plugins(),
+	Plugins = lists:sort(SrvId:plugins()),
+	Plugins = [nkservice,plug1,plug2,plug3,serv1],
 
 	7 = SrvId:log_level(),
 	#{
