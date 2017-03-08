@@ -417,11 +417,11 @@ make_base_syntax(Service) ->
     maps:fold(
         fun(Key, Value, Acc) -> 
             % Maps not yet suported in 17 (supported in 18)
-            Value1 = case is_map(Value) of
-                true -> {map, term_to_binary(Value)};
-                false -> Value
-            end,
-            [nklib_code:getter(Key, Value1)|Acc] 
+%%            Value1 = case is_map(Value) of
+%%                true -> {map, term_to_binary(Value)};
+%%                false -> Value
+%%            end,
+            [nklib_code:getter(Key, Value)|Acc]
         end,
         [],
         Service).

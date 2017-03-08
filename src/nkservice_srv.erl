@@ -73,10 +73,7 @@ get_srv_id(Srv) ->
 get_item(Srv, Field) ->
     case get_srv_id(Srv) of
         {ok, Id} -> 
-            case Id:Field() of
-                {map, Bin} -> binary_to_term(Bin);
-                Other -> Other
-            end;
+            Id:Field();
         not_found ->
             error({service_not_found, Srv})
     end.
