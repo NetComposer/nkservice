@@ -24,11 +24,10 @@
 -behaviour(gen_server).
 -export([send/1, reg/1, unreg/1]).
 -export([call/1]).
--export([parse/3]).
+-export([parse/1, parse/2, unparse/1]).
 -export([start_link/3, get_all/0, remove_all/3, dump/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, 
          handle_cast/2, handle_info/2]).
-% -export([atest/0]).
 
 -include("nkservice.hrl").
 
@@ -163,31 +162,27 @@ dump(Class, Sub, Type) ->
 
 
 %% @doc Tries to parse a event-type object
-parse(SrvId, Data, Pid) ->
-  {Syntax, Defaults, Mandatory} = nkservice_api_syntax:events(#{}, #{}, []),
-    Opts = #{
-        return => map, 
-        defaults => Defaults,
-        mandatory => Mandatory
+parse(Data) ->
+    parse(undefined, Data).
+
+
+%% @doc Tries to parse a event-type object
+parse(SrvId, Data) ->
+    Syntax = #{
+        class => binary,
+        subclass => binary,
+        type => binary,
+        obj_id => binary,
+        body => map,
+        '__defaults' => #{
+            subclass => <<>>,
+            type => <<>>,
+            obj_id => <<>>
+        },
+        '__mandatory' => [class]
     },
-    case nklib_config:parse_config(Data, Syntax, Opts) of
-        {ok, Parsed, Other} ->
-            case map_size(Other)>0 andalso is_pid(Pid) of
-                true ->
-                    MEvent = #event{
-                        srv_id = SrvId,
-                        class = <<"core">>,
-                        subclass = <<"session">>,
-                        type = <<"unrecognized_fields">>,
-                        body = #{
-                            class => event,
-                            body => maps:keys(Other)
-                        }
-                    },
-                    Pid ! {nkservice_event, MEvent};
-                false -> 
-                    ok
-            end,
+    case nklib_syntax:parse(Data, Syntax) of
+        {ok, Parsed, _Exp, Unrecognized} ->
             #{
                 class := Class,
                 subclass := Sub,
@@ -202,13 +197,46 @@ parse(SrvId, Data, Pid) ->
                 obj_id = ObjId,
                 body = maps:get(body, Parsed, #{})
             },
-            {ok, Event};
+            {ok, Event, Unrecognized};
         {error, {syntax_error, Error}} ->
             {error, {syntax_error, Error}};
         {error, {missing_mandatory_field, Field}} ->
-            {error, {missing_field, Field}}
+            {error, {missing_field, Field}};
+        {error, Error} ->
+            {error, Error}
     end.
 
+
+%% @doc Tries to parse a event-type object
+unparse(Event) ->
+    #event{
+        srv_id = _SrvId,
+        class = Class,
+        subclass = Sub,
+        type = Type,
+        obj_id = ObjId,
+        body = Body
+    } = Event,
+    Base = [
+        {class, Class},
+        case to_bin(Sub) of
+            <<>> -> [];
+            Sub2 -> {subclass, Sub2}
+        end,
+        case to_bin(Type) of
+            <<>> -> [];
+            Type2 -> {type, Type2}
+        end,
+        case to_bin(ObjId) of
+            <<>> -> [];
+            ObjId2 -> {obj_id, ObjId2}
+        end,
+        case is_map(Body) andalso map_size(Body) > 0 of
+            true -> {body, Body};
+            _ -> []
+        end
+    ],
+    maps:from_list(lists:flatten(Base)).
 
 
 %% ===================================================================

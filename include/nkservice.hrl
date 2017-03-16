@@ -13,16 +13,16 @@
 %% Records
 %% ===================================================================
 
--record(api_req, {
-	srv_id :: nkservice_events:srv_id(),
-	class :: nkservice_api:class(),
-	subclass = <<>> :: nkservice_api:subclass(),
-	cmd :: nkservice_api:cmd(),
-	data = #{} :: map() | list(),
-	tid :: term(),
-	user_id :: binary(),
-	session_id :: binary()
-}).
+% -record(api_req, {
+% 	srv_id :: nkservice_events:srv_id(),
+% 	class :: nkservice_api:class(),
+% 	subclass = <<>> :: nkservice_api:subclass(),
+% 	cmd :: nkservice_api:cmd(),
+% 	data = #{} :: map() | list(),
+% 	tid :: term(),
+% 	user_id :: binary(),
+% 	session_id :: binary()
+% }).
 
 
 -record(event, {

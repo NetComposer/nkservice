@@ -26,21 +26,11 @@
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2, 
 		 service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([error_code/1, error_reason/2]).
--export([api_server_init/2, api_server_terminate/2, 
-		 api_server_syntax/4, api_server_allow/2, 
-		 api_server_cmd/2, api_server_login/2,
-		 api_server_event/3,
-		 api_server_forward_event/2, api_server_get_user_data/1,
-		 api_server_reg_down/3,
-		 api_server_handle_call/3, api_server_handle_cast/2, 
-		 api_server_handle_info/2, api_server_code_change/3]).
--export([api_server_http/4]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
 -type config() :: nkservice:config().
--type error_code() :: nkservice:error().
+%%-type error_code() :: nkservice:error().
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
@@ -74,7 +64,7 @@ plugin_group() ->
 
 
 %% @doc This function, if implemented, can offer a nklib_config:syntax()
-%% that will be checked againts service configuration. Entries passing will be
+%% that will be checked against service configuration. Entries passing will be
 %% updated on the configuration with their parsed values
 -spec plugin_syntax() ->
 	nklib_config:syntax().
@@ -83,7 +73,7 @@ plugin_syntax() ->
 	#{}.
 
 
-%% @doc This function, if implemented, can offer a defaults specificaction
+%% @doc This function, if implemented, can offer a defaults specification
 %% for the syntax processing
 -spec plugin_defaults() ->
 	map().
@@ -94,7 +84,7 @@ plugin_defaults() ->
 
 %% @doc This function can modify the service configuration, and can also
 %% generate a specific plugin configuration (in the second return), that will be 
-%% accesible in the generated module as config_(plugin_name).
+%% accessible in the generated module as config_(plugin_name).
 -spec plugin_config(config(), service()) ->
 	{ok, config()} | {ok, config(), term()} | {error, term()}.
 
@@ -107,8 +97,8 @@ plugin_config(Config, _Service) ->
 -spec plugin_listen(config(), service()) ->
 	[{nkpacket:user_connection(), nkpacket:listener_opts()}].
 
-plugin_listen(Config, #{id:=SrvId}) ->
-	nkservice_util:get_core_listeners(SrvId, Config).
+plugin_listen(_Config, #{id:=_SrvId}) ->
+	[].
 
 
 %% @doc Called during service's start
@@ -135,262 +125,6 @@ plugin_update(Config, _Service) ->
 
 plugin_stop(Config, _Service) ->
 	{ok, Config}.
-
-
-%% ===================================================================
-%% Error Codes
-%% ===================================================================
-
-%% Code ranges
-%% NkService:		100XXX
-%%
-%% NkSIP:			200XXX
-%%
-%% NkMEDIA:			300XXX
-%% 		Janus		301XXX
-%% 		FS         	302XXX
-%% 		KMS			303XXX
-%% 		Room		3040XX
-%%   		Msglog	3041XX
-%% 		Call		305XXX
-%% 		Verto		306XXX
-%% 		JanusProto: 307XXX
-%% 		SIP:		308XXX
-%%
-%% NkCOLLAB			400XXX
-%%		Room		401XXX
-%% 		Call		402XXX
-
-
-%% @doc
--spec error_code(term()) ->
-	{integer(), binary()} | continue.
-
-error_code(normal_termination) 		-> {100001, "Normal termination"};	
-error_code(internal_error)			-> {100002, "Internal error"};
-error_code({internal_error, Ref})	-> {100003, "Internal error: ~s", [Ref]};
-error_code(invalid_state) 			-> {100004, "Invalid state"};
-error_code({invalid_state, St}) 	-> {100004, "Invalid state: ~s", [St]};
-error_code(timeout) 				-> {100005, "Timeout"};
-error_code(not_implemented) 		-> {100006, "Not implemented"};
-error_code({exit, _Exit}) 			-> {100007, "Internal error"};
-error_code(process_not_found) 		-> {100008, "Process not found"};
-error_code(process_down)  			-> {100009, "Process failed"};
-error_code(registered_down) 	    -> {100010, "Registered process stopped"};
-error_code(user_stop) 				-> {100011, "User stop"};
-error_code(member_stop)				-> {100012, "Member stop"};
-error_code(api_stop) 				-> {100013, "API stop received"};
-error_code(not_found) 				-> {100014, "Not found"};
-
-error_code(service_not_found) 		-> {100020, "Service not found"};
-
-error_code(unauthorized) 			-> {100030, "Unauthorized"};
-error_code(not_authenticated)		-> {100031, "Not authenticated"};
-error_code(already_authenticated)	-> {100032, "Already authenticated"};
-error_code(user_not_found)			-> {100033, "User not found"};
-error_code({user_not_found, User})	-> {100033, "User not found: '~s'", [User]};
-error_code(duplicated_session_id)	-> {100034, "Duplicated session"};
-error_code(invalid_session_id)		-> {100035, "Invalid session"};
-error_code(member_not_found)		-> {100036, "Member not found"};
-error_code(invalid_role)			-> {100037, "Invalid role"};
-error_code(invalid_password) 		-> {100038, "Invalid password"};
-
-error_code(invalid_operation) 		-> {100040, "Invalid operation"};
-error_code(invalid_parameters) 		-> {100041, "Invalid parameters"};
-error_code({unknown_command, Txt})	-> {100042, "Unknown command '~s'", [Txt]};
-error_code({invalid_action, Txt})   -> {100043, "Invalid action '~s'", [Txt]};
-error_code({syntax_error, Txt})		-> {100044, "Syntax error: '~s'", [Txt]};
-error_code({missing_field, Txt})	-> {100045, "Missing field: '~s'", [Txt]};
-error_code({invalid_value, V}) 		-> {100046, "Invalid value: '~s'", [V]};
-error_code(invalid_reply) 			-> {100047, "Invalid reply"};
-
-error_code(session_timeout) 		-> {100060, "Session timeout"};
-error_code(session_stop) 			-> {100061, "Session stop"};
-error_code(session_not_found) 		-> {100062, "Session not found"};
-
-error_code(invalid_uri) 			-> {100070, "Invalid Uri"};
-error_code(unknown_peer) 			-> {100071, "Unknown peer"};
-error_code(invalid_json) 			-> {100072, "Invalid JSON"};
-error_code(data_not_available)   	-> {100073, "Data is not available"};
-error_code(already_uploaded)   		-> {100074, "Already uploaded"};
-error_code(file_read_error)   		-> {100075, "File read error"};
-
-
-% error_code({Code, Txt}) when is_integer(Code), is_binary(Txt) ->
-% 	{Code, Txt};
-
-error_code(Other) -> 
-	Ref = nklib_util:uid(),
-	lager:warning("Unrecognized error ~s: ~p", [Ref, nklib_util:to_binary(Other)]),
-	{100003, "Internal error code: ~s", [Ref]}.
-
-
-
-%% @doc
--spec error_reason(nkservice:lang(), nkservice:error()) ->
-	{binary(), binary()} | continue.
-
-error_reason(_Lang, _Error) ->
-	continue.
-
-
-
-
-
-%% ===================================================================
-%% API Server Callbacks
-%% ===================================================================
-
-
-%% @doc Called when a new connection starts
--spec api_server_init(nkpacket:nkport(), state()) ->
-	{ok, state()} | {stop, term()}.
-
-api_server_init(_NkPort, State) ->
-	{ok, State}.
-
-
-%% @doc Called to get the syntax for an external API command
-%% Called from nkservice_api_lib
--spec api_server_syntax(#api_req{}, map(), map(), list()) ->
-	{Syntax::map(), Defaults::map(), Mandatory::list()}.
-
-api_server_syntax(#api_req{class=core}=Req, Syntax, Defaults, Mandatory) ->
-	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkservice_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
-	
-api_server_syntax(_Req, Syntax, Defaults, Mandatory) ->
-	{Syntax, Defaults, Mandatory}.
-
-
-%% @doc Called when a new API command has arrived and called nkservice_api:launch_cmd/6
-%% to authorized the (already parsed) request
-%% Called from nkservice_api_lib
--spec api_server_allow(#api_req{}, state()) ->
-	{boolean(), state()}.
-
-api_server_allow(_Req, State) ->
-	{false, State}.
-
-
-%% @doc Called when a new API command has arrived and is authorized
--spec api_server_cmd(#api_req{}, state()) ->
-	{ok, map(), state()} | {ack, state()} | {error, nkservice:error(), state()}.
-
-api_server_cmd(#api_req{class=core, subclass=Sub, cmd=Cmd}=Req, State) ->
-	nkservice_api:cmd(Sub, Cmd, Req, State);
-
-api_server_cmd(_Req, State) ->
-	{error, not_implemented, State}.
-
-
-%% @doc Used when the standard login apply
-%% Called from nkservice_api or nkservice_api_server_http
--spec api_server_login(map(), state()) ->
-	{true, User::binary(), Meta::map(), state()} | 
-	{false, error_code(), state()} | continue.
-
-api_server_login(_Data, State) ->
-	{false, unauthorized, State}.
-
-
-%% @doc Called when a new event has been received from the remote end
--spec api_server_event(nkservice_event:event(), nkservice_event:body(), state()) ->
-	{ok, state()} | continue().
-
-api_server_event(_Event, _Body, State) ->
-	{ok, State}.
-	
-
-%% @doc Called when the API server receives an event notification from 
-%% nkservice_events. We can send it to the remote side or ignore it.
--spec api_server_forward_event(nkservice_event:event(), state()) ->
-	{ok, nkservice_event:event(), continue()} |
-	{ignore, state()}.
-
-api_server_forward_event(Event, State) ->
-	{ok, Event, State}.
-
-
-%% @doc Called when the API server receives an event notification from 
-%% nkservice_events. We can send it to the remote side or ignore it.
--spec api_server_get_user_data(state()) ->
-	{ok, term()}.
-
-api_server_get_user_data(State) ->
-	{ok, State}.
-
-
-%% @doc Called when the xzservice process receives a handle_call/3.
--spec api_server_reg_down(nklib:link(), Reason::term(), state()) ->
-	{ok, state()} | continue().
-
-api_server_reg_down(_Link, _Reason, State) ->
-    {ok, State}.
-
-
-%% @doc Called when the xzservice process receives a handle_call/3.
--spec api_server_handle_call(term(), {pid(), reference()}, state()) ->
-	{ok, state()} | continue().
-
-api_server_handle_call(Msg, _From, State) ->
-    lager:error("Module nkservice_api_server received unexpected call ~p", [Msg]),
-    {ok, State}.
-
-
-%% @doc Called when the NkApp process receives a handle_cast/3.
--spec api_server_handle_cast(term(), state()) ->
-	{ok, state()} | continue().
-
-api_server_handle_cast(Msg, State) ->
-    lager:error("Module nkservice_api_server received unexpected cast ~p", [Msg]),
-	{ok, State}.
-
-
-%% @doc Called when the NkApp process receives a handle_info/3.
--spec api_server_handle_info(term(), state()) ->
-	{ok, state()} | continue().
-
-
-% api_server_handle_info({'DOWN', Mon, process, Pid, Reason}, State) ->
-% 	{ok, State2} = nkservice_api:handle_down(Mon, Pid, Reason, State),
-% 	{ok, State2};
-
-api_server_handle_info(Msg, State) ->
-    lager:notice("Module nkservice_api_server received unexpected info ~p", [Msg]),
-	{ok, State}.
-
-
--spec api_server_code_change(term()|{down, term()}, state(), term()) ->
-    ok | {ok, service()} | {error, term()} | continue().
-
-api_server_code_change(OldVsn, State, Extra) ->
-	{continue, [OldVsn, State, Extra]}.
-
-
-%% @doc Called when a service is stopped
--spec api_server_terminate(term(), state()) ->
-	{ok, service()}.
-
-api_server_terminate(_Reason, State) ->
-	{ok, State}.
-
-
--type http_method() :: nkservice_api_server_http:method().
--type http_path() :: nkservice_api_server_http:path().
--type http_req() :: nkservice_api_server_http:req().
--type http_reply() :: nkservice_api_server_http:reply().
-
-
-%% @doc called when a new http request has been received
--spec api_server_http(http_method(), http_path(), http_req(), state()) ->
-	http_reply().
-
-api_server_http(_Method, _Path, _Req, State) ->
-	lager:error("HTTP: ~p", [_Path]),
-	{http, 404, [], <<"Not Found">>, State}.
-
-
 
 
 %% ===================================================================
@@ -451,3 +185,6 @@ service_code_change(OldVsn, State, Extra) ->
 
 service_terminate(_Reason, State) ->
 	{ok, State}.
+
+
+

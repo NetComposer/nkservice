@@ -59,8 +59,6 @@ start(Type) ->
 
 %% @private OTP standard start callback
 start(_Type, _Args) ->
-    nkpacket:register_protocol(nkapi, nkservice_api_server),
-    nkpacket:register_protocol(nkapi_c, nkservice_api_client),
     Syntax = nkservice_syntax:app_syntax(),
     Defaults = nkservice_syntax:app_defaults(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of
