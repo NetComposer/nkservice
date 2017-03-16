@@ -56,12 +56,6 @@
 		class => term(),              % Only to find services
 		plugins => [module()],
         callback => module(),         % If present, will be the top-level plugin
-        service_idle_timeout => integer(),
-        service_connect_timeout => integer(),
-        service_sctp_out_streams => integer(),
-        service_sctp_in_streams => integer(),
-        service_no_dns_cache => boolean(),
-        ?TLS_SYNTAX,
         term() => term()              % Any user info
 	}.
 
@@ -271,7 +265,7 @@ put_new(ServiceId, Key, Value) ->
 del(ServiceId, Key) ->
     case nkservice_srv:get_srv_id(ServiceId) of
         {ok, Id} ->
-            nkservice_srv:delete(Id, Key),
+            nkservice_srv:del(Id, Key),
             ok;
         not_found ->
             error(service_not_found)

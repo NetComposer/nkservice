@@ -52,15 +52,7 @@ syntax() ->
         plugins => {list, atom},
         callback => atom,
         debug => fun parse_debug/1,
-        log_level => log_level,     %% TO REMOVE
-
-        service_idle_timeout => pos_integer,
-        service_connect_timeout => nat_integer,
-        service_sctp_out_streams => nat_integer,
-        service_sctp_in_streams => nat_integer,
-        service_no_dns_cache => boolean,
-
-        ?TLS_SYNTAX
+        log_level => log_level     %% TO REMOVE
     }.
 
 
