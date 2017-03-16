@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([app_syntax/0, app_defaults/0, syntax/0]).
--export([parse_fun_listen/3, get_config/1]).
+-export([parse_fun_listen/3]).
 
 -include_lib("nklib/include/nklib.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -107,27 +107,4 @@ do_parse_debug([{Mod, Data}|Rest], Acc) ->
 
 do_parse_debug([Mod|Rest], Acc) ->
     do_parse_debug([{Mod, []}|Rest], Acc).
-
-
-%% @private
-get_config(Spec) ->
-    Keys = lists:filter(
-        fun(Key) ->
-            case atom_to_binary(Key, latin1) of 
-                <<"service_", _/binary>> -> true;
-                <<"tls_", _/binary>> -> true;
-                _ -> false
-            end
-        end,
-        maps:keys(syntax())),
-    Net1 = maps:with(Keys, Spec),
-    Net2 = lists:map(
-        fun({Key, Val}) ->
-            case atom_to_binary(Key, latin1) of 
-                <<"service_", Rest/binary>> -> {binary_to_atom(Rest, latin1), Val};
-                _ -> {Key, Val}
-            end
-        end,
-        maps:to_list(Net1)),
-    #{net_opts=>Net2}.
 

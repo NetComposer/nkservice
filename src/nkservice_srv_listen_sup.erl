@@ -39,10 +39,9 @@ update_transports(Service) ->
         id := Id, 
         name := Name,
         listen := Listen, 
-        listen_ids := ListenIds, 
-        config_nkservice := #{net_opts:=Opts}
+        listen_ids := ListenIds
     } = Service,
-    start_transports1(Id, Name, maps:to_list(Listen), maps:from_list(Opts), ListenIds).
+    start_transports1(Id, Name, maps:to_list(Listen), ListenIds).
 
 
 %% @private
@@ -61,37 +60,36 @@ init({Id, ChildSpecs}) ->
 
 
 %% @private Tries to start all the configured transports for a Server.
--spec start_transports1(nkservice:id(), binary(), list(), map(), map()) ->
+-spec start_transports1(nkservice:id(), binary(), list(), map()) ->
     {ok, map()} | {error, term()}.
 
-start_transports1(Id, Name, [{Plugin, Listen}|Rest], NetOpts, Started) ->
-    case start_transports2(Id, Name, Plugin, Listen, NetOpts, Started) of
+start_transports1(Id, Name, [{Plugin, Listen}|Rest], Started) ->
+    case start_transports2(Id, Name, Plugin, Listen, Started) of
         {ok, Started2} ->
-            start_transports1(Id, Name, Rest, NetOpts, Started2);
+            start_transports1(Id, Name, Rest, Started2);
         {error, Error} ->
             {error, Error}
     end;
 
-start_transports1(_Id, _Name, [], _NetOpts, Started) ->
+start_transports1(_Id, _Name, [], Started) ->
     {ok, Started}.
 
 
 
 %% @private Tries to start all the configured transports for a Server.
--spec start_transports2(nkservice:id(), binary(), atom(), list(), map(), map()) ->
+-spec start_transports2(nkservice:id(), binary(), atom(), list(),  map()) ->
     {ok, map()} | {error, term()}.
 
-start_transports2(Id, Name, Plugin, [{Conns, Opts}|Rest], NetOpts, Started) ->
+start_transports2(Id, Name, Plugin, [{Conns, Opts}|Rest], Started) ->
     % Options that can be configured globally
-    Opts2 = maps:merge(NetOpts, Opts),
-    case start_transports3(Id, Name, Plugin, Conns, Opts2, Started) of
+    case start_transports3(Id, Name, Plugin, Conns, Opts, Started) of
         {ok, Started2} ->
-            start_transports2(Id, Name, Plugin, Rest, NetOpts, Started2);
+            start_transports2(Id, Name, Plugin, Rest, Started2);
         {error, Error} ->
             {error, Error}
     end;
 
-start_transports2(_Id, _Name, _Plugin, [], _NetOpts, Started) ->
+start_transports2(_Id, _Name, _Plugin, [], Started) ->
     {ok, Started}.
 
 

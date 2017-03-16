@@ -55,6 +55,10 @@ call(Dest, Msg, Timeout) ->
     end.
 
 
+
+
+
+
 %% @doc
 parse_syntax(Spec, Syntax, Defaults) ->
     Opts = #{return=>map, defaults=>Defaults},
@@ -72,7 +76,8 @@ parse_transports(Spec) ->
     case nkpacket:multi_resolve(Spec, #{resolve_type=>listen}) of
         {ok, List} ->
             {ok, List};
-        _ ->
+        Other ->
+            lager:notice("Error in parse_transports (~p): ~p", [Spec, Other]),
             error
     end.
 

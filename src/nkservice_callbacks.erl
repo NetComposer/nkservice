@@ -89,7 +89,7 @@ plugin_defaults() ->
 	{ok, config()} | {ok, config(), term()} | {error, term()}.
 
 plugin_config(Config, _Service) ->
-	{ok, Config, nkservice_syntax:get_config(Config)}.
+	{ok, Config, #{}}.
 
 
 %% @doc This function, if implemented, allows to add listening transports.
