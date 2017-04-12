@@ -55,10 +55,6 @@ call(Dest, Msg, Timeout) ->
     end.
 
 
-
-
-
-
 %% @doc
 parse_syntax(Spec, Syntax, Defaults) ->
     Opts = #{return=>map, defaults=>Defaults},
@@ -85,6 +81,9 @@ parse_transports(Spec) ->
 %% @doc Generates the service id from any name
 -spec make_id(nkservice:name()) ->
     nkservice:id().
+
+make_id(root) ->
+    root;
 
 make_id(Name) ->
     list_to_atom(
