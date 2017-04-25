@@ -90,7 +90,7 @@
 -type user_id() :: binary().
 -type user_session() :: binary().
 
--type event() :: nkservice_events:event().
+-type event() :: nkevent:event().
 
 
 
