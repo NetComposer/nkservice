@@ -59,9 +59,13 @@ start(Type) ->
 
 %% @private OTP standard start callback
 start(_Type, _Args) ->
-    Syntax = nkservice_syntax:app_syntax(),
-    Defaults = nkservice_syntax:app_defaults(),
-    case nklib_config:load_env(?APP, Syntax, Defaults) of
+    Syntax = #{
+        log_path => binary,
+        '__defatuls' => #{
+            log_path => <<"log">>
+        }
+    },
+    case nklib_config:load_env(?APP, Syntax) of
         {ok, _} ->
             file:make_dir(get(log_path)),
             {ok, Pid} = nkservice_sup:start_link(),

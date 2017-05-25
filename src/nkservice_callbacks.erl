@@ -24,16 +24,20 @@
 -export([plugin_deps/0, plugin_group/0, 
 	     plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
--export([service_init/2, service_handle_call/3, service_handle_cast/2, 
-		 service_handle_info/2, service_code_change/3, service_terminate/2]).
+-export([service_init/2, service_handle_call/3, service_handle_cast/2,
+         service_handle_info/2, service_code_change/3, service_terminate/2]).
+-export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1,
+         service_api_event/2]).
 -export_type([continue/0]).
+
+-include_lib("nkpacket/include/nkpacket.hrl").
+-include_lib("nkevent/include/nkevent.hrl").
+-include("nkservice.hrl").
 
 -type continue() :: continue | {continue, list()}.
 -type config() :: nkservice:config().
+-type req() :: #nkreq{}.
 %%-type error_code() :: nkservice:error().
-
--include_lib("nkpacket/include/nkpacket.hrl").
--include("nkservice.hrl").
 
 
 
@@ -127,6 +131,7 @@ plugin_stop(Config, _Service) ->
 	{ok, Config}.
 
 
+
 %% ===================================================================
 %% Service Callbacks
 %% ===================================================================
@@ -185,6 +190,47 @@ service_code_change(OldVsn, State, Extra) ->
 
 service_terminate(_Reason, State) ->
 	{ok, State}.
+
+
+
+%% ===================================================================
+%% Service API
+%% ===================================================================
+
+%% @doc Called to get the syntax for an external API command
+-spec service_api_syntax(nklib_syntax:syntax(), req()) ->
+    {nklib_syntax:syntax(), req()}.
+
+service_api_syntax(Req, SyntaxAcc) ->
+    {SyntaxAcc, Req}.
+
+
+%% @doc Called to authorize process a new API command
+-spec service_api_allow(req()) ->
+    {boolean(), req()}.
+
+service_api_allow(Req) ->
+    {false, Req}.
+
+
+%% @doc Called to process a new authorized API command
+%% For slow requests, reply ack, and the ServiceModule:reply/2.
+-spec service_api_cmd(req()) ->
+    {ok, Reply::map(), req()} | {ack, req()} |
+    {login, Reply::map(), User::nkservice:user_id(), Meta::nkservice:user_meta(), req()} |
+    {error, nkservice:error(), state()}.
+
+service_api_cmd(Req) ->
+    {error, not_implemented, Req}.
+
+
+%% @doc Called when the client sent an authorized event to us
+%% For slow requests, reply ack, and the ServiceModule:reply/2.
+-spec service_api_event(#nkevent{}, req()) ->
+    {ok, req()} |  {error, nkservice:error(), state()}.
+
+service_api_event(_Event, Req) ->
+    {ok, Req}.
 
 
 

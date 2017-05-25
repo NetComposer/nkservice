@@ -42,7 +42,13 @@
 config_service(Config, #{id:=Id}=Service) ->
     try
         Config2 = maps:merge(#{debug=>[]}, Config),
-        Syntax = nkservice_syntax:syntax(), 
+        Syntax = #{
+            class => any,
+            plugins => {list, atom},
+            callback => atom,
+            debug => fun parse_debug/1,
+            log_level => log_level     %% TO REMOVE
+        },
         Config3 = case nkservice_util:parse_syntax(Config2, Syntax, #{}) of
             {ok, Parsed} -> Parsed;
             {error, Error1} -> throw(Error1)
@@ -489,4 +495,32 @@ plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
 plugin_callbacks_syntax([], _, Map) ->
     Map.
 
+
+%% @private
+parse_debug(Term) when is_list(Term) ->
+    do_parse_debug(Term, []);
+
+parse_debug(Term) ->
+    parse_debug([Term]).
+
+
+%% @private
+do_parse_debug([], Acc) ->
+    {ok, Acc};
+
+do_parse_debug([{Mod, Data}|Rest], Acc) ->
+    Mod2 = nklib_util:to_atom(Mod),
+    do_parse_debug(Rest, [{Mod2, Data}|Acc]);
+
+
+% case code:ensure_loaded(Mod2) of
+%     {module, Mod2} ->
+%         do_parse_debug(Rest, [{Mod, Data}|Acc]);
+%     _ ->
+%         lager:warning("Module ~p could not be loaded", [Mod2]),
+%         error
+% end;
+
+do_parse_debug([Mod|Rest], Acc) ->
+    do_parse_debug([{Mod, []}|Rest], Acc).
 

@@ -26,8 +26,9 @@
 -export([get_listeners/2]).
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
 -export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
--export_type([lang/0, error/0]).
--export_type([user_id/0, user_session/0, event/0]).
+-export_type([error/0, event/0]).
+-export_type([user_id/0, user_meta/0, session_id/0]).
+-export_type([req_cmd/0, req_data/0, req_tid/0]).
 
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -39,6 +40,8 @@
 
 %% Service's id must be an atom
 -type id() :: atom().
+
+-type service_select() :: id() | name().
 
 %% Service's name
 -type name() :: term().
@@ -81,14 +84,12 @@
 %% See nkservice_callbacks:error_code/1
 -type error() :: term().
 
-%% See nkservice_callbacks:error_code/1
--type lang() :: any | atom().
-
-
--type service_select() :: id() | name().
-
 -type user_id() :: binary().
--type user_session() :: binary().
+-type user_meta() :: map().
+-type session_id() :: binary().
+-type req_cmd() :: binary().
+-type req_data() :: map() | list().
+-type req_tid() :: integer() | binary().
 
 -type event() :: nkevent:event().
 

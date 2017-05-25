@@ -13,8 +13,7 @@
         luerl,
         lager,
         nkpacket,
-        hackney
-        % nkdocker
+        nkevent
     ]},
     {env, [
     ]}
