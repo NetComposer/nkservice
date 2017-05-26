@@ -24,6 +24,7 @@
 -export([plugin_deps/0, plugin_group/0, 
 	     plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
+-export([error/1, error/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2,
          service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([service_api_syntax/2, service_api_allow/2, service_api_cmd/2,
@@ -129,6 +130,87 @@ plugin_update(Config, _Service) ->
 
 plugin_stop(Config, _Service) ->
 	{ok, Config}.
+
+
+
+%% ===================================================================
+%% Errors Callbacks
+%% ===================================================================
+
+
+
+%% @doc
+-spec error(nkservice:lang(), nkservice:error()) ->
+    atom() |
+    tuple() |
+    list() |
+    {atom(), string()} |
+    {Fmt::string(), Vals::string()} |
+    {atom(), Fmt::string(), Vals::string()}.
+
+error(SrvId, Error) ->
+    SrvId:error(Error).
+
+
+%% @doc
+-spec error(nkservice:error()) ->
+    atom() |
+    tuple() |
+    list() |
+    {atom(), string()} |
+    {Fmt::string(), Vals::string()} |
+    {atom(), Fmt::string(), Vals::string()}.
+
+error(already_authenticated)	-> "Already authenticated";
+error(already_started)	        -> "Already started";
+error(already_uploaded)   		-> "Already uploaded";
+error(api_delete) 				-> "API delete received";
+error(api_stop) 				-> "API stop received";
+error(data_not_available)   	-> "Data is not available";
+error(destionation_not_found)   -> "Destination not found";
+error(duplicated_session_id)	-> "Duplicated session";
+error(file_read_error)   		-> "File read error";
+error(internal_error)			-> "Internal error";
+error({internal_error, Ref})	-> {"Internal error: ~s", [Ref]};
+error({invalid_action, Txt})    -> {"Invalid action '~s'", [Txt]};
+error({invalid_state, St}) 	    -> {"Invalid state: ~s", [St]};
+error({invalid_value, V}) 		-> {"Invalid value: '~s'", [V]};
+error(invalid_json) 			-> "Invalid JSON";
+error(invalid_operation) 		-> "Invalid operation";
+error(invalid_parameters) 		-> "Invalid parameters";
+error(invalid_password) 		-> "Invalid password";
+error(invalid_reply) 			-> "Invalid reply";
+error(invalid_role)			    -> "Invalid role";
+error(invalid_session_id)		-> "Invalid session";
+error(invalid_state) 			-> "Invalid state";
+error(invalid_uri) 			    -> "Invalid Uri";
+error(invalid_object_id) 		-> "Invalid ObjectId";
+error({missing_field, Txt})	    -> {"Missing field: '~s'", [Txt]};
+error(missing_id)				-> "Missing Id";
+error(no_usages)           		-> "No remaining usages";
+error(normal)           		-> "Normal termination";
+error(normal_termination) 		-> "Normal termination";
+error(not_authenticated)		-> "Not authenticated";
+error(not_found) 				-> "Not found";
+error(not_started) 				-> "Not yet started";
+error(not_implemented) 		    -> "Not implemented";
+error(process_down)  			-> "Process failed";
+error(process_not_found) 		-> "Process not found";
+error(registered_down) 	        -> "Registered process stopped";
+error(service_not_found) 		-> "Service not found";
+error(session_not_found) 		-> "Session not found";
+error(session_stop) 			-> "Session stop";
+error(session_timeout) 		    -> "Session timeout";
+error({syntax_error, Txt})		-> {"Syntax error: '~s'", [Txt]};
+error(timeout) 				    -> "Timeout";
+error(unauthorized) 			-> "Unauthorized";
+error({unknown_command, Txt})	-> {"Unknown command '~s'", [Txt]};
+error(unknown_peer) 			-> "Unknown peer";
+error(unknown_op)   			-> "Unknown operation";
+error(user_not_found)			-> "User not found";
+error({user_not_found, User})	-> {"User not found: '~s'", [User]};
+error(user_stop) 				-> "User stop";
+error(_)   		                -> continue.
 
 
 

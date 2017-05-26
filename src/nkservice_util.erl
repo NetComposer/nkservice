@@ -22,6 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([call/2, call/3]).
+-export([error/2]).
 -export([parse_syntax/3, parse_transports/1]).
 -export([make_id/1, update_uuid/2]).
 -export([get_debug_info/2]).
@@ -52,6 +53,64 @@ call(Dest, Msg, Timeout) ->
             {error, process_not_found};
         Other ->
             Other
+    end.
+
+
+
+
+%% @private
+-spec error(nkservice:id(), nkservice:error()) ->
+    {binary(), binary()}.
+
+error(SrvId, Error) ->
+    {Code, Reason} = case SrvId:error(SrvId, Error) of
+        {ErrCode, Fmt, List} when is_list(Fmt), is_list(List) ->
+            {ErrCode, get_error_fmt(Fmt, List)};
+        {Fmt, List} when is_list(Fmt), is_list(List) ->
+            {Error, get_error_fmt(Fmt, List)};
+        {ErrCode, ErrReason} when is_list(ErrReason); is_binary(ErrReason) ->
+            {ErrCode, ErrReason};
+        ErrReason when is_list(ErrReason) ->
+            {Error, ErrReason};
+        continue ->
+            % This error is not in any table, but it can be an already processed one
+            case Error of
+                {exit, Exit} ->
+                    Ref = make_ref(),
+                    lager:notice("Internal error ~p: ~p", [Ref, Exit]),
+                    {internal_error, get_error_fmt("Internal error '~p'", [Ref])};
+                {ErrCode, ErrReason} when is_binary(ErrCode), is_binary(ErrReason) ->
+                    {ErrCode, ErrReason};
+                _ ->
+                    lager:notice("Unrecognized error: ~p", [Error]),
+                    {Error, <<>>}
+            end;
+        _ ->
+            {Error, <<>>}
+    end,
+    {get_error_code(Code), to_bin(Reason)}.
+
+
+%% @private
+get_error_code(Term) when is_atom(Term); is_binary(Term); is_list(Term) ->
+    to_bin(Term);
+
+get_error_code(Tuple) when is_tuple(Tuple) ->
+    get_error_code(element(1, Tuple));
+
+get_error_code(Error) ->
+    lager:notice("Invalid format in API reason: ~p", [Error]),
+    <<"internal_error">>.
+
+
+%% @private
+get_error_fmt(Fmt, List) ->
+    case catch io_lib:format(Fmt, List) of
+        {'EXIT', _} ->
+            lager:notice("Invalid format API reason: ~p, ~p", [Fmt, List]),
+            <<>>;
+        Val ->
+            list_to_binary(Val)
     end.
 
 
@@ -131,25 +190,6 @@ save_uuid(Path, Name, UUID) ->
             lager:warning("Could not write file ~s: ~p", [Path, Error]),
             ok
     end.
-
-
-%%%% @private
-%%-spec error_code(nkservice:id(), nkservice:error()) ->
-%%    {integer(), binary()}.
-%%
-%%error_code(SrvId, Error) ->
-%%    case SrvId:error_code(Error) of
-%%        {Code, Text} ->
-%%            {Code, to_bin(Text)};
-%%        {Code, Fmt, List} ->
-%%            case catch io_lib:format(nklib_util:to_list(Fmt), List) of
-%%                {'EXIT', _} ->
-%%                    {Code, <<"Invalid format: ", (to_bin(Fmt))/binary>>};
-%%                Val ->
-%%                    {Code, list_to_binary(Val)}
-%%            end
-%%    end.
-
 
 
 
