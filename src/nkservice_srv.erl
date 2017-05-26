@@ -224,7 +224,7 @@ init(#{id:=Id, name:=Name}=Service) ->
                     % Someone could be listening (like events)
                     nkservice_util:notify_updated_service(Id),
                     %% Ensure all atoms are loaded
-                    %% _ = Id:api_server_syntax(#nkapi_req{class=none}, #{}, #{}, []),
+                    %% _ = Id:api_server_syntax(#nkreq{class=none}, #{}, #{}, []),
                     {ok, #state{id=Id, service=Service2, user=User}};
                 {stop, Reason} ->
                     {stop, Reason}

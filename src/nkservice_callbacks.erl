@@ -26,7 +26,7 @@
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2,
          service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1,
+-export([service_api_syntax/2, service_api_allow/2, service_api_cmd/2,
          service_api_event/2]).
 -export_type([continue/0]).
 
@@ -37,7 +37,7 @@
 -type continue() :: continue | {continue, list()}.
 -type config() :: nkservice:config().
 -type req() :: #nkreq{}.
-%%-type error_code() :: nkservice:error().
+-type state() :: map().
 
 
 
@@ -136,9 +136,7 @@ plugin_stop(Config, _Service) ->
 %% Service Callbacks
 %% ===================================================================
 
-
 -type service() :: nkservice:service().
--type state() :: map().
 
 %% @doc Called when a new service starts
 -spec service_init(service(), state()) ->
@@ -201,27 +199,28 @@ service_terminate(_Reason, State) ->
 -spec service_api_syntax(nklib_syntax:syntax(), req()) ->
     {nklib_syntax:syntax(), req()}.
 
-service_api_syntax(Req, SyntaxAcc) ->
+service_api_syntax(SyntaxAcc, Req) ->
     {SyntaxAcc, Req}.
 
 
 %% @doc Called to authorize process a new API command
--spec service_api_allow(req()) ->
-    {boolean(), req()}.
+-spec service_api_allow(req(), state()) ->
+    {boolean(), state()} | {true, req(), state()}.
 
-service_api_allow(Req) ->
-    {false, Req}.
+service_api_allow(_Req, State) ->
+    {false, State}.
 
 
 %% @doc Called to process a new authorized API command
 %% For slow requests, reply ack, and the ServiceModule:reply/2.
--spec service_api_cmd(req()) ->
-    {ok, Reply::map(), req()} | {ack, req()} |
-    {login, Reply::map(), User::nkservice:user_id(), Meta::nkservice:user_meta(), req()} |
+-spec service_api_cmd(req(), state()) ->
+    {ok, Reply::map(), state()} |
+    {ack, state()} |
+    {login, Reply::map(), User::nkservice:user_id(), Meta::nkservice:user_meta(), state()} |
     {error, nkservice:error(), state()}.
 
-service_api_cmd(Req) ->
-    {error, not_implemented, Req}.
+service_api_cmd(_Req, State) ->
+    {error, not_implemented, State}.
 
 
 %% @doc Called when the client sent an authorized event to us

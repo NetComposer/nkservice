@@ -21,7 +21,7 @@
 %% @doc Implementation of the NkAPI External Interface (server)
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([api/1]).
+-export([api/2, event/2]).
 
 -include_lib("nkevent/include/nkevent.hrl").
 -include("nkservice.hrl").
@@ -54,7 +54,7 @@
 %% ===================================================================
 
 -type req() :: #nkreq{}.
-
+-type state() :: map().
 
 
 %% ===================================================================
@@ -67,37 +67,59 @@
 %% If it is valid, calls SrvId:api_server_allow() to authorized the request
 %% If is is authorized, calls SrvId:api_server_cmd() to process the request.
 %% It received some state (usually from api_server_cmd/5) that can be updated
--spec api(req()) ->
-    {ok, Reply::term(), req()} |
-    {ack, req()} |
-    {login, Reply::term(), req()} |
-    {error, nkservice:error(), req()}.
+-spec api(req(), state()) ->
+    {ok, Reply::term(), [binary()], state()} | {ok, state()} |
+    {ack, [binary()], state()} |
+    {login, Reply::term(), nkservice:user_id(), nkservice:user_meta(), [binary()], state()} |
+    {error, nkservice:error(), state()}.
 
-api(#nkreq{cmd = <<"event">>}=Req) ->
-    process_event(Req);
-
-api(Req) ->
+api(Req, State) ->
     #nkreq{srv_id=SrvId, data=Data} = Req,
-    {Syntax, Req2} = SrvId:service_api_syntax(Req, #{}),
+    {Syntax, Req2} = SrvId:service_api_syntax(#{}, Req),
     ?DEBUG("parsing syntax ~p (~p)", [Data, Syntax], Req),
     case nklib_syntax:parse(Data, Syntax) of
         {ok, Parsed, Unknown} ->
-            Req3 = Req2#nkreq{data=Parsed, unknown_fields=Unknown},
-            case SrvId:service_api_allow(Req3) of
-                {true, Req4} ->
-                    process_api(Req4);
-                {false, Req4} ->
-                    ?DEBUG("request NOT allowed", [], Req4),
-                    {error, unauthorized, Req4}
+            Req3 = Req2#nkreq{data=Parsed},
+            case SrvId:service_api_allow(Req3, State) of
+                {true, State4} ->
+                    process_api(Req3, Unknown, State4);
+                {true, Req4, State4} ->
+                    process_api(Req4, Unknown, State4);
+                {false, State2} ->
+                    ?DEBUG("request NOT allowed", [], Req3),
+                    {error, unauthorized, State2}
             end;
         {error, {syntax_error, Error}} ->
-            {error, {syntax_error, Error}, Req2};
+            {error, {syntax_error, Error}, State};
         {error, {missing_mandatory_field, Field}} ->
-            {error, {missing_field, Field}, Req2};
+            {error, {missing_field, Field}, State};
         {error, Error} ->
-            {error, Error, Req2}
+            {error, Error, Req2, State}
     end.
 
+
+%% @doc Process event sent from client
+-spec event(req(), state()) ->
+    {ok, state()} | {error, nkservice:error(), state()}.
+
+event(Req, State) ->
+    #nkreq{srv_id=SrvId, data=Data} = Req,
+    ?DEBUG("parsing event ~p", [Data], Req),
+    case nkevent_util:parse(Data#{srv_id=>SrvId}) of
+        {ok, Event} ->
+            Req2 = Req#nkreq{data=Event},
+            case SrvId:service_api_allow(Req2, State) of
+                {true, State3} ->
+                    process_event(Event, Req2, State3);
+                {true, Req3, State3} ->
+                    process_event(Event, Req3, State3);
+                {false, State2} ->
+                    ?DEBUG("sending of event NOT authorized", [], Req2),
+                    {error, unauthorized, State2}
+            end;
+        {error, Error} ->
+            {error, Error, State}
+    end.
 
 
 %% ===================================================================
@@ -105,40 +127,23 @@ api(Req) ->
 %% ===================================================================
 
 %% @private
-process_api(Req) ->
+process_api(Req, Unknown, State) ->
     #nkreq{srv_id=SrvId} = Req,
     ?DEBUG("request allowed", [], Req),
-    case SrvId:service_api_cmd(Req) of
-        {ok, Reply, Req2} ->
-            {ok, Reply, Req2};
-        {login, Reply, UserId, Meta, Req2} when UserId /= <<>> ->
-            Req3 = Req2#nkreq{user_id=UserId, user_meta=Meta},
-            {login, Reply, Req3};
-        {ack, Req2} ->
-            {ack, Req2};
-        {error, Error, Req2} ->
-            {error, Error, Req2}
+    case SrvId:service_api_cmd(Req, State) of
+        {ok, Reply, State2} ->
+            {ok, Reply, Unknown, State2};
+        {login, Reply, UserId, Meta, State2} when UserId /= <<>> ->
+            {login, Reply, UserId, Meta, Unknown, State2};
+        {ack, State2} ->
+            {ack, Unknown, State2};
+        {error, Error, State2} ->
+            {error, Error, State2}
     end.
 
 
-%% @doc Process event sent from client
--spec process_event(req()) ->
-    {ok, req()} | {error, nkservice:error(), req()}.
-
-process_event(Req) ->
-    #nkreq{srv_id=SrvId, data=Data} = Req,
-    ?DEBUG("parsing event ~p", [Data], Req),
-    case nkevent_util:parse(Data#{srv_id=>SrvId}) of
-        {ok, Event} ->
-            Req2 = Req#nkreq{data=Event},
-            case SrvId:service_api_allow(Req2) of
-                {true, Req2} ->
-                    ?DEBUG("event allowed", [], Req),
-                    SrvId:service_api_event(Event, Req2);
-                {false, Req2} ->
-                    ?DEBUG("sending of event NOT authorized", [], Req),
-                    {error, unauthorized, Req2}
-            end;
-        {error, Error} ->
-            {error, Error, Req}
-    end.
+%% @private
+process_event(Event, Req, State) ->
+    ?DEBUG("event allowed", [], Req),
+    nkevent:send(Event),
+    {ok, State}.

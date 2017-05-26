@@ -21,10 +21,10 @@
     session_meta = #{} :: map(),
     cmd = <<>> :: nkservice:req_cmd(),
     data = #{} :: nkservice:req_data(),
-    unknown_fields = [] :: [binary()],
+    % unknown_fields = [] :: [binary()],
     user_id = <<>> :: nkservice:user_id(),      % <<>> if not authenticated
     user_meta = #{} :: nkservice:user_meta(),
-    state = #{} :: map(),
+    req_state :: term(),
     debug = false :: boolean()
 }).
 
