@@ -18,36 +18,37 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Default callbacks
--module(nkservice_webserver).
+%% @doc Web utilities
+-module(nkservice_webserver_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_syntax/0, plugin_listen/2]).
+-export([parse_web_server/1, get_web_servers/4]).
+
 
 
 %% ===================================================================
-%% Plugin Callbacks
+%% Util
 %% ===================================================================
 
-plugin_deps() ->
-	[].
+
+%% @private
+parse_web_server({parsed_url, Multi}) ->
+    {ok, {parsed_url, Multi}};
+
+parse_web_server(Url) ->
+    Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
+    case nkpacket:multi_resolve(Url, Opts) of
+        {ok, List} -> {ok, {parsed_url, List}};
+        _ -> error
+    end.
 
 
-plugin_syntax() ->
-    nkpacket_util:get_plugin_net_syntax(#{
-        webserver_url => fun nkservice_webserver_util:parse_web_server/1,
-        webserver_path => binary
-    }).
-
-
-plugin_listen(Config, #{id:=SrvId}) ->
-    {parsed_url, WebSrv} = maps:get(webserver_url, Config, {parsed_url, []}),
-    Path = case Config of
-        #{webserver_path:=UserPath} ->
-            UserPath;
-        _ ->
-            Priv = list_to_binary(code:priv_dir(nkapi)),
-            <<Priv/binary, "/www">>
-    end,
-    nkservice_webserver_util:get_web_servers(SrvId, WebSrv, Path, Config).
+%% @private
+get_web_servers(SrvId, List, Path, Config) ->
+    NetOpts = nkpacket_util:get_plugin_net_opts(Config),
+    WebOpts2 = NetOpts#{
+        class => {nkservice_webserver, SrvId},
+        http_proto => {static, #{path=>Path, index_file=><<"index.html">>}}
+    },
+    [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- List].
 
 
