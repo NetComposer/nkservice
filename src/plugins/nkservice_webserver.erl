@@ -40,7 +40,7 @@ plugin_syntax() ->
 
 
 plugin_listen(Config, #{id:=SrvId}) ->
-    {parsed_url, WebSrv} = maps:get(webserver_url, Config, {parsed_url, []}),
+    {parsed_urls, WebSrv} = maps:get(webserver_url, Config, {parsed_urls, []}),
     Path = case Config of
         #{webserver_path:=UserPath} ->
             UserPath;

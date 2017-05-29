@@ -18,26 +18,25 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Web utilities
+%% @doc Default callbacks
 -module(nkservice_webserver_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([parse_web_server/1, get_web_servers/4]).
 
 
-
 %% ===================================================================
-%% Util
+%% Webserver & rest
 %% ===================================================================
 
 
 %% @private
-parse_web_server({parsed_url, Multi}) ->
-    {ok, {parsed_url, Multi}};
+parse_web_server({parsed_urls, Multi}) ->
+    {ok, {parsed_urls, Multi}};
 
 parse_web_server(Url) ->
     Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
-        {ok, List} -> {ok, {parsed_url, List}};
+        {ok, List} -> {ok, {parsed_urls, List}};
         _ -> error
     end.
 
@@ -50,5 +49,3 @@ get_web_servers(SrvId, List, Path, Config) ->
         http_proto => {static, #{path=>Path, index_file=><<"index.html">>}}
     },
     [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- List].
-
-
