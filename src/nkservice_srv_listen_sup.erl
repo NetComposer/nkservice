@@ -121,37 +121,60 @@ start_transports3(_Id, _Name, _Plugin, [], _Opts, Started) ->
 
 add_transport(SrvId, Name, Spec) ->
     SupPid = get_pid(SrvId),
-    {TranspId, _Ref} = element(1, Spec),
-    case find_started(supervisor:which_children(SupPid), TranspId) of
-        false ->
-            case supervisor:start_child(SupPid, Spec) of
-                {ok, Pid} ->
-                    {registered_name, ListenId} = process_info(Pid, registered_name),
-                    {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
-                    lager:info("Service '~s' started listener on ~p:~p:~p (~p)", 
-                               [Name, Transp, Ip, Port, Proto]),
-                    {ok, ListenId};
-                {error, {Error, _}} -> 
-                    {error, Error};
-                {error, Error} -> 
-                    {error, Error}
-            end;
-        {true, Pid} ->
-            lager:info("Skipping started transport ~p", [TranspId]),
+    case supervisor:start_child(SupPid, Spec) of
+        {ok, Pid} ->
             {registered_name, ListenId} = process_info(Pid, registered_name),
-            {ok, ListenId}
+            {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
+            lager:info("Service '~s' started listener on ~p:~p:~p (~p)",
+                       [Name, Transp, Ip, Port, Proto]),
+            {ok, ListenId};
+        {error, {Error, _}} ->
+            {error, Error};
+        {error, Error} ->
+            {error, Error}
     end.
 
 
-%% @private
-find_started([], _Conn) ->
-    false;
+%%%% @private Starts a new transport control process under this supervisor
+%%-spec add_transport(nkservice:id(), binary(), any()) ->
+%%    {ok, nkpacket:listen_id()} | {error, term()}.
+%%
+%%add_transport(SrvId, Name, Spec) ->
+%%    SupPid = get_pid(SrvId),
+%%    % {Conn, _Ref} = element(1, Spec),
+%%    {_, _, [NkPort]} = element(2, Spec),
+%%    TranspId = erlang:phash2(NkPort),
+%%    case find_started(supervisor:which_children(SupPid), TranspId) of
+%%        false ->
+%%            case supervisor:start_child(SupPid, Spec) of
+%%                {ok, Pid} ->
+%%                    {registered_name, ListenId} = process_info(Pid, registered_name),
+%%                    {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
+%%                    lager:info("Service '~s' started listener on ~p:~p:~p (~p)",
+%%                        [Name, Transp, Ip, Port, Proto]),
+%%                    {ok, ListenId};
+%%                {error, {Error, _}} ->
+%%                    {error, Error};
+%%                {error, Error} ->
+%%                    {error, Error}
+%%            end;
+%%        {true, Pid} ->
+%%            lager:info("Skipping started transport ~p", [TranspId]),
+%%            {registered_name, ListenId} = process_info(Pid, registered_name),
+%%            {ok, ListenId}
+%%    end.
 
-find_started([{{Conn, _}, Pid, worker, _}|_], Conn) when is_pid(Pid) ->
-    {true, Pid};
 
-find_started([_|Rest], Conn) ->
-    find_started(Rest, Conn).
+
+%%%% @private
+%%find_started([], _Conn) ->
+%%    false;
+%%
+%%find_started([{{Conn, _}, Pid, worker, _}|_], Conn) when is_pid(Pid) ->
+%%    {true, Pid};
+%%
+%%find_started([_|Rest], Conn) ->
+%%    find_started(Rest, Conn).
 
 
 %% @private Gets the service's transport supervisor's pid()
@@ -160,6 +183,7 @@ find_started([_|Rest], Conn) ->
 
 get_pid(SrvId) ->
     nklib_proc:whereis_name({?MODULE, SrvId}).
+
 
 
 

@@ -22,23 +22,19 @@
 -module(nkservice_rest_http).
 -export([get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_peer/1]).
 -export([init/2, terminate/3]).
--export_type([method/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
+-export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
 
 -define(MAX_BODY, 10000000).
 
-%%-include("nkapi.hrl").
-%%-include_lib("nkservice/include/nkservice.hrl").
-
 
 -define(DEBUG(Txt, Args, State),
-    case erlang:get(nkapi_server_debug) of
+    case erlang:get(nkservice_rest_debug) of
         true -> ?LLOG(debug, Txt, Args, State);
         _ -> ok
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkAPI API Server HTTP (~s) "++Txt,
-        [State#state.remote|Args])).
+    lager:Type("NkSERVICE REST HTTP (~s) "++Txt, [State#state.remote|Args])).
 
 
 
@@ -47,7 +43,7 @@
 %% ===================================================================
 
 
--type method() :: get | post | head | delete | put.
+-type method() :: get | post | head | delete | put | binary().
 
 -type code() :: 100 .. 599.
 
@@ -67,11 +63,13 @@
     req :: term(),
     method :: binary(),
     path :: [binary()],
-    remote :: binary(),
-    user_state :: nkapi:user_state()
+    remote :: binary()
 }).
 
 -type req() :: #state{}.
+
+-type reply() ::
+    {http, code(), [header()], body(), state()}.
 
 
 %% ===================================================================
@@ -82,8 +80,8 @@
 -spec get_body(req(), #{max_size=>integer(), parse=>boolean()}) ->
     binary() | map().
 
-get_body(#state{req=Req}, Opts) ->
-    CT = get_ct(Req),
+get_body(#state{req=Req}=State, Opts) ->
+    CT = get_ct(State),
     MaxBody = maps:get(max_size, Opts, 100000),
     case cowboy_req:body_length(Req) of
         BL when is_integer(BL), BL =< MaxBody ->
@@ -161,7 +159,14 @@ init(Req, [{srv_id, SrvId}]) ->
         (nklib_util:to_host(Ip))/binary, ":",
         (to_bin(Port))/binary
     >>,
-    Method = cowboy_req:method(Req),
+    Method = case cowboy_req:method(Req) of
+        <<"GET">> -> get;
+        <<"POST">> -> post;
+        <<"PUT">> -> put;
+        <<"DELETE">> -> delete;
+        <<"HEAD">> -> head;
+        OtherMethod -> OtherMethod
+    end,
     Path = case cowboy_req:path_info(Req) of
         [<<>>|Rest] -> Rest;
         Rest -> Rest
@@ -171,12 +176,12 @@ init(Req, [{srv_id, SrvId}]) ->
         req = Req,
         method = Method,
         path = Path,
-        remote = Remote,
-        user_state = #{}
+        remote = Remote
     },
+    UserState = #{},
     set_log(State),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], State),
-    {http, Code, Hds, Body, State} = handle(nkservice_rest_http, [Method, Path], State),
+    {http, Code, Hds, Body, _UserState2} = SrvId:nkservice_rest_http(Method, Path, State, UserState),
     {ok, cowboy_req:reply(Code, Hds, Body, Req), []}.
 
 
@@ -201,9 +206,6 @@ set_log(#state{srv_id=SrvId}=State) ->
     State.
 
 
-%% @private
-handle(Fun, Args, State) ->
-    nklib_gen_server:handle_any(Fun, Args++[State], State, #state.srv_id, #state.user_state).
 
 %% @private
 to_bin(Term) -> nklib_util:to_binary(Term).

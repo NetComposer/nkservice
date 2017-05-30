@@ -25,9 +25,13 @@
 -export([nkservice_rest_init/2, nkservice_rest_text/3,
          nkservice_rest_handle_call/3, nkservice_rest_handle_cast/2,
          nkservice_rest_handle_info/2, nkservice_rest_terminate/2]).
+-export([nkservice_rest_http/4]).
 
 
 -include_lib("nklib/include/nklib.hrl").
+
+-define(LLOG(Type, Txt, Args),lager:Type("NkSERVICE REST "++Txt, Args)).
+
 
 %% ===================================================================
 %% Plugin Callbacks
@@ -59,6 +63,10 @@ plugin_listen(Config, #{id:=SrvId}) ->
 
 -type state() :: nkapi_server:user_state().
 -type continue() :: nkservice_callbacks:continue().
+-type http_method() :: nkservice_rest_http:method().
+-type http_path() :: nkservice_rest_http:path().
+-type http_req() :: nkservice_rest_http:req().
+-type http_reply() :: nkservice_rest_http:reply().
 
 
 %% @doc Called when a new connection starts
@@ -82,7 +90,7 @@ nkservice_rest_text(_Text, _NkPort, State) ->
     {ok, state()} | continue().
 
 nkservice_rest_handle_call(Msg, _From, State) ->
-    lager:error("Module nkservice_rest received unexpected call ~p", [Msg]),
+    ?LLOG(error, "unexpected call ~p", [Msg]),
     {ok, State}.
 
 
@@ -91,7 +99,7 @@ nkservice_rest_handle_call(Msg, _From, State) ->
     {ok, state()} | continue().
 
 nkservice_rest_handle_cast(Msg, State) ->
-    lager:error("Module nkservice_rest received unexpected cast ~p", [Msg]),
+    ?LLOG(error, "unexpected cast ~p", [Msg]),
     {ok, State}.
 
 
@@ -100,7 +108,7 @@ nkservice_rest_handle_cast(Msg, State) ->
     {ok, state()} | continue().
 
 nkservice_rest_handle_info(Msg, State) ->
-    lager:notice("Module nkservice_rest received unexpected info ~p", [Msg]),
+    ?LLOG(error, "unexpected cast ~p", [Msg]),
     {ok, State}.
 
 
@@ -111,3 +119,12 @@ nkservice_rest_handle_info(Msg, State) ->
 nkservice_rest_terminate(_Reason, State) ->
     {ok, State}.
 
+
+%% @doc called when a new http request has been received
+-spec nkservice_rest_http(http_method(), http_path(), http_req(), state()) ->
+    http_reply().
+
+nkservice_rest_http(_Method, _Path, Req, State) ->
+    {Ip, _Port} = nkservice_rest_http:get_peer(Req),
+    ?LLOG(error, "path not found (~p): ~p from ~s", [_Method, _Path, nklib_util:to_host(Ip)]),
+    {http, 404, [], <<"Not Found">>, State}.

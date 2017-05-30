@@ -45,7 +45,7 @@ plugin_listen(Config, #{id:=SrvId}) ->
         #{webserver_path:=UserPath} ->
             UserPath;
         _ ->
-            Priv = list_to_binary(code:priv_dir(nkapi)),
+            Priv = list_to_binary(code:priv_dir(nkservice)),
             <<Priv/binary, "/www">>
     end,
     nkservice_webserver_util:get_web_servers(SrvId, WebSrv, Path, Config).

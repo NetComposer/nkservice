@@ -27,6 +27,17 @@
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
 
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkservice_rest_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(LLOG(Type, Txt, Args, State),
+    lager:Type("NkSERVICE REST (~s) "++Txt, [State#state.remote|Args])).
+
+
+
 %% ===================================================================
 %% Types
 %% ===================================================================
@@ -64,6 +75,7 @@ stop(Pid) ->
 
 -record(state, {
     srv_id :: nkservice:id(),
+    remote :: binary(),
     user_state = #{} :: map()
 }).
 
@@ -90,7 +102,11 @@ stop(Pid) ->
 
 conn_init(NkPort) ->
     {ok, {nkservice_rest, SrvId}, _} = nkpacket:get_user(NkPort),
-    State1 = #state{srv_id = SrvId},
+    {ok, Remote} = nkpacket:get_remote_bin(NkPort),
+    State1 = #state{srv_id = SrvId, remote = Remote},
+    set_log(State1),
+    nkservice_util:register_for_changes(SrvId),
+    ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
     {ok, State2} = handle(nkservice_rest_init, [NkPort], State1),
     {ok, State2}.
 
@@ -171,6 +187,16 @@ conn_stop(Reason, _NkPort, State) ->
 %% ===================================================================
 %% Requests
 %% ===================================================================
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, nkservice_rest) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkservice_rest_debug, Debug),
+    State.
+
 
 %% @private
 do_send(Msg, NkPort, State) ->

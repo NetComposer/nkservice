@@ -84,7 +84,7 @@ get_rest_http(_SrvId, [], _Config, Acc) ->
 get_rest_http(SrvId, [{List, Opts}|Rest], Config, Acc) ->
     List2 = [
         {nkpacket_protocol_http, Proto, Ip, Port}
-        ||  {rest, Proto, Ip, Port} <- List, Proto==http orelse Proto==https
+        ||  {nkservice_rest_ws, Proto, Ip, Port} <- List, Proto==http orelse Proto==https
     ],
     Acc2 = case List2 of
         [] ->
