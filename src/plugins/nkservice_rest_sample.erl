@@ -65,7 +65,7 @@ test1() ->
         nklib_json:decode(B).
 
 test2() ->
-    Url = "https://127.0.0.1:9010/webs/www/hi.txt",
+    Url = "https://127.0.0.1:9010/webs/hi.txt",
     {ok, {{_, 200, _}, _, _B}} = httpc:request(Url).
 
 

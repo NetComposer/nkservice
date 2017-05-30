@@ -100,7 +100,9 @@ get_rest_http(SrvId, [{List, Opts}|Rest], Config, Acc) ->
             NetOpts = nkpacket_util:get_plugin_net_opts(Config),
             Opts2 = NetOpts#{
                 class => {nkservice_rest_http, SrvId},
-                http_proto => {dispatch, #{routes => Routes}}
+                http_proto => {dispatch, #{routes => Routes}},
+                path => nklib_util:to_binary(Path1)
+                % debug => true
             },
             [{List2, Opts2}|Acc]
     end,
