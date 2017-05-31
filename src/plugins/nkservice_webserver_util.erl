@@ -44,8 +44,15 @@ parse_web_server(Url) ->
 %% @private
 get_web_servers(SrvId, List, Path, Config) ->
     NetOpts = nkpacket_util:get_plugin_net_opts(Config),
+    PacketDebug = case Config of
+        #{debug:=DebugList} when is_list(DebugList) ->
+            lists:member(nkpacket, DebugList);
+        _ ->
+            false
+    end,
     WebOpts2 = NetOpts#{
         class => {nkservice_webserver, SrvId},
-        http_proto => {static, #{path=>Path, index_file=><<"index.html">>}}
+        http_proto => {static, #{path=>Path, index_file=><<"index.html">>}},
+        debug => PacketDebug
     },
     [{Conns, maps:merge(ConnOpts, WebOpts2)} || {Conns, ConnOpts} <- List].

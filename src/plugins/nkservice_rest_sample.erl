@@ -39,11 +39,9 @@
 start() ->
     Spec = #{
         callback => ?MODULE,
-        rest_url => "https://all:9010/test1",
+        rest_url => "https://all:9010/test1, wss:all:9010/test1/ws",
         webserver_url => "https://all:9010/webs",
-        % rest_url => "wss:all:9010, ws:all:9011/ws, https://all:9010/test1",
-        debug => [nkservice_rest],
-        %plugins => [nkapi_log_gelf],
+        debug => [{nkservice_rest, [nkpacket]}, {nkservice_webserver, [nkpacket]}],
         packet_no_dns_cache => false
     },
     nkservice:start(test, Spec).
@@ -68,6 +66,12 @@ test2() ->
     Url = "https://127.0.0.1:9010/webs/hi.txt",
     {ok, {{_, 200, _}, _, _B}} = httpc:request(Url).
 
+test3() ->
+    Url = "wss://127.0.0.1:9010/test1/ws",
+    {ok, #{}, Pid} = nkapi_client:start(test, Url, u1, none, #{}),
+    nkapi_client:stop(Pid).
+
+
 
 
 
@@ -88,3 +92,17 @@ nkservice_rest_http(post, [<<"test-a">>], Req, State) ->
 
 nkservice_rest_http(_Method, _Path, _Req, _State) ->
     continue.
+
+
+nkservice_rest_text(Text, _NkPort, State) ->
+    #{
+        <<"cmd">> := <<"login">>,
+        <<"tid">> := TId
+    } = nklib_json:decode(Text),
+    Reply = #{
+        result => ok,
+        tid => TId
+    },
+    nkservice_rest_ws:send_async(self(), nklib_json:encode(Reply)),
+    {ok, State}.
+

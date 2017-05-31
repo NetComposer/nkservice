@@ -88,7 +88,7 @@ get_rest_http(SrvId, [{List, Opts}|Rest], Config, Acc) ->
     ],
     Acc2 = case List2 of
         [] ->
-            [];
+            Acc;
         _ ->
             Path1 = nklib_util:to_list(maps:get(path, Opts, <<>>)),
             Path2 = case lists:reverse(Path1) of
@@ -96,13 +96,20 @@ get_rest_http(SrvId, [{List, Opts}|Rest], Config, Acc) ->
                 _ -> Path1
             end,
             CowPath = Path2 ++ "/[...]",
-            Routes = [{'_', [{CowPath, nkservice_rest_http, [{srv_id, SrvId}]}]}],
+            CowInit = [{srv_id, SrvId}],
+            Routes = [{'_', [{CowPath, nkservice_rest_http, CowInit}]}],
             NetOpts = nkpacket_util:get_plugin_net_opts(Config),
+            PacketDebug = case Config of
+                #{debug:=DebugList} when is_list(DebugList) ->
+                    lists:member(nkpacket, DebugList);
+                _ ->
+                    false
+            end,
             Opts2 = NetOpts#{
                 class => {nkservice_rest_http, SrvId},
                 http_proto => {dispatch, #{routes => Routes}},
-                path => nklib_util:to_binary(Path1)
-                % debug => true
+                path => nklib_util:to_binary(Path1),
+                debug => PacketDebug
             },
             [{List2, Opts2}|Acc]
     end,
@@ -121,17 +128,29 @@ get_rest_ws(_SrvId, [], _Config, Acc) ->
 
 get_rest_ws(SrvId, [{List, Opts}|Rest], Config, Acc) ->
     List2 = [
-        {nksevice_rest_ws, Proto, Ip, Port}
-        || {nkservice_rest, Proto, Ip, Port}
+        {nkservice_rest_ws, Proto, Ip, Port}
+        || {nkservice_rest_ws, Proto, Ip, Port}
             <- List, Proto==ws orelse Proto==wss orelse Proto==tcp orelse Proto==tls
     ],
-    Timeout = maps:get(rest_server_timeout, Config, 180),
-    NetOpts = nkpacket_util:get_plugin_net_opts(Config),
-    Opts2 = NetOpts#{
-        path => maps:get(path, Opts, <<"/">>),
-        class => {nkservice_rest, SrvId},
-        get_headers => [<<"user-agent">>],
-        idle_timeout => 1000 * Timeout,
-        debug => false
-    },
-    get_rest_ws(SrvId, Rest, Config, [{List2, maps:merge(Opts, Opts2)}|Acc]).
+    Acc2 = case List2 of
+        [] ->
+            Acc;
+        _ ->
+            Timeout = maps:get(rest_server_timeout, Config, 180),
+            NetOpts = nkpacket_util:get_plugin_net_opts(Config),
+            PacketDebug = case Config of
+                #{debug:=DebugList} when is_list(DebugList) ->
+                    lists:member(nkpacket, DebugList);
+                _ ->
+                    false
+            end,
+            Opts2 = NetOpts#{
+                path => maps:get(path, Opts, <<"/">>),
+                class => {nkservice_rest, SrvId},
+                get_headers => [<<"user-agent">>],
+                idle_timeout => 1000 * Timeout,
+                debug => PacketDebug
+            },
+            [{List2, maps:merge(Opts, Opts2)}|Acc]
+    end,
+    get_rest_ws(SrvId, Rest, Config, Acc2).

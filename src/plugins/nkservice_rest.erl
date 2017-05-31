@@ -42,16 +42,18 @@ plugin_deps() ->
 
 
 plugin_syntax() ->
-    nkpacket:register_protocol(nkservice_rest, nkservice_rest_ws),
+    % For debug, add nkservice_rest to 'debug' config option, or {nkservice_rest, [nkpacket]} for full
+    nkpacket:register_protocol(nkservice_rest_ws, nkservice_rest_ws),
     nkpacket_util:get_plugin_net_syntax(#{
         rest_url => fun nkservice_rest_util:parse_rest_server/1
     }).
 
 
-plugin_listen(Config, #{id:=SrvId}) ->
+plugin_listen(Config, #{id:=SrvId}=Srv) ->
     {parsed_urls, RestSrv} = maps:get(rest_url, Config, {parsed_urls, []}),
-    RestSrvs1 = nkservice_rest_util:get_rest_http(SrvId, RestSrv, Config),
-    RestSrvs2 = nkservice_rest_util:get_rest_ws(SrvId, RestSrv, Config),
+    Debug = nklib_util:get_value(nkservice_rest, maps:get(debug, Srv, [])),
+    RestSrvs1 = nkservice_rest_util:get_rest_http(SrvId, RestSrv, Config#{debug=>Debug}),
+    RestSrvs2 = nkservice_rest_util:get_rest_ws(SrvId, RestSrv, Config#{debug=>Debug}),
     RestSrvs1 ++ RestSrvs2.
 
 
@@ -82,6 +84,7 @@ nkservice_rest_init(_NkPort, State) ->
     {ok, state()}.
 
 nkservice_rest_text(_Text, _NkPort, State) ->
+    ?LLOG(notice, "unhandled data ~p", [_Text]),
     {ok, State}.
 
 
