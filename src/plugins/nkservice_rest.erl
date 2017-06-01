@@ -25,7 +25,7 @@
 -export([nkservice_rest_init/2, nkservice_rest_text/3,
          nkservice_rest_handle_call/3, nkservice_rest_handle_cast/2,
          nkservice_rest_handle_info/2, nkservice_rest_terminate/2]).
--export([nkservice_rest_http/4]).
+-export([nkservice_rest_http/5]).
 
 
 -include_lib("nklib/include/nklib.hrl").
@@ -43,7 +43,7 @@ plugin_deps() ->
 
 plugin_syntax() ->
     % For debug, add nkservice_rest to 'debug' config option, or {nkservice_rest, [nkpacket]} for full
-    nkpacket:register_protocol(nkservice_rest_ws, nkservice_rest_ws),
+    nkpacket:register_protocol(nkservice_rest, nkservice_rest_protocol),
     nkpacket_util:get_plugin_net_syntax(#{
         rest_url => fun nkservice_rest_util:parse_rest_server/1
     }).
@@ -55,6 +55,7 @@ plugin_listen(Config, #{id:=SrvId}=Srv) ->
     RestSrvs1 = nkservice_rest_util:get_rest_http(SrvId, RestSrv, Config#{debug=>Debug}),
     RestSrvs2 = nkservice_rest_util:get_rest_ws(SrvId, RestSrv, Config#{debug=>Debug}),
     RestSrvs1 ++ RestSrvs2.
+
 
 
 
@@ -124,10 +125,10 @@ nkservice_rest_terminate(_Reason, State) ->
 
 
 %% @doc called when a new http request has been received
--spec nkservice_rest_http(http_method(), http_path(), http_req(), state()) ->
+-spec nkservice_rest_http(nkservice:id(), http_method(), http_path(), http_req(), state()) ->
     http_reply().
 
-nkservice_rest_http(_Method, _Path, Req, State) ->
+nkservice_rest_http(_SrvId, _Method, _Path, Req, State) ->
     {Ip, _Port} = nkservice_rest_http:get_peer(Req),
     ?LLOG(error, "path not found (~p): ~p from ~s", [_Method, _Path, nklib_util:to_host(Ip)]),
     {http, 404, [], <<"Not Found">>, State}.

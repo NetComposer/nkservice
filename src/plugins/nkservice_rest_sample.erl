@@ -83,14 +83,14 @@ plugin_deps() ->
     [nkservice_rest, nkservice_webserver].
 
 
-nkservice_rest_http(post, [<<"test-a">>], Req, State) ->
+nkservice_rest_http(_SrvId, post, [<<"test-a">>], Req, State) ->
     Qs = maps:from_list(nkservice_rest_http:get_qs(Req)),
     CT = nkservice_rest_http:get_ct(Req),
     Body = nkservice_rest_http:get_body(Req, #{parse=>true}),
     Reply = nklib_json:encode(#{qs=>Qs, ct=>CT, body=>Body}),
     {http, 200, [{<<"header1">>, 1}], Reply, State};
 
-nkservice_rest_http(_Method, _Path, _Req, _State) ->
+nkservice_rest_http(_SrvId, _Method, _Path, _Req, _State) ->
     continue.
 
 
@@ -103,6 +103,6 @@ nkservice_rest_text(Text, _NkPort, State) ->
         result => ok,
         tid => TId
     },
-    nkservice_rest_ws:send_async(self(), nklib_json:encode(Reply)),
+    nkservice_rest_protocol:send_async(self(), nklib_json:encode(Reply)),
     {ok, State}.
 

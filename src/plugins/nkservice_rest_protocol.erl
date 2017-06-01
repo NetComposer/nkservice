@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc
--module(nkservice_rest_ws).
+-module(nkservice_rest_protocol).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([send/2, send_async/2, stop/1]).

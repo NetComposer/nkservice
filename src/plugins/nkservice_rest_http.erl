@@ -20,7 +20,8 @@
 
 %% @doc
 -module(nkservice_rest_http).
--export([get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_peer/1]).
+-export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_peer/1]).
+-export([reply_json/3]).
 -export([init/2, terminate/3]).
 -export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
 
@@ -34,7 +35,7 @@
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkSERVICE REST HTTP (~s) "++Txt, [State#state.remote|Args])).
+    lager:Type("NkSERVICE REST HTTP (~s) "++Txt, [State#req.remote|Args])).
 
 
 
@@ -58,7 +59,7 @@
 
 -type path() :: [binary()].
 
--record(state, {
+-record(req, {
     srv_id :: nkapi:id(),
     req :: term(),
     method :: binary(),
@@ -66,7 +67,7 @@
     remote :: binary()
 }).
 
--type req() :: #state{}.
+-type req() :: #req{}.
 
 -type reply() ::
     {http, code(), [header()], body(), state()}.
@@ -77,10 +78,18 @@
 %% ===================================================================
 
 %% @doc
+-spec get_srv_id(req()) ->
+    nkservice:id().
+
+get_srv_id(#req{srv_id=SrvId}) ->
+    SrvId.
+
+
+%% @doc
 -spec get_body(req(), #{max_size=>integer(), parse=>boolean()}) ->
     binary() | map().
 
-get_body(#state{req=Req}=State, Opts) ->
+get_body(#req{req=Req}=State, Opts) ->
     CT = get_ct(State),
     MaxBody = maps:get(max_size, Opts, 100000),
     case cowboy_req:body_length(Req) of
@@ -92,18 +101,18 @@ get_body(#state{req=Req}=State, Opts) ->
                         <<"application/json">> ->
                             case nklib_json:decode(Body) of
                                 error ->
-                                    throw({400, [], <<"Invalid json">>});
+                                    {error, invalid_json};
                                 Json ->
-                                    Json
+                                    {ok, Json}
                             end;
                         _ ->
-                            Body
+                            {ok, Body}
                     end;
                 _ ->
-                    Body
+                    {ok, Body}
             end;
         _ ->
-            throw({400, [], <<"Body too large">>})
+            {error, body_too_large}
     end.
 
 
@@ -111,7 +120,7 @@ get_body(#state{req=Req}=State, Opts) ->
 -spec get_qs(req()) ->
     http_qs().
 
-get_qs(#state{req=Req}) ->
+get_qs(#req{req=Req}) ->
     cowboy_req:parse_qs(Req).
 
 
@@ -119,7 +128,7 @@ get_qs(#state{req=Req}) ->
 -spec get_ct(req()) ->
     binary().
 
-get_ct(#state{req=Req}) ->
+get_ct(#req{req=Req}) ->
     cowboy_req:header(<<"content-type">>, Req).
 
 
@@ -127,7 +136,7 @@ get_ct(#state{req=Req}) ->
 -spec get_basic_auth(req()) ->
     {user, binary(), binary()} | undefined.
 
-get_basic_auth(#state{req=Req}) ->
+get_basic_auth(#req{req=Req}) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {basic, User, Pass} ->
             {basic, User, Pass};
@@ -140,10 +149,22 @@ get_basic_auth(#state{req=Req}) ->
 -spec get_peer(req()) ->
     {inet:ip_address(), inet:port_number()}.
 
-get_peer(#state{req=Req}) ->
+get_peer(#req{req=Req}) ->
     {Ip, Port} = cowboy_req:peer(Req),
     {Ip, Port}.
 
+
+%% @doc
+reply_json({ok, Data}, _Req, State) ->
+    Hds = [{<<"Content-Tytpe">>, <<"application/json">>}],
+    Body = nklib_json:encode(Data),
+    {http, 200, Hds, Body, State};
+
+reply_json({error, Error}, #req{srv_id=SrvId}, State) ->
+    Hds = [{<<"Content-Tytpe">>, <<"application/json">>}],
+    {Code, Txt} = nkservice_util:error(SrvId, Error),
+    Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
+    {http, 400, Hds, Body, State}.
 
 
 
@@ -153,13 +174,13 @@ get_peer(#state{req=Req}) ->
 
 
 %% @private
-init(Req, [{srv_id, SrvId}]) ->
-    {Ip, Port} = cowboy_req:peer(Req),
+init(HttpReq, [{srv_id, SrvId}]) ->
+    {Ip, Port} = cowboy_req:peer(HttpReq),
     Remote = <<
         (nklib_util:to_host(Ip))/binary, ":",
         (to_bin(Port))/binary
     >>,
-    Method = case cowboy_req:method(Req) of
+    Method = case cowboy_req:method(HttpReq) of
         <<"GET">> -> get;
         <<"POST">> -> post;
         <<"PUT">> -> put;
@@ -167,22 +188,22 @@ init(Req, [{srv_id, SrvId}]) ->
         <<"HEAD">> -> head;
         OtherMethod -> OtherMethod
     end,
-    Path = case cowboy_req:path_info(Req) of
+    Path = case cowboy_req:path_info(HttpReq) of
         [<<>>|Rest] -> Rest;
         Rest -> Rest
     end,
-    State = #state{
+    Req = #req{
         srv_id = SrvId,
-        req = Req,
+        req = HttpReq,
         method = Method,
         path = Path,
         remote = Remote
     },
     UserState = #{},
-    set_log(State),
-    ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], State),
-    {http, Code, Hds, Body, _UserState2} = SrvId:nkservice_rest_http(Method, Path, State, UserState),
-    {ok, cowboy_req:reply(Code, Hds, Body, Req), []}.
+    set_log(Req),
+    ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], Req),
+    {http, Code, Hds, Body, _UserState2} = SrvId:nkservice_rest_http(SrvId, Method, Path, Req, UserState),
+    {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []}.
 
 
 %% @private
@@ -196,14 +217,14 @@ terminate(_Reason, _Req, _Opts) ->
 
 
 %% @private
-set_log(#state{srv_id=SrvId}=State) ->
+set_log(#req{srv_id=SrvId}=Req) ->
     Debug = case nkservice_util:get_debug_info(SrvId, nkservice_rest) of
         {true, _} -> true;
         _ -> false
     end,
     % lager:error("DEBUG: ~p", [Debug]),
     put(nkservice_rest_debug, Debug),
-    State.
+    Req.
 
 
 
