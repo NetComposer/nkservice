@@ -111,8 +111,8 @@ get_body(#req{req=Req}=State, Opts) ->
                 _ ->
                     {ok, Body}
             end;
-        _ ->
-            {error, body_too_large}
+        BL ->
+            {error, {body_too_large, BL, MaxBody}}
     end.
 
 
