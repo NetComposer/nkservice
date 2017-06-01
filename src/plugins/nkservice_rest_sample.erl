@@ -22,7 +22,7 @@
 -module(nkservice_rest_sample).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--define(SRV, test).
+-define(SRV, rest_test).
 -define(WS, "wss://127.0.0.1:9010/ws").
 -define(HTTP, "https://127.0.0.1:9010/rpc/api").
 
@@ -41,15 +41,15 @@ start() ->
         callback => ?MODULE,
         rest_url => "https://all:9010/test1, wss:all:9010/test1/ws",
         webserver_url => "https://all:9010/webs",
-        debug => [{nkservice_rest, [nkpacket]}, {nkservice_webserver, [nkpacket]}],
+        %debug => [{nkservice_rest, [nkpacket]}, {nkservice_webserver, [nkpacket]}],
         packet_no_dns_cache => false
     },
-    nkservice:start(test, Spec).
+    nkservice:start(?SRV, Spec).
 
 
 %% @doc Stops the service
 stop() ->
-    nkservice:stop(test).
+    nkservice:stop(?SRV).
 
 test1() ->
     Url = "https://127.0.0.1:9010/test1/test-a?b=1&c=2",
@@ -68,7 +68,7 @@ test2() ->
 
 test3() ->
     Url = "wss://127.0.0.1:9010/test1/ws",
-    {ok, #{}, Pid} = nkapi_client:start(test, Url, u1, none, #{}),
+    {ok, #{}, Pid} = nkapi_client:start(?SRV, Url, u1, none, #{}),
     nkapi_client:stop(Pid).
 
 
