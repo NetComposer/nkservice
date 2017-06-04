@@ -32,6 +32,7 @@ plugin_deps() ->
 	[].
 
 
+%% TODO: use nkpacket:parse_urls/3
 plugin_syntax() ->
     % For debug, add {nkservice_webserver, [nkpacket]} to 'debug' option
     nkpacket_util:get_plugin_net_syntax(#{

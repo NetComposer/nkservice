@@ -41,6 +41,7 @@ plugin_deps() ->
 	[].
 
 
+%% TODO: use nkpacket:parse_urls/3
 plugin_syntax() ->
     % For debug, add nkservice_rest to 'debug' config option, or {nkservice_rest, [nkpacket]} for full
     nkpacket:register_protocol(nkservice_rest, nkservice_rest_protocol),
