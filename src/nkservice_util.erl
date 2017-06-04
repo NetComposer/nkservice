@@ -23,7 +23,7 @@
 
 -export([call/2, call/3]).
 -export([error/2]).
--export([parse_syntax/3, parse_transports/1]).
+-export([parse_transports/1]).
 -export([make_id/1, update_uuid/2]).
 -export([get_debug_info/2]).
 -export([register_for_changes/1, notify_updated_service/1]).
@@ -114,13 +114,6 @@ get_error_fmt(Fmt, List) ->
     end.
 
 
-%% @doc
-parse_syntax(Spec, Syntax, Defaults) ->
-    Opts = #{return=>map, defaults=>Defaults},
-    case nklib_config:parse_config(Spec, Syntax, Opts) of
-        {ok, Parsed, Other} -> {ok, maps:merge(Other, Parsed)};
-        {error, Error} -> {error, Error}
-    end.
 
 
 %% @private

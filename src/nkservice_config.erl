@@ -49,8 +49,8 @@ config_service(Config, #{id:=Id}=Service) ->
             debug => fun parse_debug/1,
             log_level => log_level     %% TO REMOVE
         },
-        Config3 = case nkservice_util:parse_syntax(Config2, Syntax, #{}) of
-            {ok, Parsed} -> Parsed;
+        Config3 = case nklib_syntax:parse(Config2, Syntax) of
+            {ok, Parsed, _} -> maps:merge(Config2, Parsed);
             {error, Error1} -> throw(Error1)
         end,
         GlobalKeys = [class, plugins, callback, log_level, debug],
@@ -101,13 +101,11 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
         Syntax when is_map(Syntax), map_size(Syntax)==0 ->
             Config;
         Syntax when is_map(Syntax) ->
-            Defaults = case nklib_util:apply(Mod, plugin_defaults, []) of
-                not_exported -> #{};
-                Apply1 when is_map(Apply1) -> Apply1
-            end,
-            case nkservice_util:parse_syntax(Config, Syntax, Defaults) of
-                {ok, Parsed1} -> Parsed1;
-                {error, Error1} -> throw({{Plugin, Error1}})
+            case nklib_syntax:parse(Config, Syntax) of
+                {ok, Parsed1, _} ->
+                    maps:merge(Config, Parsed1);
+                {error, Error1} ->
+                    throw({{Plugin, Error1}})
             end
     end,
     Service2 = Service#{config:=Config2},
