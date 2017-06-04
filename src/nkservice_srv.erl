@@ -137,7 +137,7 @@ start_proc(SrvId, Name, Module, Args) ->
     Spec = {
         Name, 
         {Module, start_link, Args},
-        transient,
+        permanent,
         5000,
         worker,
         [Module]
