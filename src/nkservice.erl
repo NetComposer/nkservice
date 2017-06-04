@@ -144,8 +144,9 @@ start(Name, UserSpec) ->
             nkservice_srv_sup:stop_service(Id),
             {error, Throw};
         error:EError -> 
+            Trace = erlang:get_stacktrace(),
             nkservice_srv_sup:stop_service(Id),
-            {error, EError}
+            {error, {EError, Trace}}
     end.
 
 
