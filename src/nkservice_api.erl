@@ -89,12 +89,8 @@ api(Req, State) ->
                     ?DEBUG("request NOT allowed", [], Req3),
                     {error, unauthorized, State2}
             end;
-        {error, {syntax_error, Error}} ->
-            {error, {syntax_error, Error}, State};
-        {error, {missing_mandatory_field, Field}} ->
-            {error, {missing_field, Field}, State};
         {error, Error} ->
-            {error, Error, Req2, State}
+            {error, Error, State}
     end.
 
 
