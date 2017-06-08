@@ -20,7 +20,7 @@
 
 %% @doc
 -module(nkservice_rest_http).
--export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_peer/1]).
+-export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_headers/1, get_peer/1]).
 -export([reply_json/3]).
 -export([init/2, terminate/3]).
 -export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
@@ -130,6 +130,14 @@ get_qs(#req{req=Req}) ->
 
 get_ct(#req{req=Req}) ->
     cowboy_req:header(<<"content-type">>, Req).
+
+
+%% @doc
+-spec get_headers(req()) ->
+    [{binary(), binary()}].
+
+get_headers(#req{req=Req}) ->
+    cowboy_req:headers(Req).
 
 
 %% @doc
