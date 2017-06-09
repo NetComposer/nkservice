@@ -75,7 +75,7 @@
     {login, Reply::term(), nkservice:user_id(), nkservice:user_meta(), [binary()], state()} |
     {error, nkservice:error(), state()}.
 
-api(Req, User) ->
+api(Req, State) ->
     #nkreq{srv_id=SrvId, data=Data} = Req,
     {Syntax, Req2} = SrvId:service_api_syntax(#{}, Req),
     ?DEBUG("parsing syntax ~p (~p)", [Data, Syntax], Req),
