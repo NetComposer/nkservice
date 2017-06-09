@@ -68,12 +68,14 @@
 %% If is is authorized, calls SrvId:api_server_cmd() to process the request.
 %% It received some state (usually from api_server_cmd/5) that can be updated
 -spec api(req(), state()) ->
-    {ok, Reply::term(), [binary()], state()} | {ok, state()} |
+    {ok, Reply::term(), [binary()], state()} |
+    {ok, Reply::term(), nkservice:user_meta(), [binary()], state()} |
+    {ok, state()} |
     {ack, [binary()], state()} |
     {login, Reply::term(), nkservice:user_id(), nkservice:user_meta(), [binary()], state()} |
     {error, nkservice:error(), state()}.
 
-api(Req, State) ->
+api(Req, User) ->
     #nkreq{srv_id=SrvId, data=Data} = Req,
     {Syntax, Req2} = SrvId:service_api_syntax(#{}, Req),
     ?DEBUG("parsing syntax ~p (~p)", [Data, Syntax], Req),
@@ -129,6 +131,8 @@ process_api(Req, Unknown, State) ->
     case SrvId:service_api_cmd(Req, State) of
         {ok, Reply, State2} ->
             {ok, Reply, Unknown, State2};
+        {ok, Reply, UserMeta, State2} ->
+            {ok, Reply, UserMeta, Unknown, State2};
         {login, Reply, UserId, Meta, State2} when UserId /= <<>> ->
             {login, Reply, UserId, Meta, Unknown, State2};
         {ack, State2} ->
