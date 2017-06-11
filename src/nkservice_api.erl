@@ -72,6 +72,7 @@
     {ok, Reply::term(), nkservice:user_meta(), [binary()], state()} |
     {ok, state()} |
     {ack, [binary()], state()} |
+    {ack, pid(), [binary()], state()} |
     {login, Reply::term(), nkservice:user_id(), nkservice:user_meta(), [binary()], state()} |
     {error, nkservice:error(), state()}.
 
@@ -137,6 +138,8 @@ process_api(Req, Unknown, State) ->
             {login, Reply, UserId, Meta, Unknown, State2};
         {ack, State2} ->
             {ack, Unknown, State2};
+        {ack, Pid, State2} ->
+            {ack, Pid, Unknown, State2};
         {error, Error, State2} ->
             {error, Error, State2}
     end.
