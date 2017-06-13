@@ -68,8 +68,11 @@
 %% If is is authorized, calls SrvId:api_server_cmd() to process the request.
 %% It received some state (usually from api_server_cmd/5) that can be updated
 -spec api(req(), state()) ->
-    {ok, Reply::term(), [binary()], state()} | {ok, state()} |
+    {ok, Reply::term(), [binary()], state()} |
+    {ok, Reply::term(), nkservice:user_meta(), [binary()], state()} |
+    {ok, state()} |
     {ack, [binary()], state()} |
+    {ack, pid(), [binary()], state()} |
     {login, Reply::term(), nkservice:user_id(), nkservice:user_meta(), [binary()], state()} |
     {error, nkservice:error(), state()}.
 
@@ -89,12 +92,8 @@ api(Req, State) ->
                     ?DEBUG("request NOT allowed", [], Req3),
                     {error, unauthorized, State2}
             end;
-        {error, {syntax_error, Error}} ->
-            {error, {syntax_error, Error}, State};
-        {error, {missing_mandatory_field, Field}} ->
-            {error, {missing_field, Field}, State};
         {error, Error} ->
-            {error, Error, Req2, State}
+            {error, Error, State}
     end.
 
 
@@ -133,10 +132,14 @@ process_api(Req, Unknown, State) ->
     case SrvId:service_api_cmd(Req, State) of
         {ok, Reply, State2} ->
             {ok, Reply, Unknown, State2};
+        {ok, Reply, UserMeta, State2} ->
+            {ok, Reply, UserMeta, Unknown, State2};
         {login, Reply, UserId, Meta, State2} when UserId /= <<>> ->
             {login, Reply, UserId, Meta, Unknown, State2};
         {ack, State2} ->
             {ack, Unknown, State2};
+        {ack, Pid, State2} ->
+            {ack, Pid, Unknown, State2};
         {error, Error, State2} ->
             {error, Error, State2}
     end.

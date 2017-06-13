@@ -61,7 +61,7 @@ start(Type) ->
 start(_Type, _Args) ->
     Syntax = #{
         log_path => binary,
-        '__defatuls' => #{
+        '__defaults' => #{
             log_path => <<"log">>
         }
     },

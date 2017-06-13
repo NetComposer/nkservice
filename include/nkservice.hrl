@@ -16,9 +16,11 @@
 
 -record(nkreq, {
     srv_id :: nkservice:id(),
+    conn_id :: term(),
     session_module :: module(),
     session_id = <<>> :: nkservice:session_id(),
     session_meta = #{} :: map(),
+    tid :: term(),
     cmd = <<>> :: nkservice:req_cmd(),
     data = #{} :: nkservice:req_data(),
     % unknown_fields = [] :: [binary()],
