@@ -134,9 +134,11 @@ parse_transports(Spec) ->
 -spec make_id(nkservice:name()) ->
     nkservice:id().
 
-make_id(root) ->
-    root;
+make_id(Id) when is_atom(Id) ->
+    Bin = nklib_parse:normalize(Id, #{space=>$_, allowed=>[$-, $., $_]}),
+    binary_to_atom(Bin, latin1);
 
+%% For non-atoms, we keep the 'old' behaviour
 make_id(Name) ->
     list_to_atom(
         string:to_lower(
