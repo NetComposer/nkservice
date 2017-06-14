@@ -25,7 +25,7 @@
 -export([error/2]).
 -export([parse_transports/1]).
 -export([make_id/1, update_uuid/2]).
--export([get_debug_info/2]).
+-export([get_debug/2, get_debug_info/2]).
 -export([register_for_changes/1, notify_updated_service/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -204,6 +204,14 @@ notify_updated_service(SrvId) ->
     lists:foreach(
         fun({_, Pid}) -> Pid ! {nkservice_updated, SrvId} end,
         nklib_proc:values({notify_updated_service, SrvId})).
+
+
+%% @doc
+-spec get_debug(nkservice:id(), module()) ->
+    undefined | list().
+
+get_debug(SrvId, Module) ->
+    nklib_util:get_value(Module, SrvId:debug()).
 
 
 %% @doc
