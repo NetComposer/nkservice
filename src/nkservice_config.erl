@@ -98,6 +98,8 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
     Config2 = case nklib_util:apply(Mod, plugin_syntax, []) of
         not_exported -> 
             Config;
+        continue ->
+            Config;
         Syntax when is_map(Syntax), map_size(Syntax)==0 ->
             Config;
         Syntax when is_map(Syntax) ->
@@ -110,7 +112,9 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
     end,
     Service2 = Service#{config:=Config2},
     Service3 = case nklib_util:apply(Mod, plugin_config, [Config2, Service2]) of
-        not_exported -> 
+        not_exported ->
+            Service2;
+        continue ->
             Service2;
         {ok, ApplyConfig} ->
             Service2#{config:=ApplyConfig};
@@ -123,6 +127,8 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
     #{config:=Config3} = Service3,
     Service4 = case nklib_util:apply(Mod, plugin_listen, [Config3, Service3]) of
         not_exported -> 
+            Service3;
+        continue ->
             Service3;
         Apply3 ->
             case nkservice_util:parse_transports(Apply3) of
@@ -137,6 +143,8 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
     #{config:=Config4} = Service4,
     Service5 = case nklib_util:apply(Mod, plugin_lua_modules, [Config4, Service4]) of
         not_exported -> 
+            Service4;
+        continue ->
             Service4;
         LuaModules1 when is_list(LuaModules1) ->
             OldModules = maps:get(lua_modules, Service, []),
@@ -161,6 +169,8 @@ start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) 
                 {stop, Error} -> 
                     throw({plugin_stop, {Plugin, Error}});
                 not_exported -> 
+                    Service;
+                continue ->
                     Service
             end;
         true ->
@@ -171,6 +181,8 @@ start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) 
                 {stop, Error} -> 
                     throw({plugin_stop, {Plugin, Error}});
                 not_exported -> 
+                    Service;
+                continue ->
                     Service
             end
     end,
@@ -198,6 +210,8 @@ stop_plugins([Plugin|Rest], #{name:=Name}=Service) ->
             lager:info("Service '~s' stopped plugin ~p", [Name, Plugin]),
             Service#{config:=Config2};
         not_exported -> 
+            Service;
+        continue ->
             Service
     end,
     Key = list_to_atom("config_"++atom_to_list(Plugin)),
@@ -269,6 +283,7 @@ add_group_deps([{Name, Deps}|Rest], Acc, Groups) ->
         {ok, Mod} ->
             case nklib_util:apply(Mod, plugin_group, []) of
                 not_exported -> undefined;
+                continue -> undefined;
                 Group0 -> Group0
             end;
         error ->
@@ -318,6 +333,8 @@ get_plugin_deps(Name, BaseDeps) ->
                 List when is_list(List) ->
                     List;
                 not_exported ->
+                    [];
+                continue ->
                     []
             end;
         error ->
