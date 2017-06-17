@@ -103,7 +103,7 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
         Syntax when is_map(Syntax), map_size(Syntax)==0 ->
             Config;
         Syntax when is_map(Syntax) ->
-            case nklib_syntax:parse(Config, Syntax) of
+            case nklib_syntax:parse(Config, Syntax, #{allow_unknown=>true}) of
                 {ok, Parsed1, _} ->
                     maps:merge(Config, Parsed1);
                 {error, Error1} ->
