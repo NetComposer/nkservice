@@ -51,6 +51,8 @@ call(Dest, Msg, Timeout) ->
             {error, timeout};
         {error, {exit, {{noproc, _Fun}, _Stack}}} ->
             {error, process_not_found};
+        {error, {exit, {{normal, _Fun}, _Stack}}} ->
+            {error, process_not_found};
         Other ->
             Other
     end.

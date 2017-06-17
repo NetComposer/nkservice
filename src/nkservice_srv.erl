@@ -211,7 +211,6 @@ pending_msgs() ->
 %% @private
 init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
-    % io:format("SRV: ~p", [Service]),
     case nkservice_srv_listen_sup:update_transports(Service) of
         {ok, Listen} ->
             Service2 = Service#{listen_ids=>Listen},
