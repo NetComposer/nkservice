@@ -94,7 +94,8 @@ get_body(#req{req=Req}=State, Opts) ->
     MaxBody = maps:get(max_size, Opts, 100000),
     case cowboy_req:body_length(Req) of
         BL when is_integer(BL), BL =< MaxBody ->
-            {ok, Body, _} = cowboy_req:body(Req),
+            %% https://ninenines.eu/docs/en/cowboy/1.0/guide/req_body/
+            {ok, Body, _} = cowboy_req:body(Req, [{length, infinity}]),
             case maps:get(parse, Opts, false) of
                 true ->
                     case CT of
