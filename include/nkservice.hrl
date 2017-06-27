@@ -16,9 +16,10 @@
 
 -record(nkreq, {
     srv_id :: nkservice:id(),
-    conn_id :: term(),
+    % conn_id :: term(),
     session_module :: module(),
     session_id = <<>> :: nkservice:session_id(),
+    session_pid :: pid(),
     session_meta = #{} :: map(),
     tid :: term(),
     cmd = <<>> :: nkservice:req_cmd(),
