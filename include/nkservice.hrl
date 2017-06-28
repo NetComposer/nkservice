@@ -16,7 +16,6 @@
 
 -record(nkreq, {
     srv_id :: nkservice:id(),
-    % conn_id :: term(),
     session_module :: module(),
     session_id = <<>> :: nkservice:session_id(),
     session_pid :: pid(),
@@ -25,8 +24,10 @@
     cmd = <<>> :: nkservice:req_cmd(),
     data = #{} :: nkservice:req_data(),
     user_id = <<>> :: nkservice:user_id(),      % <<>> if not authenticated
-    user_meta = #{} :: nkservice:user_meta(),
+    user_state = #{} :: nkservice:user_state(),
     req_state :: term(),
+    unknown_fields = [] :: [binary()],
+    timeout_pending = false :: boolean(),
     debug = false :: boolean()
 }).
 

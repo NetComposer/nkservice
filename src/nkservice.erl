@@ -27,7 +27,7 @@
 -export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
 -export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
 -export_type([error/0, event/0]).
--export_type([user_id/0, user_meta/0, session_id/0]).
+-export_type([user_id/0, user_state/0, session_id/0]).
 -export_type([req_cmd/0, req_data/0, req_tid/0]).
 
 
@@ -85,7 +85,7 @@
 -type error() :: term().
 
 -type user_id() :: binary().
--type user_meta() :: map().
+-type user_state() :: map().
 -type session_id() :: binary().
 -type req_cmd() :: binary().
 -type req_data() :: map() | list().

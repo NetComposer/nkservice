@@ -211,7 +211,7 @@ init(HttpReq, [{srv_id, SrvId}]) ->
     UserState = #{},
     set_log(Req),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], Req),
-    {http, Code, Hds, Body, _UserState2} = SrvId:nkservice_rest_http(SrvId, Method, Path, Req, UserState),
+    {http, Code, Hds, Body, _UserState2} = SrvId:nkservice_rest_http(Method, Path, Req, UserState),
     {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []}.
 
 

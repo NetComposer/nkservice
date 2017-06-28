@@ -27,7 +27,7 @@
 -export([error/1, error/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2,
          service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([service_api_syntax/2, service_api_allow/2, service_api_cmd/2,
+-export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1,
          service_api_event/2]).
 -export_type([continue/0]).
 
@@ -177,6 +177,7 @@ error({invalid_state, St}) 	    -> {"Invalid state: ~s", [St]};
 error({invalid_value, V}) 		-> {"Invalid value: '~s'", [V]};
 error(invalid_json) 			-> "Invalid JSON";
 error(invalid_operation) 		-> "Invalid operation";
+error(invalid_login_request)    -> "Invalid login request";
 error(invalid_parameters) 		-> "Invalid parameters";
 error(invalid_password) 		-> "Invalid password";
 error(invalid_reply) 			-> "Invalid reply";
@@ -286,23 +287,26 @@ service_api_syntax(SyntaxAcc, Req) ->
 
 
 %% @doc Called to authorize process a new API command
--spec service_api_allow(req(), state()) ->
-    {boolean(), state()} | {true, req(), state()}.
+-spec service_api_allow(req()) ->
+    boolean() | {true, req(), state()}.
 
-service_api_allow(_Req, State) ->
-    {false, State}.
+service_api_allow(_Req) ->
+    false.
 
 
 %% @doc Called to process a new authorized API command
 %% For slow requests, reply ack, and the ServiceModule:reply/2.
--spec service_api_cmd(req(), state()) ->
-    {ok, Reply::map(), state()} |
-    {ack, state()} |
-    {login, Reply::map(), User::nkservice:user_id(), Meta::nkservice:user_meta(), state()} |
-    {error, nkservice:error(), state()}.
+-spec service_api_cmd(req()) ->
+    {ok, Reply::map()} |
+    {ok, Reply::map(), req()} |
+    ack |
+    {ack, pid()} |
+    {ack, pid()|undefined, req()} |
+    {error, nkservice:error()}  |
+    {error, nkservice:error(), req()}.
 
-service_api_cmd(_Req, State) ->
-    {error, not_implemented, State}.
+service_api_cmd(_Req) ->
+    {error, not_implemented}.
 
 
 %% @doc Called when the client sent an authorized event to us

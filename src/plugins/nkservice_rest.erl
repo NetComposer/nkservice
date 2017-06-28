@@ -25,7 +25,7 @@
 -export([nkservice_rest_init/2, nkservice_rest_text/3,
          nkservice_rest_handle_call/3, nkservice_rest_handle_cast/2,
          nkservice_rest_handle_info/2, nkservice_rest_terminate/2]).
--export([nkservice_rest_http/5]).
+-export([nkservice_rest_http/4]).
 
 
 -include_lib("nklib/include/nklib.hrl").
@@ -126,10 +126,10 @@ nkservice_rest_terminate(_Reason, State) ->
 
 
 %% @doc called when a new http request has been received
--spec nkservice_rest_http(nkservice:id(), http_method(), http_path(), http_req(), state()) ->
+-spec nkservice_rest_http(http_method(), http_path(), http_req(), state()) ->
     http_reply().
 
-nkservice_rest_http(_SrvId, _Method, _Path, Req, State) ->
+nkservice_rest_http(_Method, _Path, Req, State) ->
     {Ip, _Port} = nkservice_rest_http:get_peer(Req),
     ?LLOG(error, "path not found (~p): ~p from ~s", [_Method, _Path, nklib_util:to_host(Ip)]),
     {http, 404, [], <<"Not Found">>, State}.
