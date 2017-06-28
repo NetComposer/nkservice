@@ -86,10 +86,10 @@ api(Req) ->
                     process_api(Req5);
                 false ->
                     ?DEBUG("request NOT allowed", [], Req4),
-                    {error, unauthorized}
+                    {error, unauthorized, Req}
             end;
         {error, Error} ->
-            {error, Error}
+            {error, Error, Req}
     end.
 
 
