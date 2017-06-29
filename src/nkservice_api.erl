@@ -21,7 +21,7 @@
 %% @doc Implementation of the NkAPI External Interface (server)
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([api/1, event/1]).
+-export([api/1, event/1, add_unknown/2]).
 
 -include_lib("nkevent/include/nkevent.hrl").
 -include("nkservice.hrl").
