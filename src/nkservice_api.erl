@@ -65,11 +65,29 @@
 %% It parses the request, getting the syntax calling SrvId:api_server_syntax()
 %% If it is valid, calls SrvId:api_server_allow() to authorized the request
 %% If is is authorized, calls SrvId:api_server_cmd() to process the request.
-%% It received some state (usually from api_server_cmd/5) that can be updated
 -spec api(req()) ->
     {ok, Reply::term(), req()} |
     {ack, pid()|undefined, req()} |
     {error, nkservice:error(), req()}.
+
+api(#nkreq{cmd = <<"event">>=Req}) ->
+    #nkreq{srv_id=SrvId, data=Data} = Req,
+    ?DEBUG("parsing event ~p", [Data], Req),
+    case nkevent_util:parse(Data#{srv_id=>SrvId}) of
+        {ok, Event} ->
+            Req2 = Req#nkreq{data=Event},
+            case SrvId:service_api_allow(Req2) of
+                true ->
+                    send_event(Event, Req2);
+                {true, Req3} ->
+                    send_event(Event, Req3);
+                false ->
+                    ?DEBUG("sending of event NOT authorized", [], Req2),
+                    {error, unauthorized}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end;
 
 api(Req) ->
     #nkreq{srv_id=SrvId, data=Data} = Req,
@@ -93,28 +111,21 @@ api(Req) ->
     end.
 
 
-%% @doc Process event sent from client
+%% @doc Called when we have received and event we were subscribed to
 -spec event(req()) ->
-    ok | {error, nkservice:error()}.
+    ok | {forward, req()}.
 
-event(Req) ->
-    #nkreq{srv_id=SrvId, data=Data} = Req,
-    ?DEBUG("parsing event ~p", [Data], Req),
-    case nkevent_util:parse(Data#{srv_id=>SrvId}) of
-        {ok, Event} ->
-            Req2 = Req#nkreq{data=Event},
-            case SrvId:service_api_allow(Req2) of
-                true ->
-                    process_event(Event, Req2);
-                {true, Req3} ->
-                    process_event(Event, Req3);
-                false ->
-                    ?DEBUG("sending of event NOT authorized", [], Req2),
-                    {error, unauthorized}
-            end;
-        {error, Error} ->
-            {error, Error}
+event(#nkreq{cmd = <<"event">>, srv_id=SrvId}=Req) ->
+    case SrvId:service_api_event(Req) of
+        ok ->
+            ok;
+        {forward, #nkreq{}=Req2} ->
+            {forward, Req2}
     end.
+
+
+
+
 
 
 %% ===================================================================
@@ -144,7 +155,7 @@ process_api(Req) ->
 
 
 %% @private
-process_event(Event, Req) ->
+send_event(Event, Req) ->
     ?DEBUG("event allowed", [], Req),
     nkevent:send(Event),
     ok.

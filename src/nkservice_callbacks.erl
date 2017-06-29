@@ -27,8 +27,7 @@
 -export([error/1, error/2]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2,
          service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1,
-         service_api_event/2]).
+-export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1, service_api_event/1]).
 -export_type([continue/0]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -309,13 +308,13 @@ service_api_cmd(_Req) ->
     {error, not_implemented}.
 
 
-%% @doc Called when the client sent an authorized event to us
-%% For slow requests, reply ack, and the ServiceModule:reply/2.
--spec service_api_event(#nkevent{}, req()) ->
-    {ok, req()} |  {error, nkservice:error(), state()}.
+%% @doc Called when the service received an event it has subscribed to
+%% By default, we forward it to the client
+-spec service_api_event(req()) ->
+    {ok, req()} |  {forward, req()}.
 
-service_api_event(_Event, Req) ->
-    {ok, Req}.
+service_api_event(Req) ->
+    {forward, Req}.
 
 
 
