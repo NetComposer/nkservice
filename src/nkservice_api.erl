@@ -21,7 +21,7 @@
 %% @doc Implementation of the NkAPI External Interface (server)
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([api/1, event/1, add_unknown/2]).
+-export([api/1, api/3, event/1, add_unknown/2]).
 
 -include_lib("nkevent/include/nkevent.hrl").
 -include("nkservice.hrl").
@@ -109,6 +109,11 @@ api(Req) ->
         {error, Error} ->
             {error, Error, Req}
     end.
+
+
+%% @doc
+api(Cmd, Data, Req) ->
+    api(Req#nkreq{cmd=Cmd, data=Data}).
 
 
 %% @doc Called when we have received and event we were subscribed to
