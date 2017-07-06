@@ -220,7 +220,7 @@ error(_)   		                -> continue.
 
 -type service() :: nkservice:service().
 
-%% @doc Called when a new service starts
+%% @doc Called when a new service starts, first for the top-level plugin
 -spec service_init(service(), state()) ->
 	{ok, state()} | {stop, term()}.
 
