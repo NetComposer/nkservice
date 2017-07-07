@@ -21,7 +21,7 @@
 %% @doc Implementation of the NkAPI External Interface (server)
 -module(nkservice_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([api/1, api/3, event/1, add_unknown/2]).
+-export([api/1, api/3, event/1, reply/1, add_unknown/2]).
 
 -include_lib("nkevent/include/nkevent.hrl").
 -include("nkservice.hrl").
@@ -127,6 +127,22 @@ event(#nkreq{cmd = <<"event">>, srv_id=SrvId}=Req) ->
         {forward, #nkreq{}=Req2} ->
             {forward, Req2}
     end.
+
+
+%% @doc Sends a reply to a command (when you reply 'ack' in specs)
+-spec reply(
+               {ok, map(), req()} |
+               {error, nkservice:error(), req()} |
+               {ack, req()} |
+               {ack, pid(), req()}
+           ) ->
+               ok | {error, term()}.
+
+reply({_, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
+    Mod:reply(Pid, Reply);
+
+reply({_, _, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
+    Mod:reply(Pid, Reply).
 
 
 

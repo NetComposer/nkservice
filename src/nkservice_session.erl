@@ -23,7 +23,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([cmd/3, cmd_async/3, send_event/2, start_ping/2, stop_ping/1, stop_session/1, stop_session/2]).
 -export([subscribe/2, unsubscribe/2, get_subscriptions/1, register/2, unregister/2]).
--export([reply/1]).
 
 
 -include("nkservice.hrl").
@@ -61,14 +60,14 @@
     ok | {error, nkservice:error()}.
 
 
-%% @doc Sends a reply to a command (when you reply 'ack' in callbacks)
--callback reply(pid(),
-                   {ok, map(), req()} |
-                   {error, nkservice:error(), req()} |
-                   {ack, req()} |
-                   {ack, pid(), req()}
-               ) ->
-                   ok.
+%%%% @doc Sends a reply to a command (when you reply 'ack' in callbacks)
+%%-callback reply(pid(),
+%%                   {ok, map(), req()} |
+%%                   {error, nkservice:error(), req()} |
+%%                   {ack, req()} |
+%%                   {ack, pid(), req()}
+%%               ) ->
+%%                   ok.
 
 
 %% @doc Start sending pings through the session
@@ -134,22 +133,6 @@ cmd_async(#nkreq{session_module=Mod, session_pid=Pid}, Cmd, Data) ->
 
 send_event(#nkreq{session_module=Mod, session_pid=Pid}, Event) ->
     Mod:send_event(Pid, Event).
-
-
-%% @doc Sends a reply to a command (when you reply 'ack' in specs)
--spec reply(
-           {ok, map(), req()} |
-           {error, nkservice:error(), req()} |
-           {ack, req()} |
-           {ack, pid(), req()}
-       ) ->
-    ok | {error, term()}.
-
-reply({_, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
-    Mod:reply(Pid, Reply);
-
-reply({_, _, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
-    Mod:reply(Pid, Reply).
 
 
 %% @doc Start sending pings
