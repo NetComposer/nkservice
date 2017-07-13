@@ -83,10 +83,10 @@ api(#nkreq{cmd = <<"event">>=Req}) ->
                     send_event(Event, Req3);
                 false ->
                     ?DEBUG("sending of event NOT authorized", [], Req2),
-                    {error, unauthorized}
+                    {error, unauthorized, Req}
             end;
         {error, Error} ->
-            {error, Error}
+            {error, Error, Req}
     end;
 
 api(Req) ->
@@ -179,7 +179,7 @@ process_api(Req) ->
 send_event(Event, Req) ->
     ?DEBUG("event allowed", [], Req),
     nkevent:send(Event),
-    ok.
+    {ok, #{}, Req}.
 
 
 %% @private
