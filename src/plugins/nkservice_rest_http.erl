@@ -210,8 +210,12 @@ init(HttpReq, [{srv_id, SrvId}]) ->
     },
     set_log(Req),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], Req),
-    {http, Code, Hds, Body} = SrvId:nkservice_rest_http(Method, Path, Req),
-    {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []}.
+    case SrvId:nkservice_rest_http(Method, Path, Req) of
+        {http, Code, Hds, Body} ->
+            {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []};
+        continue ->
+            {ok, cowboy_req:reply(404, [], <<"Resource not found">>, HttpReq), []}
+    end.
 
 
 %% @private
