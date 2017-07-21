@@ -158,6 +158,8 @@ process_api(Req) ->
     #nkreq{srv_id=SrvId} = Req,
     ?DEBUG("request allowed", [], Req),
     case SrvId:service_api_cmd(Req) of
+        ok ->
+            {ok, #{}, Req};
         {ok, Reply} ->
             {ok, Reply, Req};
         {ok, Reply, #nkreq{}=Req2} ->
