@@ -74,21 +74,16 @@ error(SrvId, Error) ->
             {ErrCode, ErrReason};
         ErrReason when is_list(ErrReason) ->
             {Error, ErrReason};
-        continue ->
+        _ ->
             % This error is not in any table, but it can be an already processed one
             case Error of
-                {exit, Exit} ->
-                    Ref = make_ref(),
-                    lager:notice("Internal error ~p: ~p", [Ref, Exit]),
-                    {internal_error, get_error_fmt("Internal error '~p'", [Ref])};
                 {ErrCode, ErrReason} when is_binary(ErrCode), is_binary(ErrReason) ->
                     {ErrCode, ErrReason};
-                _ ->
-                    lager:notice("Unrecognized error: ~p", [Error]),
-                    {Error, <<>>}
-            end;
-        _ ->
-            {Error, <<>>}
+                Other ->
+                    Ref = erlang:phash2(make_ref()),
+                    lager:notice("NkSERVICE internal error (~p): ~p", [Ref, Other]),
+                    {internal_error, get_error_fmt("Internal error (~p)", [Ref])}
+            end
     end,
     {get_error_code(Code), to_bin(Reason)}.
 
