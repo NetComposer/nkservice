@@ -80,7 +80,7 @@ error(SrvId, Error) ->
                 {ErrCode, ErrReason} when is_binary(ErrCode), is_binary(ErrReason) ->
                     {ErrCode, ErrReason};
                 Other ->
-                    Ref = erlang:phash2(make_ref()),
+                    Ref = erlang:phash2(make_ref()) rem 10000,
                     lager:notice("NkSERVICE internal error (~p): ~p", [Ref, Other]),
                     {internal_error, get_error_fmt("Internal error (~p)", [Ref])}
             end
