@@ -24,7 +24,7 @@
 -export([plugin_deps/0, plugin_group/0, 
 	     plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
 		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
--export([error/1, error/2]).
+-export([error/1, error/2, i18n/3]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2,
          service_handle_info/2, service_code_change/3, service_terminate/2]).
 -export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1, service_api_event/1]).
@@ -160,6 +160,7 @@ error(SrvId, Error) ->
     {Fmt::string(), Vals::string()} |
     {atom(), Fmt::string(), Vals::string()}.
 
+
 error(already_authenticated)	-> "Already authenticated";
 error(already_started)	        -> "Already started";
 error(already_uploaded)   		-> "Already uploaded";
@@ -212,6 +213,19 @@ error({user_not_found, User})	-> {"User not found: '~s'", [User]};
 error(user_stop) 				-> "User stop";
 error(_)   		                -> continue.
 
+
+
+%% ===================================================================
+%% i18n
+%% ===================================================================
+
+
+%% @doc
+-spec i18n(nkservice:id(), nklib_i18n:key(), nklib_i18n:lang()) ->
+    <<>> | binary().
+
+i18n(SrvId, Key, Lang) ->
+    nklib_i18n:get(SrvId, Key, Lang).
 
 
 %% ===================================================================
