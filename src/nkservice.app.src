@@ -13,7 +13,8 @@
         luerl,
         lager,
         nkpacket,
-        nkevent
+        nkevent,
+        graphql
     ]},
     {env, [
     ]}
