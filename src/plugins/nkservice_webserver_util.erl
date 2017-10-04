@@ -34,6 +34,8 @@ parse_web_server({parsed_urls, Multi}) ->
     {ok, {parsed_urls, Multi}};
 
 parse_web_server(Url) ->
+    % TODO
+
     Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
         {ok, List} -> {ok, {parsed_urls, List}};

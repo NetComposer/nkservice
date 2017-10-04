@@ -21,7 +21,7 @@
 %% @doc Default callbacks
 -module(nkservice_rest_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([parse_rest_server/1, get_rest_http/3, get_rest_ws/3]).
+-export([parse_rest_url/1, parse_rest_server/1, get_rest_http/3, get_rest_ws/3]).
 
 -include_lib("nklib/include/nklib.hrl").
 
@@ -29,6 +29,20 @@
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+
+%% @private
+parse_rest_url({parsed_urls, Multi}) ->
+    {ok, {parsed_urls, Multi}};
+
+parse_rest_url(Url) ->
+    case nkpacket:parse_urls(nkservice_rest, [http, https, ws, wss], Url) of
+        {ok, Multi} ->
+            {parsed_urls, Multi};
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 %% @private
