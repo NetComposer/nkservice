@@ -76,7 +76,9 @@ api(#nkreq{cmd = <<"event">>=Req}) ->
     case nkevent_util:parse(Data#{srv_id=>SrvId}) of
         {ok, Event} ->
             Req2 = Req#nkreq{data=Event},
-            case SrvId:service_api_allow(Req2) of
+            case nkservice_util:apply(SrvId, service_api_allow, [Req2]) of
+                unknown_service ->
+                    {error, unknown_service, Req};
                 true ->
                     send_event(Event, Req2);
                 {true, Req3} ->
@@ -91,23 +93,28 @@ api(#nkreq{cmd = <<"event">>=Req}) ->
 
 api(Req) ->
     #nkreq{srv_id=SrvId, data=Data} = Req,
-    {Syntax, Req2} = SrvId:service_api_syntax(#{}, Req),
-    ?DEBUG("parsing syntax ~p (~p)", [Data, Syntax], Req),
-    case nklib_syntax:parse(Data, Syntax) of
-        {ok, Parsed, Unknown} ->
-            Req3 = Req2#nkreq{data=Parsed},
-            Req4 = add_unknown(Unknown, Req3),
-            case SrvId:service_api_allow(Req4) of
-                true ->
-                    process_api(Req4);
-                {true, Req5} ->
-                    process_api(Req5);
-                false ->
-                    ?DEBUG("request NOT allowed", [], Req4),
-                    {error, unauthorized, Req}
-            end;
-        {error, Error} ->
-            {error, Error, Req}
+    case nkservice_util:apply(SrvId, service_api_syntax, [#{}, Req]) of
+        unknown_service ->
+            ?LLOG("error calling API on unknown service '~s'", [SrvId]),
+            {error, unknown_service, Req};
+        {Syntax, Req2} ->
+            ?DEBUG("parsing syntax ~p (~p)", [Data, Syntax], Req),
+            case nklib_syntax:parse(Data, Syntax) of
+                {ok, Parsed, Unknown} ->
+                    Req3 = Req2#nkreq{data=Parsed},
+                    Req4 = add_unknown(Unknown, Req3),
+                    case SrvId:service_api_allow(Req4) of
+                        true ->
+                            process_api(Req4);
+                        {true, Req5} ->
+                            process_api(Req5);
+                        false ->
+                            ?DEBUG("request NOT allowed", [], Req4),
+                            {error, unauthorized, Req}
+                    end;
+                {error, Error} ->
+                    {error, Error, Req}
+            end
     end.
 
 
@@ -126,7 +133,9 @@ api(Cmd, Data, Req) ->
     ok | {forward, req()}.
 
 event(#nkreq{cmd = <<"event">>, srv_id=SrvId}=Req) ->
-    case SrvId:service_api_event(Req) of
+    case nkservice_util:apply(SrvId, service_api_event, [Req]) of
+        unknown_service ->
+            ok;
         ok ->
             ok;
         {forward, #nkreq{}=Req2} ->
@@ -148,9 +157,6 @@ reply({_, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
 
 reply({_, _, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
     Mod:reply(Pid, Reply).
-
-
-
 
 
 

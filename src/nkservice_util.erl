@@ -21,7 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([call/2, call/3]).
+-export([apply/3, call/2, call/3]).
 -export([error/2]).
 -export([parse_transports/1]).
 -export([make_id/1, update_uuid/2]).
@@ -37,6 +37,17 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc
+apply(SrvId, Fun, Args) ->
+    case erlang:function_exported(SrvId, Fun, length(Args)) of
+        true ->
+            erlang:apply(SrvId, Fun, Args);
+        false ->
+            unknown_service
+    end.
+
 
 
 %% @doc Safe call (no exceptions)
@@ -56,8 +67,6 @@ call(Dest, Msg, Timeout) ->
         Other ->
             Other
     end.
-
-
 
 
 %% @private
