@@ -95,7 +95,7 @@ api(Req) ->
     #nkreq{srv_id=SrvId, data=Data} = Req,
     case nkservice_util:apply(SrvId, service_api_syntax, [#{}, Req]) of
         unknown_service ->
-            ?LLOG("error calling API on unknown service '~s'", [SrvId]),
+            ?LLOG(warning, "error calling API on unknown service '~s'", [SrvId], Req),
             {error, unknown_service, Req};
         {Syntax, Req2} ->
             ?DEBUG("parsing syntax ~p (~p)", [Data, Syntax], Req),
