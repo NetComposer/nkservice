@@ -99,7 +99,7 @@ plugin_config(Config, _Service) ->
 %% @doc This function, if implemented, allows to add listening transports.
 %% By default start the web_server and api_server transports.
 -spec plugin_listen(config(), service()) ->
-	[{nkpacket:user_connection(), nkpacket:listener_opts()}].
+	[{nkpacket:user_connection(), nkpacket:listen_opts()}].
 
 plugin_listen(_Config, #{id:=_SrvId}) ->
 	[].
