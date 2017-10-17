@@ -93,7 +93,7 @@ config_service(Config, #{id:=Id}=Service) ->
 config_plugins([], Service) ->
     Service;
 
-config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
+config_plugins([Plugin|Rest], #{name:=Name, config:=Config}=Service) ->
     Mod = get_mod(Plugin),
     Config2 = case nklib_util:apply(Mod, plugin_syntax, []) of
         not_exported -> 
@@ -111,6 +111,7 @@ config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
             end
     end,
     Service2 = Service#{config:=Config2},
+    lager:debug("Service '~s' configuring plugin ~p", [Name, Plugin]),
     Service3 = case nklib_util:apply(Mod, plugin_config, [Config2, Service2]) of
         not_exported ->
             Service2;
@@ -162,11 +163,11 @@ start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) 
     Mod = get_mod(Plugin),
     Service2 = case lists:member(Plugin, OldPlugins) of
         false ->
+            lager:info("Service '~s' starting plugin ~p", [Name, Plugin]),
             case nklib_util:apply(Mod, plugin_start, [Config, Service]) of
                 {ok, Config2} -> 
-                    lager:info("Service '~s' started plugin ~p", [Name, Plugin]),
-                        Service#{config:=Config2};
-                {stop, Error} -> 
+                    Service#{config:=Config2};
+                {stop, Error} ->
                     throw({plugin_stop, {Plugin, Error}});
                 not_exported -> 
                     Service;
@@ -174,9 +175,9 @@ start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) 
                     Service
             end;
         true ->
+            lager:info("Service '~s' updating plugin ~p", [Name, Plugin]),
             case nklib_util:apply(Mod, plugin_update, [Config, Service]) of
                 {ok, Config2} -> 
-                    lager:info("Service '~s' updated plugin ~p", [Name, Plugin]),
                     Service#{config:=Config2};
                 {stop, Error} -> 
                     throw({plugin_stop, {Plugin, Error}});
@@ -433,11 +434,11 @@ make_cache(#{id:=Id}=Service) ->
 
 
 %% @private Generates a ready-to-compile config getter functions
-%% with a function for each member of the map, plus defauls and configs
+%% with a function for each member of the map, plus defaults and configs
 make_base_syntax(Service) ->
     maps:fold(
         fun(Key, Value, Acc) -> 
-            % Maps not yet suported in 17 (supported in 18)
+            % Maps not yet supported in 17 (supported in 18)
 %%            Value1 = case is_map(Value) of
 %%                true -> {map, term_to_binary(Value)};
 %%                false -> Value

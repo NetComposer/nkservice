@@ -21,6 +21,7 @@
 %% @doc
 -module(nkservice_rest_http).
 -export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_headers/1, get_peer/1]).
+-export([get_accept/1]).
 -export([reply_json/2]).
 -export([init/2, terminate/3]).
 -export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
@@ -134,6 +135,14 @@ get_ct(#req{req=Req}) ->
 
 
 %% @doc
+-spec get_accept(req()) ->
+    binary().
+
+get_accept(#req{req=Req}) ->
+    cowboy_req:parse_header(<<"accept">>, Req).
+
+
+%% @doc
 -spec get_headers(req()) ->
     [{binary(), binary()}].
 
@@ -213,6 +222,10 @@ init(HttpReq, [{srv_id, SrvId}]) ->
     case SrvId:nkservice_rest_http(Method, Path, Req) of
         {http, Code, Hds, Body} ->
             {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []};
+        {redirect, Path2} ->
+            Url = <<(cowboy_req:url(HttpReq))/binary, (to_bin(Path2))/binary>>,
+            HttpReq2 = cowboy_req:set_resp_header(<<"location">>, Url, HttpReq),
+            {ok, cowboy_req:reply(301, [], <<>>, HttpReq2), []};
         continue ->
             {ok, cowboy_req:reply(404, [], <<"Resource not found">>, HttpReq), []}
     end.
