@@ -59,14 +59,16 @@ pre_start_service(Id) ->
 
 %% @private Stops a service supervisor
 -spec stop_service(nkservice:id()) ->
-    ok | error.
+    ok | {error, term()}.
 
 stop_service(Id) ->
     case supervisor:terminate_child(nkservice_all_srvs_sup, Id) of
         ok -> 
             ok = supervisor:delete_child(nkservice_all_srvs_sup, Id);
-        {error, _} -> 
-            error
+        {error, not_found} ->
+            {error, not_running};
+        {error, Error} ->
+            {error, Error}
     end.
 
 

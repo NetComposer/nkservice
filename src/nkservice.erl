@@ -152,18 +152,12 @@ start(Name, UserSpec) ->
 
 %% @doc Stops a service
 -spec stop(service_select()) ->
-    ok | {error, not_running}.
+    ok | {error, not_running|term()}.
 
 stop(Service) ->
     case nkservice_srv:get_srv_id(Service) of
         {ok, Id} ->
-            % nkservice_srv:stop_all(Id),
-            case nkservice_srv_sup:stop_service(Id) of
-                ok -> 
-                    ok;
-                error -> 
-                    {error, internal_error}
-            end;
+            nkservice_srv_sup:stop_service(Id);
         not_found ->
             {error, not_running}
     end.
