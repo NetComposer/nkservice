@@ -7,6 +7,8 @@
 
 -define(SRV_DELAYED_DESTROY, 3000).
 
+-define(CALL_SRV(SrvId, Fun, Args), apply(SrvId, Fun, Args)).
+
 
 
 %% ===================================================================

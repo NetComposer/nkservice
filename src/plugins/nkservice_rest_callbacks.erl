@@ -22,9 +22,9 @@
 -module(nkservice_rest_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2]).
--export([nkservice_rest_init/2, nkservice_rest_text/3,
-         nkservice_rest_handle_call/3, nkservice_rest_handle_cast/2,
-         nkservice_rest_handle_info/2, nkservice_rest_terminate/2]).
+-export([nkservice_rest_init/3, nkservice_rest_text/4,
+         nkservice_rest_handle_call/4, nkservice_rest_handle_cast/3,
+         nkservice_rest_handle_info/3, nkservice_rest_terminate/3]).
 -export([nkservice_rest_http/4]).
 
 
@@ -43,29 +43,23 @@ plugin_deps() ->
 
 %% TODO: use nkpacket:parse_urls/3
 plugin_syntax() ->
-    % For debug, add nkservice_rest to 'debug' config option, or {nkservice_rest, [nkpacket]} for full
-    nkpacket:register_protocol(nkservice_rest, nkservice_rest_protocol),
+    % For debug at nkpacket level, add debug=>true to opts (or an url)
+    % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
     #{
         nkservice_rest => {list,
            nkpacket_util:get_plugin_net_syntax(#{
                id => binary,
                url => fun nkservice_rest_util:parse_rest_url/1,
+               opts => nkpacket_syntax:safe_syntax(),
                '__mandatory' => [id, url]
            })}
     }.
-%%    nkpacket_util:get_plugin_net_syntax(#{
-%%        rest_url => fun nkservice_rest_util:parse_rest_server/1
-%%    }).
 
 
-plugin_listen(Config, #{id:=SrvId}=Srv) ->
-    {parsed_urls, RestSrv} = maps:get(rest_url, Config, {parsed_urls, []}),
-    Debug = nklib_util:get_value(nkservice_rest, maps:get(debug, Srv, [])),
-    RestSrvs1 = nkservice_rest_util:get_rest_http(SrvId, RestSrv, Config#{debug=>Debug}),
-    RestSrvs2 = nkservice_rest_util:get_rest_ws(SrvId, RestSrv, Config#{debug=>Debug}),
-    RestSrvs1 ++ RestSrvs2.
-
-
+plugin_listen(Config, #{id:=SrvId}) ->
+    Endpoints = maps:get(nkservice_rest, Config, []),
+    Listen = nkservice_rest_util:make_listen(SrvId, Endpoints),
+    lists:flatten(maps:values(Listen)).
 
 
 
@@ -75,69 +69,73 @@ plugin_listen(Config, #{id:=SrvId}=Srv) ->
 
 -type state() :: nkapi_server:user_state().
 -type continue() :: nkservice_callbacks:continue().
--type http_method() :: nkservice_rest_http:method().
--type http_path() :: nkservice_rest_http:path().
--type http_req() :: nkservice_rest_http:req().
--type http_reply() :: nkservice_rest_http:reply().
+-type id() :: nkservice_rest:id().
+-type http_method() :: nkservice_rest:method().
+-type http_path() :: nkservice_rest:path().
+-type http_req() :: nkservice_rest:req().
+-type http_reply() :: nkservice_rest:reply().
+-type nkport() :: nkpacket:nkport().
+
+
+%% @doc called when a new http request has been received
+-spec nkservice_rest_http(id(), http_method(), http_path(), http_req()) ->
+    http_reply().
+
+nkservice_rest_http(_Id, _Method, _Path, Req) ->
+    {Ip, _Port} = nkservice_rest_http:get_peer(Req),
+    ?LLOG(error, "path not found (~p): ~p from ~s", [_Method, _Path, nklib_util:to_host(Ip)]),
+    {http, 404, [], <<"Not Found">>}.
 
 
 %% @doc Called when a new connection starts
--spec nkservice_rest_init(nkpacket:nkport(), state()) ->
+-spec nkservice_rest_init(id(), nkport(), state()) ->
     {ok, state()} | {stop, term()}.
 
-nkservice_rest_init(_NkPort, State) ->
+nkservice_rest_init(_Id, _NkPort, State) ->
     {ok, State}.
 
 
 %% @doc Called when a new connection starts
--spec nkservice_rest_text(binary(), nkpacket:nkport(), state()) ->
+-spec nkservice_rest_text(id(), binary(), nkport(), state()) ->
     {ok, state()}.
 
-nkservice_rest_text(_Text, _NkPort, State) ->
+nkservice_rest_text(_Id, _Text, _NkPort, State) ->
     ?LLOG(notice, "unhandled data ~p", [_Text]),
     {ok, State}.
 
 
 %% @doc Called when the process receives a handle_call/3.
--spec nkservice_rest_handle_call(term(), {pid(), reference()}, state()) ->
+-spec nkservice_rest_handle_call(id(), term(), {pid(), reference()}, state()) ->
     {ok, state()} | continue().
 
-nkservice_rest_handle_call(Msg, _From, State) ->
+nkservice_rest_handle_call(_Id, Msg, _From, State) ->
     ?LLOG(error, "unexpected call ~p", [Msg]),
     {ok, State}.
 
 
 %% @doc Called when the process receives a handle_cast/3.
--spec nkservice_rest_handle_cast(term(), state()) ->
+-spec nkservice_rest_handle_cast(id(), term(), state()) ->
     {ok, state()} | continue().
 
-nkservice_rest_handle_cast(Msg, State) ->
+nkservice_rest_handle_cast(_Id, Msg, State) ->
     ?LLOG(error, "unexpected cast ~p", [Msg]),
     {ok, State}.
 
 
 %% @doc Called when the process receives a handle_info/3.
--spec nkservice_rest_handle_info(term(), state()) ->
+-spec nkservice_rest_handle_info(id(), term(), state()) ->
     {ok, state()} | continue().
 
-nkservice_rest_handle_info(Msg, State) ->
+nkservice_rest_handle_info(_Id, Msg, State) ->
     ?LLOG(error, "unexpected cast ~p", [Msg]),
     {ok, State}.
 
 
 %% @doc Called when a service is stopped
--spec nkservice_rest_terminate(term(), state()) ->
+-spec nkservice_rest_terminate(id(), term(), state()) ->
     {ok, state()}.
 
-nkservice_rest_terminate(_Reason, State) ->
+nkservice_rest_terminate(_Id, _Reason, State) ->
     {ok, State}.
 
 
-%% @doc called when a new http request has been received
--spec nkservice_rest_http(http_method(), http_path(), http_req(), state()) ->
-    http_reply().
-
-nkservice_rest_http(_Method, _Path, Req, State) ->
-    {Ip, _Port} = nkservice_rest_http:get_peer(Req),
-    ?LLOG(error, "path not found (~p): ~p from ~s", [_Method, _Path, nklib_util:to_host(Ip)]),
-    {http, 404, [], <<"Not Found">>, State}.

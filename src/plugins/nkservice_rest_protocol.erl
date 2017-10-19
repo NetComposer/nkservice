@@ -22,6 +22,7 @@
 -module(nkservice_rest_protocol).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([transports/1, default_port/1]).
 -export([send/2, send_async/2, stop/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4,
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
@@ -47,6 +48,18 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+transports(_) ->
+    [http, https, ws, wss].
+
+
+default_port(http) -> 80;
+default_port(https) -> 443;
+default_port(ws) -> 80;
+default_port(wss) -> 443.
+
+
+
 
 %% @doc Send a command to the client and wait a response
 -spec send(pid(), binary()) ->
@@ -75,37 +88,21 @@ stop(Pid) ->
 
 -record(state, {
     srv_id :: nkservice:id(),
+    id :: nkservice_rest:id(),
     remote :: binary(),
     user_state = #{} :: map()
 }).
-
-
-%%%% @private
-%%-spec transports(nklib:scheme()) ->
-%%    [nkpacket:transport()].
-%%
-%%transports(_) -> [wss, tls, ws, tcp, http, https].
-%%
-%%-spec default_port(nkpacket:transport()) ->
-%%    inet:port_number() | invalid.
-%%
-%%default_port(ws) -> 9010;
-%%default_port(wss) -> 9011;
-%%default_port(tcp) -> 9010;
-%%default_port(tls) -> 9011;
-%%default_port(http) -> 9010;
-%%default_port(https) -> 9011.
 
 
 -spec conn_init(nkpacket:nkport()) ->
     {ok, #state{}}.
 
 conn_init(NkPort) ->
-    {ok, {nkservice_rest, SrvId}, _} = nkpacket:get_user(NkPort),
+    {ok, {nkservice_rest, SrvId, Id}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
-    State1 = #state{srv_id = SrvId, remote = Remote},
-    set_log(State1),
-    nkservice_util:register_for_changes(SrvId),
+    State1 = #state{srv_id=SrvId, id=Id, remote=Remote},
+    set_log(SrvId),
+    %% nkservice_util:register_for_changes(SrvId),
     ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
     {ok, State2} = handle(nkservice_rest_init, [NkPort], State1),
     {ok, State2}.
@@ -189,13 +186,12 @@ conn_stop(Reason, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-set_log(#state{srv_id=SrvId}=State) ->
+set_log(SrvId) ->
     Debug = case nkservice_util:get_debug_info(SrvId, nkservice_rest) of
         {true, _} -> true;
         _ -> false
     end,
-    put(nkservice_rest_debug, Debug),
-    State.
+    put(nkservice_rest_debug, Debug).
 
 
 %% @private
@@ -214,5 +210,5 @@ do_send(Msg, NkPort) ->
 
 
 %% @private
-handle(Fun, Args, State) ->
-    nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.user_state).
+handle(Fun, Args, #state{id=Id}=State) ->
+    nklib_gen_server:handle_any(Fun, [Id|Args], State, #state.srv_id, #state.user_state).

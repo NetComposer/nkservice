@@ -38,7 +38,7 @@
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkSERVICE REST HTTP (~s) "++Txt, [State#req.remote|Args])).
 
-
+-include_lib("nkservice/include/nkservice.hrl").
 
 %% ===================================================================
 %% Types
@@ -61,9 +61,10 @@
 -type path() :: [binary()].
 
 -record(req, {
-    srv_id :: nkapi:id(),
+    srv_id :: nkservice:id(),
+    id :: nkservice_rest:id(),
     req :: term(),
-    method :: binary(),
+    method :: method(),
     path :: [binary()],
     remote :: binary()
 }).
@@ -192,7 +193,7 @@ reply_json({error, Error}, #req{srv_id=SrvId}) ->
 
 
 %% @private
-init(HttpReq, [{srv_id, SrvId}]) ->
+init(HttpReq, [{srv_id, SrvId}, {id, Id}]) ->
     {Ip, Port} = cowboy_req:peer(HttpReq),
     Remote = <<
         (nklib_util:to_host(Ip))/binary, ":",
@@ -212,14 +213,15 @@ init(HttpReq, [{srv_id, SrvId}]) ->
     end,
     Req = #req{
         srv_id = SrvId,
+        id = Id,
         req = HttpReq,
         method = Method,
         path = Path,
         remote = Remote
     },
-    set_log(Req),
+    set_log(SrvId),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], Req),
-    case SrvId:nkservice_rest_http(Method, Path, Req) of
+    case ?CALL_SRV(SrvId, nkservice_rest_http, [Id, Method, Path, Req]) of
         {http, Code, Hds, Body} ->
             {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []};
         {redirect, Path2} ->
@@ -240,17 +242,13 @@ terminate(_Reason, _Req, _Opts) ->
 %% Internal
 %% ===================================================================
 
-
 %% @private
-set_log(#req{srv_id=SrvId}=Req) ->
+set_log(SrvId) ->
     Debug = case nkservice_util:get_debug_info(SrvId, nkservice_rest) of
         {true, _} -> true;
         _ -> false
     end,
-    % lager:error("DEBUG: ~p", [Debug]),
-    put(nkservice_rest_debug, Debug),
-    Req.
-
+    put(nkservice_rest_debug, Debug).
 
 
 %% @private

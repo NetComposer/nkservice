@@ -39,10 +39,14 @@
 start() ->
     Spec = #{
         callback => ?MODULE,
-        rest_url => "https://all:9010/test1, wss:all:9010/test1/ws",
-        webserver_url => "https://all:9010/webs",
-        %debug => [{nkservice_rest, [nkpacket]}, {nkservice_webserver, [nkpacket]}],
-        packet_no_dns_cache => false
+        nkservice_rest => [
+            #{
+                id => listen1,
+                url => "https://all:9010/test1, wss:all:9010/test1/ws;idle_timeout=10",
+                opts => #{debug=>true}
+            }
+        ],
+        debug => [nkservice_rest]
     },
     nkservice:start(?SRV, Spec).
 
@@ -63,10 +67,6 @@ test1() ->
         nklib_json:decode(B).
 
 test2() ->
-    Url = "https://127.0.0.1:9010/webs/hi.txt",
-    {ok, {{_, 200, _}, _, _B}} = httpc:request(Url).
-
-test3() ->
     Url = "wss://127.0.0.1:9010/test1/ws",
     {ok, #{}, Pid} = nkapi_client:start(?SRV, Url, u1, none, #{}),
     nkapi_client:stop(Pid).
@@ -80,21 +80,21 @@ test3() ->
 %% ===================================================================
 
 plugin_deps() ->
-    [nkservice_rest, nkservice_webserver].
+    [nkservice_rest].
 
 
-nkservice_rest_http(_SrvId, post, [<<"test-a">>], Req, State) ->
+nkservice_rest_http(<<"listen1">>, post, [<<"test-a">>], Req) ->
     Qs = maps:from_list(nkservice_rest_http:get_qs(Req)),
     CT = nkservice_rest_http:get_ct(Req),
-    Body = nkservice_rest_http:get_body(Req, #{parse=>true}),
+    {ok, Body} = nkservice_rest_http:get_body(Req, #{parse=>true}),
     Reply = nklib_json:encode(#{qs=>Qs, ct=>CT, body=>Body}),
-    {http, 200, [{<<"header1">>, 1}], Reply, State};
+    {http, 200, [{<<"header1">>, 1}], Reply};
 
-nkservice_rest_http(_SrvId, _Method, _Path, _Req, _State) ->
+nkservice_rest_http(_Id, _Method, _Path, _Req) ->
     continue.
 
 
-nkservice_rest_text(Text, _NkPort, State) ->
+nkservice_rest_text(<<"listen">>, Text, _NkPort, State) ->
     #{
         <<"cmd">> := <<"login">>,
         <<"tid">> := TId
