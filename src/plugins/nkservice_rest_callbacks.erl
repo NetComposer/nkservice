@@ -41,18 +41,17 @@ plugin_deps() ->
 	[].
 
 
-%% TODO: use nkpacket:parse_urls/3
 plugin_syntax() ->
-    % For debug at nkpacket level, add debug=>true to opts (or an url)
+    % For debug at nkpacket level, add debug=>true to opts (or in a url)
     % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
     #{
         nkservice_rest => {list,
-           nkpacket_util:get_plugin_net_syntax(#{
+           #{
                id => binary,
-               url => fun nkservice_rest_util:parse_rest_url/1,
+               url => fun nkservice_rest_util:parse_url/1,
                opts => nkpacket_syntax:safe_syntax(),
                '__mandatory' => [id, url]
-           })}
+           }}
     }.
 
 

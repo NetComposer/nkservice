@@ -18,39 +18,5 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Default callbacks
 -module(nkservice_webserver).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_syntax/0, plugin_listen/2]).
-
-
-%% ===================================================================
-%% Plugin Callbacks
-%% ===================================================================
-
-plugin_deps() ->
-	[].
-
-
-%% TODO: use nkpacket:parse_urls/3
-plugin_syntax() ->
-    % For debug, add {nkservice_webserver, [nkpacket]} to 'debug' option
-    nkpacket_util:get_plugin_net_syntax(#{
-        webserver_url => fun nkservice_webserver_util:parse_web_server/1,
-        webserver_path => binary
-    }).
-
-
-plugin_listen(Config, #{id:=SrvId}=Srv) ->
-    {parsed_urls, WebSrv} = maps:get(webserver_url, Config, {parsed_urls, []}),
-    Debug = nklib_util:get_value(nkservice_webserver, maps:get(debug, Srv, [])),
-    Path = case Config of
-        #{webserver_path:=UserPath} ->
-            UserPath;
-        _ ->
-            Priv = list_to_binary(code:priv_dir(nkservice)),
-            <<Priv/binary, "/www">>
-    end,
-    nkservice_webserver_util:get_web_servers(SrvId, WebSrv, Path, Config#{debug=>Debug}).
-
-
