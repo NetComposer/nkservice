@@ -28,6 +28,7 @@
 -export([get_debug/2, get_debug_info/2]).
 -export([register_for_changes/1, notify_updated_service/1]).
 
+-include("nkservice.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
 
 
@@ -43,7 +44,7 @@
 apply(SrvId, Fun, Args) ->
     case erlang:function_exported(SrvId, Fun, length(Args)) of
         true ->
-            erlang:apply(SrvId, Fun, Args);
+            ?CALL_SRV(SrvId, Fun, Args);
         false ->
             unknown_service
     end.

@@ -7,7 +7,7 @@
 
 -define(SRV_DELAYED_DESTROY, 3000).
 
--define(CALL_SRV(SrvId, Fun, Args), apply(SrvId, Fun, Args)).
+-define(CALL_SRV(SrvId, Fun, Args), erlang:apply(SrvId, Fun, Args)).
 
 
 
@@ -18,11 +18,11 @@
 
 -record(nkreq, {
     srv_id :: nkservice:id(),
+    api_id :: term(),
     session_module :: module(),
     session_id = <<>> :: nkservice:session_id(),
     session_pid :: pid(),
     session_meta = #{} :: map(),
-    session_manager = undefined :: term(),        % For pattern matching
     tid :: term(),
     cmd = <<>> :: nkservice:req_cmd(),
     data = #{} :: nkservice:req_data(),
