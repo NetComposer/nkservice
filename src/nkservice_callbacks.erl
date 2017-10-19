@@ -27,7 +27,7 @@
 -export([error/1, error/2, i18n/3]).
 -export([service_init/2, service_handle_call/3, service_handle_cast/2,
          service_handle_info/2, service_code_change/3, service_terminate/2]).
--export([service_api_syntax/2, service_api_allow/1, service_api_cmd/1, service_api_event/1]).
+-export([service_api_syntax/3, service_api_allow/2, service_api_cmd/2, service_api_event/2]).
 -export_type([continue/0]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -291,25 +291,28 @@ service_terminate(_Reason, State) ->
 %% Service API
 %% ===================================================================
 
+-type api_id() :: term().
+
+
 %% @doc Called to get the syntax for an external API command
--spec service_api_syntax(nklib_syntax:syntax(), req()) ->
+-spec service_api_syntax(api_id(), nklib_syntax:syntax(), req()) ->
     {nklib_syntax:syntax(), req()}.
 
-service_api_syntax(SyntaxAcc, Req) ->
+service_api_syntax(_Id, SyntaxAcc, Req) ->
     {SyntaxAcc, Req}.
 
 
 %% @doc Called to authorize process a new API command
--spec service_api_allow(req()) ->
+-spec service_api_allow(api_id(), req()) ->
     boolean() | {true, req(), state()}.
 
-service_api_allow(_Req) ->
+service_api_allow(_Id, _Req) ->
     false.
 
 
 %% @doc Called to process a new authorized API command
 %% For slow requests, reply ack, and the ServiceModule:reply/2.
--spec service_api_cmd(req()) ->
+-spec service_api_cmd(api_id(), req()) ->
     {ok, Reply::map()} |
     {ok, Reply::map(), req()} |
     ack |
@@ -318,16 +321,16 @@ service_api_allow(_Req) ->
     {error, nkservice:error()}  |
     {error, nkservice:error(), req()}.
 
-service_api_cmd(_Req) ->
+service_api_cmd(_Id, _Req) ->
     {error, not_implemented}.
 
 
 %% @doc Called when the service received an event it has subscribed to
 %% By default, we forward it to the client
--spec service_api_event(req()) ->
+-spec service_api_event(api_id(), req()) ->
     {ok, req()} |  {forward, req()}.
 
-service_api_event(Req) ->
+service_api_event(_Id, Req) ->
     {forward, Req}.
 
 

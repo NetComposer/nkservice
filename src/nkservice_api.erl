@@ -36,15 +36,19 @@
 -define(LLOG(Type, Txt, Args, Req),
     lager:Type(
         [
+            {srv_id, Req#nkreq.srv_id},
+            {api_id, Req#nkreq.api_id},
             {session_id, Req#nkreq.session_id},
             {user_id, Req#nkreq.user_id},
             {cmd, Req#nkreq.cmd}
         ],
-        "NkSERVICE API (~s, ~s, ~s) "++Txt,
+        "NkSERVICE API (~s:~s, ~s: ~s (user ~s)) "++Txt,
         [
-            Req#nkreq.user_id,
+            Req#nkreq.srv_id,
+            Req#nkreq.api_id,
             Req#nkreq.session_id,
-            Req#nkreq.cmd
+            Req#nkreq.cmd,
+            Req#nkreq.user_id
             | Args
         ])).
 
@@ -71,12 +75,12 @@
     {error, nkservice:error(), req()}.
 
 api(#nkreq{cmd = <<"event">>=Req}) ->
-    #nkreq{srv_id=SrvId, data=Data} = Req,
+    #nkreq{srv_id=SrvId, api_id=ApiId, data=Data} = Req,
     ?DEBUG("parsing event ~p", [Data], Req),
     case nkevent_util:parse(Data#{srv_id=>SrvId}) of
         {ok, Event} ->
             Req2 = Req#nkreq{data=Event},
-            case nkservice_util:apply(SrvId, service_api_allow, [Req2]) of
+            case nkservice_util:apply(SrvId, service_api_allow, [ApiId, Req2]) of
                 unknown_service ->
                     {error, unknown_service, Req};
                 true ->
@@ -92,8 +96,8 @@ api(#nkreq{cmd = <<"event">>=Req}) ->
     end;
 
 api(Req) ->
-    #nkreq{srv_id=SrvId, data=Data} = Req,
-    case nkservice_util:apply(SrvId, service_api_syntax, [#{}, Req]) of
+    #nkreq{srv_id=SrvId, api_id=ApiId, data=Data} = Req,
+    case nkservice_util:apply(SrvId, service_api_syntax, [ApiId, #{}, Req]) of
         unknown_service ->
             ?LLOG(warning, "error calling API on unknown service '~s'", [SrvId], Req),
             {error, unknown_service, Req};
@@ -103,7 +107,7 @@ api(Req) ->
                 {ok, Parsed, Unknown} ->
                     Req3 = Req2#nkreq{data=Parsed},
                     Req4 = add_unknown(Unknown, Req3),
-                    case SrvId:service_api_allow(Req4) of
+                    case ?CALL_SRV(SrvId, service_api_allow, [ApiId, Req4]) of
                         true ->
                             process_api(Req4);
                         {true, Req5} ->
@@ -132,8 +136,8 @@ api(Cmd, Data, Req) ->
 -spec event(req()) ->
     ok | {forward, req()}.
 
-event(#nkreq{cmd = <<"event">>, srv_id=SrvId}=Req) ->
-    case nkservice_util:apply(SrvId, service_api_event, [Req]) of
+event(#nkreq{cmd = <<"event">>, srv_id=SrvId, api_id=ApiId}=Req) ->
+    case nkservice_util:apply(SrvId, service_api_event, [ApiId, Req]) of
         unknown_service ->
             ok;
         ok ->
@@ -166,9 +170,9 @@ reply({_, _, #nkreq{session_module=Mod, session_pid=Pid}}=Reply) ->
 
 %% @private
 process_api(Req) ->
-    #nkreq{srv_id=SrvId} = Req,
+    #nkreq{srv_id=SrvId, api_id=ApiId} = Req,
     ?DEBUG("request allowed", [], Req),
-    case SrvId:service_api_cmd(Req) of
+    case ?CALL_SRV(SrvId, service_api_cmd, [ApiId, Req]) of
         ok ->
             {ok, #{}, Req};
         {ok, Reply} ->

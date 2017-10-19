@@ -134,7 +134,7 @@ config_plugins([Plugin|Rest], #{name:=Name, config:=Config}=Service) ->
         Apply3 ->
             case nkservice_util:parse_transports(Apply3) of
                 {ok, Parsed2} -> 
-                    lager:debug("NkSERVICE parsed transport: ~p", [Parsed2]),
+                    lager:debug("NkSERVICE parsed transport (~p): ~p", [Mod, Parsed2]),
                     OldListen = maps:get(listen, Service, #{}),
                     Listen = maps:put(Plugin, Parsed2, OldListen),
                     Service3#{listen=>Listen};
