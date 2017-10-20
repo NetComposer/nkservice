@@ -89,6 +89,7 @@ plugin_defaults() ->
 %% @doc This function can modify the service configuration, and can also
 %% generate a specific plugin configuration (in the second return), that will be 
 %% accessible in the generated module as config_(plugin_name).
+%% Top-level plugins will be called first, so they can set up configurations for low-level
 -spec plugin_config(config(), service()) ->
 	{ok, config()} | {ok, config(), term()} | {error, term()}.
 

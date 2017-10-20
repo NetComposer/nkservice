@@ -57,6 +57,7 @@ plugin_syntax() ->
 
 plugin_listen(Config, #{id:=SrvId}) ->
     Endpoints = maps:get(nkservice_rest, Config, []),
+    lager:notice("NKLOG REST LISTEN ~p", [Endpoints]),
     Listen = nkservice_rest_util:make_listen(SrvId, Endpoints),
     lists:flatten(maps:values(Listen)).
 

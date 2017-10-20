@@ -21,6 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([add_config_obj/3]).
 -export([apply/3, call/2, call/3]).
 -export([error/2]).
 -export([parse_transports/1]).
@@ -38,6 +39,16 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+%% @doc Adds a configuration object to a key in config that is a list
+-spec add_config_obj(atom(), map(), map()) ->
+    map().
+
+add_config_obj(Key, Data, Config) ->
+    List1 = maps:get(Key, Config, []),
+    List2 = [Data|List1],
+    Config#{Key => List2}.
+
 
 
 %% @doc
