@@ -98,7 +98,7 @@ stop(Pid) ->
     {ok, #state{}}.
 
 conn_init(NkPort) ->
-    {ok, {nkservice_rest, SrvId, Id}, _} = nkpacket:get_user(NkPort),
+    {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State1 = #state{srv_id=SrvId, id=Id, remote=Remote},
     set_log(SrvId),

@@ -201,7 +201,7 @@ stop_plugins([Plugin|Rest], #{name:=Name}=Service) ->
     case maps:find(Plugin, ListenIds) of
         {ok, PluginIds} ->
             lists:foreach(
-                fun(ListenId) -> nkpacket:stop_listener(ListenId) end, PluginIds);
+                fun(ListenId) -> nkpacket:stop_listeners(ListenId) end, PluginIds);
         error -> 
             ok
     end,

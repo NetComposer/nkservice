@@ -36,7 +36,7 @@ parse_url({?MODULE, urls, Multi}) ->
     {ok, {?MODULE, urls, Multi}};
 
 parse_url(Url) ->
-    case nkpacket:multi_resolve(Url, #{resolve_type=>listen, protocol=>nkservice_rest_protocol}) of
+    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_rest_protocol}) of
         {ok, Multi} ->
             {ok, {?MODULE, urls, Multi}};
         {error, Error} ->
