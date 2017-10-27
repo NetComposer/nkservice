@@ -211,9 +211,8 @@ pending_msgs() ->
 %% @private
 init(#{id:=Id, name:=Name}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
-    case nkservice_srv_listen_sup:update_transports(Service) of
-        {ok, Listen} ->
-            Service2 = Service#{listen_ids=>Listen},
+    case nkservice_srv_listen_sup:start_transports(Service) of
+        {ok, Service2} ->
             Class = maps:get(class, Service, undefined),
             nklib_proc:put(?MODULE, {Id, Class}),   
             nklib_proc:put({?MODULE, Name}, Id),   
@@ -241,7 +240,7 @@ handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) 
     #{id:=Id, name:=Name} = Service,
     case nkservice_config:config_service(UserSpec, Service) of
         {ok, Service2} ->
-            case nkservice_srv_listen_sup:update_transports(Service2) of
+            case nkservice_srv_listen_sup:start_transports(Service2) of
                 {ok, Listen} ->
                     Service3 = Service2#{listen_ids=>Listen},
                     nkservice_config:make_cache(Service3),

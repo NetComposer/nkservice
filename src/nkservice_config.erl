@@ -26,6 +26,8 @@
 -include_lib("nkpacket/include/nkpacket.hrl").
 
 
+-define(LLOG(Type, Txt, Args, Service),
+    lager:Type("NkSERVICE '~s' "++Txt, [maps:get(id, Service) | Args])).
 
 
 %% ===================================================================
@@ -50,8 +52,10 @@ config_service(Config, #{id:=Id}=Service) ->
             log_level => log_level     %% TO REMOVE
         },
         Config3 = case nklib_syntax:parse(Config2, Syntax) of
-            {ok, Parsed, _} -> maps:merge(Config2, Parsed);
-            {error, Error1} -> throw(Error1)
+            {ok, Parsed, _} ->
+                maps:merge(Config2, Parsed);
+            {error, Error1} ->
+                throw(Error1)
         end,
         GlobalKeys = [class, plugins, callback, log_level, debug],
         % Extract global key values from Config, if present
@@ -64,8 +68,10 @@ config_service(Config, #{id:=Id}=Service) ->
         Plugins = maps:get(plugins, Service3, []),
         CallBack = maps:get(callback, Service3, none),
         DownToTop = case expand_plugins([nkservice|Plugins], CallBack) of
-            {ok, Expanded} -> Expanded;
-            {error, Error2} -> throw(Error2)
+            {ok, Expanded} ->
+                Expanded;
+            {error, Error2} ->
+                throw(Error2)
         end,
         OldPlugins = maps:get(plugins, Service, []),
         ToStop = lists:reverse(OldPlugins -- DownToTop),
@@ -79,7 +85,7 @@ config_service(Config, #{id:=Id}=Service) ->
         TopToDown = lists:reverse(DownToTop),
         Service6 = config_plugins(TopToDown, Service5),
         Service7 = start_plugins(DownToTop, OldPlugins, Service6),
-        Defaults = #{log_level=>notice, listen_ids=>#{}},
+        Defaults = #{log_level=>notice},
         Service8 = maps:merge(Defaults, Service7),
         Service9 = set_luerl(Service8),
         {ok, Service9}
@@ -93,8 +99,8 @@ config_service(Config, #{id:=Id}=Service) ->
 config_plugins([], Service) ->
     Service;
 
-config_plugins([Plugin|Rest], #{name:=Name, config:=Config}=Service) ->
-    Mod = get_mod(Plugin),
+config_plugins([Plugin|Rest], #{config:=Config}=Service) ->
+    Mod = get_plugin(Plugin),
     Config2 = case nklib_util:apply(Mod, plugin_syntax, []) of
         not_exported -> 
             Config;
@@ -111,17 +117,17 @@ config_plugins([Plugin|Rest], #{name:=Name, config:=Config}=Service) ->
             end
     end,
     Service2 = Service#{config:=Config2},
-    lager:debug("Service '~s' configuring plugin ~p", [Name, Plugin]),
+    ?LLOG(debug, "configuring plugin ~p", [Plugin], Service),
     Service3 = case nklib_util:apply(Mod, plugin_config, [Config2, Service2]) of
         not_exported ->
             Service2;
         continue ->
             Service2;
-        {ok, ApplyConfig} ->
-            Service2#{config:=ApplyConfig};
-        {ok, ApplyConfig, ApplyCache} ->
+        {ok, PluginConfig} ->
+            Service2#{config:=PluginConfig};
+        {ok, PluginConfig, PluginConfigCache} ->
             Key = list_to_atom("config_"++atom_to_list(Plugin)),
-            maps:put(Key, ApplyCache, Service2#{config:=ApplyConfig});
+            maps:put(Key, PluginConfigCache, Service2#{config:=PluginConfig});
         {error, Error2} ->
             throw({{Plugin, Error2}})
     end,
@@ -131,10 +137,10 @@ config_plugins([Plugin|Rest], #{name:=Name, config:=Config}=Service) ->
             Service3;
         continue ->
             Service3;
-        Apply3 ->
-            case nkservice_util:parse_transports(Apply3) of
+        PluginListen ->
+            case parse_plugin_listen(PluginListen, Plugin, Service, []) of
                 {ok, Parsed2} -> 
-                    lager:debug("NkSERVICE parsed transport (~p): ~p", [Mod, Parsed2]),
+                    lager:debug("NkSERVICE parsed transport (~p): ~p", [Plugin, Parsed2]),
                     OldListen = maps:get(listen, Service, #{}),
                     Listen = maps:put(Plugin, Parsed2, OldListen),
                     Service3#{listen=>Listen};
@@ -160,13 +166,15 @@ config_plugins([Plugin|Rest], #{name:=Name, config:=Config}=Service) ->
 start_plugins([], _OldPlugins, Service) ->
     Service;
 
-start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) ->
-    Mod = get_mod(Plugin),
+start_plugins([Plugin|Rest], OldPlugins, #{config:=Config}=Service) ->
+    Mod = get_plugin(Plugin),
     Service2 = case lists:member(Plugin, OldPlugins) of
         false ->
-            lager:info("Service '~s' starting plugin ~p", [Name, Plugin]),
+            ?LLOG(info, "starting plugin ~p", [Plugin], Service),
             case nklib_util:apply(Mod, plugin_start, [Config, Service]) of
-                {ok, Config2} -> 
+                ok ->
+                    Service;
+                {ok, Config2} ->
                     Service#{config:=Config2};
                 {stop, Error} ->
                     throw({plugin_stop, {Plugin, Error}});
@@ -176,9 +184,11 @@ start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) 
                     Service
             end;
         true ->
-            lager:info("Service '~s' updating plugin ~p", [Name, Plugin]),
+            ?LLOG(info, "updating plugin ~p", [Plugin], Service),
             case nklib_util:apply(Mod, plugin_update, [Config, Service]) of
-                {ok, Config2} -> 
+                ok ->
+                    Service;
+                {ok, Config2} ->
                     Service#{config:=Config2};
                 {stop, Error} -> 
                     throw({plugin_stop, {Plugin, Error}});
@@ -195,7 +205,7 @@ start_plugins([Plugin|Rest], OldPlugins, #{name:=Name, config:=Config}=Service) 
 stop_plugins([], Service) ->
     Service;
 
-stop_plugins([Plugin|Rest], #{name:=Name}=Service) ->
+stop_plugins([Plugin|Rest], Service) ->
     #{config:=Config, listen:=Listen, listen_ids:=ListenIds} = Service,
     Listen2 = maps:remove(Plugin, Listen),
     case maps:find(Plugin, ListenIds) of
@@ -206,10 +216,13 @@ stop_plugins([Plugin|Rest], #{name:=Name}=Service) ->
             ok
     end,
     ListenIds2 = maps:remove(Plugin, ListenIds),
-    Mod = get_mod(Plugin),
+    Mod = get_plugin(Plugin),
     Service2 = case nklib_util:apply(Mod, plugin_stop, [Config, Service]) of
-        {ok, Config2} -> 
-            lager:info("Service '~s' stopped plugin ~p", [Name, Plugin]),
+        ok ->
+            ?LLOG("stopped plugin ~p", [Plugin], Service),
+            Service;
+        {ok, Config2} ->
+            ?LLOG("stopped plugin ~p", [Plugin], Service),
             Service#{config:=Config2};
         not_exported -> 
             Service;
@@ -222,10 +235,18 @@ stop_plugins([Plugin|Rest], #{name:=Name}=Service) ->
 
 
 %% @private
-get_mod(Plugin) ->
-    case get_callback(Plugin) of
-        {ok, Callback} -> Callback;
-        error -> throw({unknown_plugin, Plugin})
+get_plugin(Plugin) ->
+    Mod = list_to_atom(atom_to_list(Plugin)++"_plugin"),
+    case code:ensure_loaded(Mod) of
+        {module, _} ->
+            {ok, Mod};
+        {error, nofile} ->
+            case code:ensure_loaded(Plugin) of
+                {module, _} ->
+                    {ok, Plugin};
+                {error, nofile} ->
+                    throw({unknown_plugin, Plugin})
+            end
     end.
 
 
@@ -240,9 +261,34 @@ get_callback(Plugin) ->
                 {module, _} ->
                     {ok, Plugin};
                 {error, nofile} ->
-                    error
+                    throw({unknown_plugin, Plugin})
             end
     end.
+
+
+%% @private
+parse_plugin_listen(Map, Plugin, Service, []) when is_map(Map) ->
+    parse_plugin_listen(maps:to_list(Map), Plugin, Service, []);
+
+parse_plugin_listen([], _Plugin, _Service, Acc) ->
+    {ok, lists:reverse(Acc)};
+
+parse_plugin_listen([{Id, Conn}|Rest], Plugin, Service, Acc) ->
+    case nkpacket_resolve:resolve(Conn, #{resolve=>listen}) of
+        {ok, List} ->
+            List2 = [
+                Conn#nkconn{opts=Opts#{id=>{nkservice, Plugin, Id}}}
+                || #nkconn{opts=Opts}=Conn <- List
+            ],
+            parse_plugin_listen(Rest, Plugin, Service, [{Id, List2}|Acc]);
+        {error, Error} ->
+            ?LLOG(notice, "parsing plugin listen (~p, ~p): ~p", [Plugin, Conn, Error], Service),
+            error
+    end;
+
+parse_plugin_listen([Other|_], Plugin, Service, _Acc) ->
+    ?LLOG(notice, "parsing plugin listen (~p): ~p", [Plugin, Other], Service),
+    error.
 
 
 %% @private
@@ -252,14 +298,18 @@ get_callback(Plugin) ->
 expand_plugins(ModuleList, CallBack) ->
     try
         List1 = case CallBack of
-            none -> ModuleList;
-            _ -> [{CallBack, ModuleList}|ModuleList]
+            none ->
+                ModuleList;
+            _ ->
+                [{CallBack, ModuleList}|ModuleList]
         end,
         List2 = add_group_deps(List1),
         List3 = add_all_deps(List2, []),
         case nklib_sort:top_sort(List3) of
-            {ok, Sorted} -> {ok, Sorted};
-            {error, Error} -> {error, Error}
+            {ok, Sorted} ->
+                {ok, Sorted};
+            {error, Error} ->
+                {error, Error}
         end
     catch
         throw:Throw -> {error, Throw}
@@ -277,30 +327,26 @@ add_group_deps(Plugins) ->
 add_group_deps([], Acc, _Groups) ->
     Acc;
 
-add_group_deps([Name|Rest], Acc, Groups) when is_atom(Name) ->
-    add_group_deps([{Name, []}|Rest], Acc, Groups);
+add_group_deps([Plugin|Rest], Acc, Groups) when is_atom(Plugin) ->
+    add_group_deps([{Plugin, []}|Rest], Acc, Groups);
 
-add_group_deps([{Name, Deps}|Rest], Acc, Groups) ->
-    Group = case get_callback(Name) of
-        {ok, Mod} ->
-            case nklib_util:apply(Mod, plugin_group, []) of
-                not_exported -> undefined;
-                continue -> undefined;
-                Group0 -> Group0
-            end;
-        error ->
-            throw({unknown_plugin, Name})
+add_group_deps([{Plugin, Deps}|Rest], Acc, Groups) ->
+    Mod = get_callback(Plugin),
+    Group = case nklib_util:apply(Mod, plugin_group, []) of
+        not_exported -> undefined;
+        continue -> undefined;
+        Group0 -> Group0
     end,
     case Group of
         undefined ->
-            add_group_deps(Rest, [{Name, Deps}|Acc], Groups);
+            add_group_deps(Rest, [{Plugin, Deps}|Acc], Groups);
         _ ->
-            Groups2 = maps:put(Group, Name, Groups),
+            Groups2 = maps:put(Group, Plugin, Groups),
             case maps:find(Group, Groups) of
                 error ->
-                    add_group_deps(Rest, [{Name, Deps}|Acc], Groups2);
+                    add_group_deps(Rest, [{Plugin, Deps}|Acc], Groups2);
                 {ok, Last} ->
-                    add_group_deps(Rest, [{Name, [Last|Deps]}|Acc], Groups2)
+                    add_group_deps(Rest, [{Plugin, [Last|Deps]}|Acc], Groups2)
             end
     end.
 
@@ -309,18 +355,18 @@ add_group_deps([{Name, Deps}|Rest], Acc, Groups) ->
 add_all_deps([], Acc) ->
     Acc;
 
-add_all_deps([Name|Rest], Acc) when is_atom(Name) ->
-    add_all_deps([{Name, []}|Rest], Acc);
+add_all_deps([Plugin|Rest], Acc) when is_atom(Plugin) ->
+    add_all_deps([{Plugin, []}|Rest], Acc);
 
-add_all_deps([{Name, List}|Rest], Acc) when is_atom(Name) ->
-    case lists:keyfind(Name, 1, Acc) of
-        {Name, OldList} ->
+add_all_deps([{Plugin, List}|Rest], Acc) when is_atom(Plugin) ->
+    case lists:keyfind(Plugin, 1, Acc) of
+        {Plugin, OldList} ->
             List2 = lists:usort(OldList++List),
-            Acc2 = lists:keystore(Name, 1, Acc, {Name, List2}),
+            Acc2 = lists:keystore(Plugin, 1, Acc, {Plugin, List2}),
             add_all_deps(Rest, Acc2);
         false ->
-            Deps = get_plugin_deps(Name, List),
-            add_all_deps(Deps++Rest, [{Name, Deps}|Acc])
+            Deps = get_plugin_deps(Plugin, List),
+            add_all_deps(Deps++Rest, [{Plugin, Deps}|Acc])
     end;
 
 add_all_deps([Other|_], _Acc) ->
@@ -328,21 +374,17 @@ add_all_deps([Other|_], _Acc) ->
 
 
 %% @private
-get_plugin_deps(Name, BaseDeps) ->
-    Deps = case get_callback(Name) of
-        {ok, Mod} ->
-            case nklib_util:apply(Mod, plugin_deps, []) of
-                List when is_list(List) ->
-                    List;
-                not_exported ->
-                    [];
-                continue ->
-                    []
-            end;
-        error ->
-            throw({unknown_plugin, Name})
+get_plugin_deps(Plugin, BaseDeps) ->
+    Mod = get_plugin(Plugin),
+    Deps = case nklib_util:apply(Mod, plugin_deps, []) of
+        List when is_list(List) ->
+            List;
+        not_exported ->
+            [];
+        continue ->
+            []
     end,
-    lists:usort(BaseDeps ++ [nkservice|Deps]) -- [Name].
+    lists:usort(BaseDeps ++ [nkservice|Deps]) -- [Plugin].
 
 
 %% @private
@@ -439,11 +481,6 @@ make_cache(#{id:=Id}=Service) ->
 make_base_syntax(Service) ->
     maps:fold(
         fun(Key, Value, Acc) -> 
-            % Maps not yet supported in 17 (supported in 18)
-%%            Value1 = case is_map(Value) of
-%%                true -> {map, term_to_binary(Value)};
-%%                false -> Value
-%%            end,
             [nklib_code:getter(Key, Value)|Acc]
         end,
         [],
@@ -458,19 +495,11 @@ plugin_callbacks_syntax(Plugins) ->
 
 
 %% @private
-plugin_callbacks_syntax([Name|Rest], Map) ->
-    Mod = list_to_atom(atom_to_list(Name)++"_callbacks"),
-    code:ensure_loaded(Mod),
+plugin_callbacks_syntax([Plugin|Rest], Map) ->
+    Mod = get_callback(Plugin),
     case nklib_code:get_funs(Mod) of
         error ->
-            code:ensure_loaded(Name),
-            case nklib_code:get_funs(Name) of
-                error ->
-                    plugin_callbacks_syntax(Rest, Map);
-                List ->
-                    Map1 = plugin_callbacks_syntax(List, Name, Map),
-                    plugin_callbacks_syntax(Rest, Map1)
-            end;
+            plugin_callbacks_syntax(Rest, Map);
         List ->
             Map1 = plugin_callbacks_syntax(List, Mod, Map),
             plugin_callbacks_syntax(Rest, Map1)
@@ -529,14 +558,6 @@ do_parse_debug([{Mod, Data}|Rest], Acc) ->
     Mod2 = nklib_util:to_atom(Mod),
     do_parse_debug(Rest, [{Mod2, Data}|Acc]);
 
-
-% case code:ensure_loaded(Mod2) of
-%     {module, Mod2} ->
-%         do_parse_debug(Rest, [{Mod, Data}|Acc]);
-%     _ ->
-%         lager:warning("Module ~p could not be loaded", [Mod2]),
-%         error
-% end;
 
 do_parse_debug([Mod|Rest], Acc) ->
     do_parse_debug([{Mod, []}|Rest], Acc).

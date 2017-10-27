@@ -19,9 +19,14 @@
 %% -------------------------------------------------------------------
 
 %% @doc Default callbacks
--module(nkservice_webserver_callbacks).
+-module(nkservice_rest_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2]).
+
+
+-include_lib("nklib/include/nklib.hrl").
+
+-define(LLOG(Type, Txt, Args),lager:Type("NkSERVICE REST "++Txt, Args)).
 
 
 %% ===================================================================
@@ -34,12 +39,12 @@ plugin_deps() ->
 
 plugin_syntax() ->
     % For debug at nkpacket level, add debug=>true to opts (or in a url)
+    % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
     #{
-        nkservice_webserver => {list,
+        nkservice_rest => {list,
            #{
                id => binary,
-               url => fun nkservice_webserver_util:parse_url/1,
-               file_path => binary,
+               url => fun nkservice_rest_util:parse_url/1,
                opts => nkpacket_syntax:safe_syntax(),
                '__mandatory' => [id, url]
            }}
@@ -47,11 +52,8 @@ plugin_syntax() ->
 
 
 plugin_listen(Config, #{id:=SrvId}) ->
-    lager:error("NKLOG REST LISTEN ~p", [Config]),
-
-    Endpoints = maps:get(nkservice_webserver, Config, []),
-    Listen = nkservice_webserver_util:make_listen(SrvId, Endpoints),
+    Endpoints = maps:get(nkservice_rest, Config, []),
+    lager:notice("NKLOG REST LISTEN ~p", [Endpoints]),
+    Listen = nkservice_rest_util:make_listen(SrvId, Endpoints),
     lists:flatten(maps:values(Listen)).
-
-
 

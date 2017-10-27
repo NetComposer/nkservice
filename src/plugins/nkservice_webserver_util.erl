@@ -23,6 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([parse_url/1, make_listen/2]).
 
+-include_lib("nkpacket/include/nkpacket.hrl").
 
 %% ===================================================================
 %% Webserver & rest
@@ -31,14 +32,14 @@
 
 
 %% @private
-parse_url({?MODULE, urls, Multi}) ->
-    {ok, {?MODULE, urls, Multi}};
+parse_url({nkservice_webserver_conns, Conns}) ->
+    {ok, {nkservice_webserver_conns, Conns}};
 
 parse_url(Url) ->
     % Use protocol for transports and ports
-    case nkpacket:multi_resolve(Url, #{resolve_type=>listen, protocol=>nkpacket_protocol_http}) of
-        {ok, Multi} ->
-            {ok, {?MODULE, urls, Multi}};
+    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkpacket_protocol_http}) of
+        {ok, Conns} ->
+            {ok, {nkservice_webserverver_conns, Conns}};
         {error, Error} ->
             {error, Error}
     end.
@@ -52,7 +53,7 @@ make_listen(SrvId, Endpoints) ->
 %% @private
 make_listen(_SrvId, [], Acc) ->
     Acc;
-make_listen(SrvId, [#{id:=Id, url:={?MODULE, urls, Multi}}=Entry|Rest], Acc) ->
+make_listen(SrvId, [#{id:=Id, url:={nkservice_webserver_conns, Conns}}=Entry|Rest], Acc) ->
     Opts = maps:get(opts, Entry, #{}),
     Path = case Entry of
         #{file_path:=FilePath} ->
@@ -61,7 +62,7 @@ make_listen(SrvId, [#{id:=Id, url:={?MODULE, urls, Multi}}=Entry|Rest], Acc) ->
             Priv = list_to_binary(code:priv_dir(nkservice)),
             <<Priv/binary, "/www">>
     end,
-    Transps = make_listen_transps(SrvId, Id, Multi, Opts, Path, []),
+    Transps = make_listen_transps(SrvId, Id, Conns, Opts, Path, []),
     make_listen(SrvId, Rest, Acc#{Id => Transps}).
 
 
@@ -69,13 +70,13 @@ make_listen(SrvId, [#{id:=Id, url:={?MODULE, urls, Multi}}=Entry|Rest], Acc) ->
 make_listen_transps(_SrvId, _Id, [], _Opts, _Path, Acc) ->
     lists:reverse(Acc);
 
-make_listen_transps(SrvId, Id, [{Transps, TranspOpts}|Rest], Opts, Path, Acc) ->
-    Opts2 = maps:merge(TranspOpts, Opts),
+make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
+    #nkconn{opts=ConnOpts} = Conn,
+    Opts2 = maps:merge(ConnOpts, Opts),
     Opts3 = Opts2#{
         class => {nkservice_webserver, SrvId, Id},
         http_proto => {static, #{path=>Path, index_file=><<"index.html">>}}
     },
-    Acc2 = Acc ++ [{Transps, Opts3}],
-    make_listen_transps(SrvId, Id, Rest, Opts, Path, Acc2).
+    make_listen_transps(SrvId, Id, Rest, Opts, Path, [Conn#nkconn{opts=Opts3}|Acc]).
 
 

@@ -24,7 +24,7 @@
 -export([parse_url/1, make_listen/2]).
 
 -include_lib("nklib/include/nklib.hrl").
-
+-include_lib("nkpacket/include/nkpacket.hrl").
 
 %% ===================================================================
 %% Util
@@ -32,13 +32,13 @@
 
 
 %% @private
-parse_url({?MODULE, urls, Multi}) ->
-    {ok, {?MODULE, urls, Multi}};
+parse_url({nkservice_rest_conns, Multi}) ->
+    {ok, {nkservice_rest_conns, Multi}};
 
 parse_url(Url) ->
     case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_rest_protocol}) of
         {ok, Multi} ->
-            {ok, {?MODULE, urls, Multi}};
+            {ok, {nkservice_rest_conns, Multi}};
         {error, Error} ->
             {error, Error}
     end.
@@ -52,9 +52,9 @@ make_listen(SrvId, Endpoints) ->
 %% @private
 make_listen(_SrvId, [], Acc) ->
     Acc;
-make_listen(SrvId, [#{id:=Id, url:={?MODULE, urls, Multi}}=Entry|Rest], Acc) ->
+make_listen(SrvId, [#{id:=Id, url:={nkservice_rest_conns, Conns}}=Entry|Rest], Acc) ->
     Opts = maps:get(opts, Entry, #{}),
-    Transps = make_listen_transps(SrvId, Id, Multi, Opts, []),
+    Transps = make_listen_transps(SrvId, Id, Conns, Opts, []),
     make_listen(SrvId, Rest, Acc#{Id => Transps}).
 
 
@@ -62,37 +62,34 @@ make_listen(SrvId, [#{id:=Id, url:={?MODULE, urls, Multi}}=Entry|Rest], Acc) ->
 make_listen_transps(_SrvId, _Id, [], _Opts, Acc) ->
     lists:reverse(Acc);
 
-make_listen_transps(SrvId, Id, [{Transps, TranspOpts}|Rest], Opts, Acc) ->
-    Opts2 = maps:merge(TranspOpts, Opts),
-    Acc2 = lists:foldl(
-        fun({nkservice_rest_protocol, Proto, Ip, Port}, Acc0) ->
-            Opts3 = if
-                Proto==http; Proto==https ->
-                    Path1 = nklib_util:to_list(maps:get(path, Opts2, <<>>)),
-                    Path2 = case lists:reverse(Path1) of
-                        [$/|R] -> lists:reverse(R);
-                        _ -> Path1
-                    end,
-                    CowPath = Path2 ++ "/[...]",
-                    CowInit = [{srv_id, SrvId}, {id, Id}],
-                    Routes = [{'_', [{CowPath, nkservice_rest_http, CowInit}]}],
-                    Opts2#{
-                        class => {nkservice_rest_http, SrvId, Id},
-                        http_proto => {dispatch, #{routes => Routes}},
-                        path => nklib_util:to_binary(Path1)
-                    };
-                Proto==ws; Proto==wss ->
-                    Opts2#{
-                        path => maps:get(path, Opts, <<"/">>),
-                        class => {nkservice_rest, SrvId, Id},
-                        get_headers => [<<"user-agent">>]
-                    }
+make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
+    #nkconn{opts=ConnOpts, transp=Transp} = Conn,
+    Opts2 = maps:merge(ConnOpts, Opts),
+    Opts3 = if
+        Transp==http; Transp==https ->
+            Path1 = nklib_util:to_list(maps:get(path, Opts2, <<>>)),
+            Path2 = case lists:reverse(Path1) of
+                [$/|R] -> lists:reverse(R);
+                _ -> Path1
             end,
-            [{[{nkpacket_protocol_http, Proto, Ip, Port}], Opts3}|Acc0]
-        end,
-        Acc,
-        Transps),
-    make_listen_transps(SrvId, Id, Rest, Opts, Acc2).
+            CowPath = Path2 ++ "/[...]",
+            CowInit = [{srv_id, SrvId}, {id, Id}],
+            Routes = [{'_', [{CowPath, nkservice_rest_http, CowInit}]}],
+            Opts2#{
+                id => Id,
+                class => {nkservice_rest_http, SrvId, Id},
+                http_proto => {dispatch, #{routes => Routes}},
+                path => nklib_util:to_binary(Path1)
+            };
+        Transp==ws; Transp==wss ->
+            Opts2#{
+                id => Id,
+                path => maps:get(path, Opts, <<"/">>),
+                class => {nkservice_rest, SrvId, Id},
+                get_headers => [<<"user-agent">>]
+            }
+    end,
+    make_listen_transps(SrvId, Id, Rest, Opts, [Conn#nkconn{opts=Opts3}|Acc]).
 
 
 

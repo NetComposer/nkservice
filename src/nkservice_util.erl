@@ -21,7 +21,7 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([add_config_obj/3]).
+-export([add_config_obj/3, get_config_ids/1]).
 -export([apply/3, call/2, call/3]).
 -export([error/2]).
 -export([parse_transports/1]).
@@ -48,6 +48,29 @@ add_config_obj(Key, Data, Config) ->
     List1 = maps:get(Key, Config, []),
     List2 = [Data|List1],
     Config#{Key => List2}.
+
+
+%% @doc
+-spec get_config_ids([map()]) ->
+    {ok, map()} | {error, {duplicated_id, binary()}}.
+
+get_config_ids(List) ->
+    get_config_ids(List, #{}).
+
+
+%% @private
+get_config_ids([], MapAcc) ->
+    {ok, MapAcc};
+
+get_config_ids([#{id:=Id}=Map|Rest], MapAcc) ->
+    Id2 = nklib_util:to_binary(Id),
+    case maps:is_key(Id2, MapAcc) of
+        false ->
+            get_config_ids(Rest, MapAcc#{Id2 => Map#{id:=Id2}});
+        true ->
+            {error, {duplicated_id, Id}}
+    end.
+
 
 
 
@@ -135,13 +158,13 @@ get_error_fmt(Fmt, List) ->
 
 
 %% @private
-parse_transports([{[{_, _, _, _}|_], Opts}|_]=Transps) when is_map(Opts) ->
+parse_transports([#nkconn{}|_]=Transps) ->
     {ok, Transps};
 
 parse_transports(Spec) ->
-    case nkpacket:multi_resolve(Spec, #{resolve_type=>listen}) of
-        {ok, List} ->
-            {ok, List};
+    case nkpacket_resolve:resolve(Spec, #{resolve_type=>listen}) of
+        {ok, Conns} ->
+            {ok, Conns};
         Other ->
             lager:notice("Error in parse_transports (~p): ~p", [Spec, Other]),
             error

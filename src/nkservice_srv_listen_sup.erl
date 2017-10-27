@@ -23,25 +23,36 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([update_transports/1, start_link/1, init/1]).
+-export([start_transports/1, start_link/1, init/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
 
 
-%% @doc Starts all transports associated to a service.
-%% If a transport already exists, it is skipped 
--spec update_transports(nkservice:service()) ->
-    {ok, #{Plugin::atom() => [nkpacket:listen_id()]}} | {error, term()}.
+-define(LLOG(Type, Txt, Args, Service),
+    lager:Type("NkSERVICE '~s' "++Txt, [maps:get(id, Service) | Args])).
 
-update_transports(Service) ->
-    #{
-        id := Id, 
-        name := Name,
-        listen := Listen, 
-        listen_ids := ListenIds
-    } = Service,
-    start_transports1(Id, Name, maps:to_list(Listen), ListenIds).
+
+
+%% ===================================================================
+%% Public
+%% ===================================================================
+
+
+%% @doc Starts all transports associated to a service.
+-spec start_transports(nkservice:service()) ->
+    {ok, nkservice:service()} | {error, term()}.
+
+start_transports(Service) ->
+    #{listen := Listen} = Service,
+    do_start_transports(maps:to_list(Listen), Service).
+
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
 
 
 %% @private
@@ -59,108 +70,74 @@ init({Id, ChildSpecs}) ->
     {ok, ChildSpecs}.
 
 
-%% @private Tries to start all the configured transports for a Server.
--spec start_transports1(nkservice:id(), binary(), list(), map()) ->
-    {ok, map()} | {error, term()}.
+%% @private
+-spec do_start_transports([{atom(), nkpacket:nkconn()}], nkservice:service()) ->
+    {ok, nkservice:service()} | {error, term()}.
 
-start_transports1(Id, Name, [{Plugin, Listen}|Rest], Started) ->
-    case start_transports2(Id, Name, Plugin, Listen, Started) of
-        {ok, Started2} ->
-            start_transports1(Id, Name, Rest, Started2);
+do_start_transports([], Service) ->
+    {ok, Service};
+
+do_start_transports([{Plugin, Listen}|Rest], Service) ->
+    % lager:error("NKLOG Listen ~p", [Listen]),
+    case do_start_transports(Plugin, Listen, Service) of
+        {ok, Service2} ->
+            do_start_transports(Rest, Service2);
         {error, Error} ->
             {error, Error}
-    end;
-
-start_transports1(_Id, _Name, [], Started) ->
-    {ok, Started}.
-
-
-
-%% @private Tries to start all the configured transports for a Server.
--spec start_transports2(nkservice:id(), binary(), atom(), list(),  map()) ->
-    {ok, map()} | {error, term()}.
-
-start_transports2(Id, Name, Plugin, [{Conns, Opts}|Rest], Started) ->
-    % Options that can be configured globally
-    case start_transports3(Id, Name, Plugin, Conns, Opts, Started) of
-        {ok, Started2} ->
-            start_transports2(Id, Name, Plugin, Rest, Started2);
-        {error, Error} ->
-            {error, Error}
-    end;
-
-start_transports2(_Id, _Name, _Plugin, [], Started) ->
-    {ok, Started}.
+    end.
 
 
 %% @private
-start_transports3(Id, Name, Plugin, [Conn|Rest], Opts, Started) ->
-    {_Proto, Transp, _Ip, _Port} = Conn,
-    case nkpacket:get_listener(Conn, Opts) of
-        {ok, Child} ->
-            case add_transport(Id, Name, Child) of
-                {ok, ListenId} ->
-                    ListenIds1 = maps:get(Plugin, Started, []),
-                    ListenIds2 = nklib_util:store_value(ListenId, ListenIds1),
-                    Started2 = maps:put(Plugin, ListenIds2, Started),
-                    start_transports3(Id, Name, Plugin, Rest, Opts, Started2);
+do_start_transports(Plugin, [Conn|Rest], Service) ->
+    #nkconn{protocol=Protocol, transp=Transp} = Conn,
+    case nkpacket:get_listener(Conn) of
+        {ok, TranspId, Spec} ->
+            case load_transport(TranspId, Spec, Service) of
+                {ok, Pid} ->
+                    nklib_proc:put({?MODULE, Plugin}, TranspId, Pid),
+                    do_start_transports(Plugin, Rest, Service);
                 {error, Error} ->
-                    {error, {could_not_start, {Transp, Error}}}
+                    ?LLOG(warning, "could not start transport ~p: ~p",
+                          [lager:pr(Conn, ?MODULE), Error], Service),
+                    {error, {could_not_start, {TranspId, Error}}}
             end;
         {error, Error} ->
-            {error, {could_not_start, {Transp, Error}}}
+            {error, {could_not_start, {Protocol, Transp, Error}}}
     end;
 
-start_transports3(_Id, _Name, _Plugin, [], _Opts, Started) ->
-    {ok, Started}.
+do_start_transports(_Plugin, [], Service) ->
+    {ok, Service}.
 
 
 %% @private Starts a new transport control process under this supervisor
--spec add_transport(nkservice:id(), binary(), any()) ->
-    {ok, nkpacket:listen_id()} | {error, term()}.
+-spec load_transport(nkpacket:id(), supervisor:child_spec(), nkservice:service()) ->
+    {ok, pid()} | {error, term()}.
 
-add_transport(SrvId, Name, Spec) ->
-    {Conn, _Ref} = element(1, Spec),
-    {_, _, [NkPort]} = element(2, Spec),
-    TranspId = nkpacket_util:get_id(NkPort),
-    SupPid = get_pid(SrvId),
-    case find_started(supervisor:which_children(SupPid), TranspId) of
-        false ->
-            Spec2 = setelement(1, Spec, {Conn, TranspId}),
-            case supervisor:start_child(SupPid, Spec2) of
-                {ok, Pid} ->
-                    {registered_name, ListenId} = process_info(Pid, registered_name),
-                    {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
-                    lager:info("Service '~s' started listener on ~p:~p:~p (~p)",
-                               [Name, Transp, Ip, Port, Proto]),
-                    {ok, ListenId};
-                {error, {Error, _}} ->
-                    {error, Error};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {true, Conn, Pid} ->
-            lager:info("Skipping started transport ~p (~p)", [Conn, TranspId]),
-            {registered_name, ListenId} = process_info(Pid, registered_name),
-            {ok, ListenId}
+load_transport(TranspId, Spec, Service) ->
+    ?LLOG(info, "starting ~p ~p", [TranspId, Spec], Service),
+    SupPid = get_sup_pid(Service),
+    case supervisor:start_child(SupPid, Spec) of
+        {ok, Pid} ->
+            {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
+            ?LLOG(notice, "started listener ~p on ~p:~p:~p (~p)",
+                  [Proto, Transp, Ip, Port, Pid], Service),
+            {ok, Pid};
+        {error, {already_started, Pid}} ->
+            ?LLOG(info, "skipping already started transport ~p", [TranspId], Service),
+            {ok, Pid};
+        %{error, {Error, _}} ->
+        %    {error, Error};
+        {error, Error} ->
+            {error, Error}
     end.
 
-%% @private
-find_started([], _TranspId) ->
-    false;
-
-find_started([{{Conn, TranspId}, Pid, worker, _}|_], TranspId) when is_pid(Pid) ->
-    {true, Conn, Pid};
-
-find_started([_|Rest], TranspId) ->
-    find_started(Rest, TranspId).
 
 
 %% @private Gets the service's transport supervisor's pid()
--spec get_pid(nkservice:id()) ->
+-spec get_sup_pid(nkservice:id()) ->
     pid() | undefined.
 
-get_pid(SrvId) ->
+get_sup_pid(#{id:=SrvId}) ->
     nklib_proc:whereis_name({?MODULE, SrvId}).
 
 
