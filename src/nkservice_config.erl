@@ -85,7 +85,7 @@ config_service(Config, #{id:=Id}=Service) ->
         TopToDown = lists:reverse(DownToTop),
         Service6 = config_plugins(TopToDown, Service5),
         Service7 = start_plugins(DownToTop, OldPlugins, Service6),
-        Defaults = #{log_level=>notice},
+        Defaults = #{log_level=>notice, listen_started=>[]},
         Service8 = maps:merge(Defaults, Service7),
         Service9 = set_luerl(Service8),
         {ok, Service9}
@@ -206,23 +206,19 @@ stop_plugins([], Service) ->
     Service;
 
 stop_plugins([Plugin|Rest], Service) ->
-    #{config:=Config, listen:=Listen, listen_ids:=ListenIds} = Service,
+    #{config:=Config, listen:=Listen, listen_started:=ListenStarted} = Service,
+    PluginListenIds = [Id || {Id, _} <- maps:get(Plugin, Listen, [])],
+    lists:foreach(
+        fun(ListenId) -> nkpacket:stop_listeners(ListenId) end, PluginListenIds),
+    ListenStarted2 = ListenStarted -- PluginListenIds,
     Listen2 = maps:remove(Plugin, Listen),
-    case maps:find(Plugin, ListenIds) of
-        {ok, PluginIds} ->
-            lists:foreach(
-                fun(ListenId) -> nkpacket:stop_listeners(ListenId) end, PluginIds);
-        error -> 
-            ok
-    end,
-    ListenIds2 = maps:remove(Plugin, ListenIds),
     Mod = get_plugin(Plugin),
     Service2 = case nklib_util:apply(Mod, plugin_stop, [Config, Service]) of
         ok ->
-            ?LLOG("stopped plugin ~p", [Plugin], Service),
+            ?LLOG(info, "stopped plugin ~p", [Plugin], Service),
             Service;
         {ok, Config2} ->
-            ?LLOG("stopped plugin ~p", [Plugin], Service),
+            ?LLOG(info, "stopped plugin ~p", [Plugin], Service),
             Service#{config:=Config2};
         not_exported -> 
             Service;
@@ -231,7 +227,7 @@ stop_plugins([Plugin|Rest], Service) ->
     end,
     Key = list_to_atom("config_"++atom_to_list(Plugin)),
     Service3 = maps:remove(Key, Service2),
-    stop_plugins(Rest, Service3#{listen=>Listen2, listen_ids=>ListenIds2}).
+    stop_plugins(Rest, Service3#{listen=>Listen2, listen_started=>ListenStarted2}).
 
 
 %% @private
@@ -239,11 +235,11 @@ get_plugin(Plugin) ->
     Mod = list_to_atom(atom_to_list(Plugin)++"_plugin"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
-            {ok, Mod};
+            Mod;
         {error, nofile} ->
             case code:ensure_loaded(Plugin) of
                 {module, _} ->
-                    {ok, Plugin};
+                    Plugin;
                 {error, nofile} ->
                     throw({unknown_plugin, Plugin})
             end
@@ -255,11 +251,11 @@ get_callback(Plugin) ->
     Mod = list_to_atom(atom_to_list(Plugin)++"_callbacks"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
-            {ok, Mod};
+            Mod;
         {error, nofile} ->
             case code:ensure_loaded(Plugin) of
                 {module, _} ->
-                    {ok, Plugin};
+                    Plugin;
                 {error, nofile} ->
                     throw({unknown_plugin, Plugin})
             end
@@ -273,18 +269,18 @@ parse_plugin_listen(Map, Plugin, Service, []) when is_map(Map) ->
 parse_plugin_listen([], _Plugin, _Service, Acc) ->
     {ok, lists:reverse(Acc)};
 
-parse_plugin_listen([{Id, Conn}|Rest], Plugin, Service, Acc) ->
-    case nkpacket_resolve:resolve(Conn, #{resolve=>listen}) of
+parse_plugin_listen([{Id, {Conn, Opts}}|Rest], Plugin, Service, Acc) ->
+    Id2 = {nkservice, Plugin, Id},
+    case nkpacket_resolve:resolve(Conn, Opts#{id=>Id2, resolve=>listen}) of
         {ok, List} ->
-            List2 = [
-                Conn#nkconn{opts=Opts#{id=>{nkservice, Plugin, Id}}}
-                || #nkconn{opts=Opts}=Conn <- List
-            ],
-            parse_plugin_listen(Rest, Plugin, Service, [{Id, List2}|Acc]);
+            parse_plugin_listen(Rest, Plugin, Service, [{Id2, List}|Acc]);
         {error, Error} ->
             ?LLOG(notice, "parsing plugin listen (~p, ~p): ~p", [Plugin, Conn, Error], Service),
             error
     end;
+
+parse_plugin_listen([{Id, Conn}|Rest], Plugin, Service, Acc) ->
+    parse_plugin_listen([{Id, {Conn, #{}}}|Rest], Plugin, Service, Acc);
 
 parse_plugin_listen([Other|_], Plugin, Service, _Acc) ->
     ?LLOG(notice, "parsing plugin listen (~p): ~p", [Plugin, Other], Service),

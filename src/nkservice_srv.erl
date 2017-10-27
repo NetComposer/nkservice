@@ -241,8 +241,7 @@ handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) 
     case nkservice_config:config_service(UserSpec, Service) of
         {ok, Service2} ->
             case nkservice_srv_listen_sup:start_transports(Service2) of
-                {ok, Listen} ->
-                    Service3 = Service2#{listen_ids=>Listen},
+                {ok, Service3} ->
                     nkservice_config:make_cache(Service3),
                     {Added, Removed} = get_diffs(Service3, Service),
                     Added2 = case maps:is_key(lua_state, Added) of

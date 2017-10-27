@@ -28,6 +28,7 @@
 
 -type continue() :: continue | {continue, list()}.
 -type config() :: nkservice:config().
+-type service() :: nkservice:service().
 
 
 %% ===================================================================
@@ -89,10 +90,12 @@ plugin_config(Config, _Service) ->
 %% @doc This function, if implemented, allows to add listening transports.
 %% By default start the web_server and api_server transports.
 -spec plugin_listen(config(), service()) ->
-	[nkpacket:nkconn()].
+	#{Id::term() =>
+        nkpacket:connect_spec()| [nkpacket:connect_spec()] |
+        {nkpacket:connect_spec() | [nkpacket:connect_spec()], nkpacket:connect_opts()}}.
 
 plugin_listen(_Config, #{id:=_SrvId}) ->
-	[].
+	#{}.
 
 
 %% @doc Called during service's start

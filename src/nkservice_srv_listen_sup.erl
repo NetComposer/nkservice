@@ -71,7 +71,7 @@ init({Id, ChildSpecs}) ->
 
 
 %% @private
--spec do_start_transports([{atom(), nkpacket:nkconn()}], nkservice:service()) ->
+-spec do_start_transports([{atom(), list()}], nkservice:service()) ->
     {ok, nkservice:service()} | {error, term()}.
 
 do_start_transports([], Service) ->
@@ -88,14 +88,37 @@ do_start_transports([{Plugin, Listen}|Rest], Service) ->
 
 
 %% @private
-do_start_transports(Plugin, [Conn|Rest], Service) ->
+do_start_transports(_Plugin, [], Service) ->
+    {ok, Service};
+
+do_start_transports(Plugin, [{TranspId, Conns}|Rest], #{listen_started:=Started}=Service) ->
+    case lists:member(TranspId, Started) of
+        false ->
+            case do_start_conns(TranspId, Conns, Service) of
+                ok ->
+                    Started2 = nklib_util:store_value(TranspId, Started),
+                    Service2 = Service#{listen_started:=Started2},
+                    do_start_transports(Plugin, Rest, Service2);
+                {error, Error} ->
+                    {error, Error}
+            end;
+        true ->
+            ?LLOG(notice, "skipping already started transport ~p (~p)", [TranspId, Plugin], Service),
+            do_start_transports(Plugin, Rest, Service)
+    end.
+
+
+do_start_conns(_TranspId, [], _Service) ->
+    ok;
+
+do_start_conns(TranspId, [Conn|Rest], Service) ->
     #nkconn{protocol=Protocol, transp=Transp} = Conn,
+    ?LLOG(notice, "loading transport ~p", [lager:pr(Conn, ?MODULE)], Service),
     case nkpacket:get_listener(Conn) of
         {ok, TranspId, Spec} ->
             case load_transport(TranspId, Spec, Service) of
-                {ok, Pid} ->
-                    nklib_proc:put({?MODULE, Plugin}, TranspId, Pid),
-                    do_start_transports(Plugin, Rest, Service);
+                {ok, _Pid} ->
+                    do_start_conns(TranspId, Rest, Service);
                 {error, Error} ->
                     ?LLOG(warning, "could not start transport ~p: ~p",
                           [lager:pr(Conn, ?MODULE), Error], Service),
@@ -103,10 +126,8 @@ do_start_transports(Plugin, [Conn|Rest], Service) ->
             end;
         {error, Error} ->
             {error, {could_not_start, {Protocol, Transp, Error}}}
-    end;
+    end.
 
-do_start_transports(_Plugin, [], Service) ->
-    {ok, Service}.
 
 
 %% @private Starts a new transport control process under this supervisor
@@ -119,8 +140,8 @@ load_transport(TranspId, Spec, Service) ->
     case supervisor:start_child(SupPid, Spec) of
         {ok, Pid} ->
             {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
-            ?LLOG(notice, "started listener ~p on ~p:~p:~p (~p)",
-                  [Proto, Transp, Ip, Port, Pid], Service),
+            ?LLOG(notice, "started listener ~p ~p on ~p:~p:~p (~p)",
+                  [TranspId, Proto, Transp, Ip, Port, Pid], Service),
             {ok, Pid};
         {error, {already_started, Pid}} ->
             ?LLOG(info, "skipping already started transport ~p", [TranspId], Service),

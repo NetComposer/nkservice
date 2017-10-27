@@ -75,8 +75,8 @@
         uuid => binary(),
         timestamp => nklib_util:l_timestamp(),
         config => config(),
-        listen => #{Plugin::atom() => [nkpacket:conn()]},
-        listen_ids => #{Plugin::atom() => [nkpacket:id()]},
+        listen => #{Plugin::atom() => [{Id::term(), [nkpacket:conn()]}]},
+        listen_started => #{Plugin::atom() => [Id::term()]},
         term() => term()           % "config_(plugin)" values
     }.
 

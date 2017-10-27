@@ -52,7 +52,7 @@
 
 nkservice_rest_http(_Id, _Method, _Path, Req) ->
     {Ip, _Port} = nkservice_rest_http:get_peer(Req),
-    ?LLOG(error, "path not found (~p): ~p from ~s", [_Method, _Path, nklib_util:to_host(Ip)]),
+    ?LLOG(error, "path not found (~p, ~p): ~p from ~s", [_Id, _Method, _Path, nklib_util:to_host(Ip)]),
     {http, 404, [], <<"Not Found">>}.
 
 
