@@ -21,7 +21,7 @@
 %% @doc
 -module(nkservice_rest_http).
 -export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_headers/1, get_peer/1]).
--export([get_accept/1]).
+-export([get_accept/1, get_cowboy_req/1]).
 -export([reply_json/2]).
 -export([init/2, terminate/3]).
 -export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
@@ -89,7 +89,7 @@ get_srv_id(#req{srv_id=SrvId}) ->
 
 %% @doc
 -spec get_body(req(), #{max_size=>integer(), parse=>boolean()}) ->
-    binary() | map().
+    {ok, binary()} | {error, term()}.
 
 get_body(#req{req=Req}=State, Opts) ->
     CT = get_ct(State),
@@ -171,6 +171,12 @@ get_basic_auth(#req{req=Req}) ->
 get_peer(#req{req=Req}) ->
     {Ip, Port} = cowboy_req:peer(Req),
     {Ip, Port}.
+
+
+%% @private
+get_cowboy_req(#req{req=Req}) ->
+    Req.
+
 
 
 %% @doc
