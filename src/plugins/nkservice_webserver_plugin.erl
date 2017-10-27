@@ -47,7 +47,6 @@ plugin_syntax() ->
 
 
 plugin_listen(Config, #{id:=SrvId}) ->
-    lager:error("NKLOG REST LISTEN ~p", [Config]),
     Endpoints = maps:get(nkservice_webserver, Config, []),
     nkservice_webserver_util:make_listen(SrvId, Endpoints).
 

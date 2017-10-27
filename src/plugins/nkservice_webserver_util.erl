@@ -39,7 +39,7 @@ parse_url(Url) ->
     % Use protocol for transports and ports
     case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkpacket_protocol_http}) of
         {ok, Conns} ->
-            {ok, {nkservice_webserverver_conns, Conns}};
+            {ok, {nkservice_webserver_conns, Conns}};
         {error, Error} ->
             {error, Error}
     end.
@@ -77,6 +77,7 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
         class => {nkservice_webserver, SrvId, Id},
         http_proto => {static, #{path=>Path, index_file=><<"index.html">>}}
     },
-    make_listen_transps(SrvId, Id, Rest, Opts, Path, [Conn#nkconn{opts=Opts3}|Acc]).
+    Conn2 = Conn#nkconn{protocol=nkpacket_protocol_http, opts=Opts3},
+    make_listen_transps(SrvId, Id, Rest, Opts, Path, [Conn2|Acc]).
 
 

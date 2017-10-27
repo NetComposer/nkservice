@@ -113,7 +113,7 @@ do_start_conns(_TranspId, [], _Service) ->
 
 do_start_conns(TranspId, [Conn|Rest], Service) ->
     #nkconn{protocol=Protocol, transp=Transp} = Conn,
-    ?LLOG(notice, "loading transport ~p", [lager:pr(Conn, ?MODULE)], Service),
+    ?LLOG(debug, "loading transport ~p", [lager:pr(Conn, ?MODULE)], Service),
     case nkpacket:get_listener(Conn) of
         {ok, TranspId, Spec} ->
             case load_transport(TranspId, Spec, Service) of
@@ -140,11 +140,11 @@ load_transport(TranspId, Spec, Service) ->
     case supervisor:start_child(SupPid, Spec) of
         {ok, Pid} ->
             {ok, {Proto, Transp, Ip, Port}} = nkpacket:get_local(Pid),
-            ?LLOG(notice, "started listener ~p ~p on ~p:~p:~p (~p)",
+            ?LLOG(info, "started listener ~p ~p on ~p:~p:~p (~p)",
                   [TranspId, Proto, Transp, Ip, Port, Pid], Service),
             {ok, Pid};
         {error, {already_started, Pid}} ->
-            ?LLOG(info, "skipping already started transport ~p", [TranspId], Service),
+            ?LLOG(notice, "skipping already started transport ~p", [TranspId], Service),
             {ok, Pid};
         %{error, {Error, _}} ->
         %    {error, Error};
