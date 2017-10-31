@@ -188,6 +188,7 @@ error(invalid_uri) 			    -> "Invalid Uri";
 error(invalid_object_id) 		-> "Invalid ObjectId";
 error({missing_field, Txt})	    -> {"Missing field: '~s'", [Txt]};
 error(missing_id)				-> "Missing Id";
+error(no_password) 		        -> "No supplied password";
 error(no_usages)           		-> "No remaining usages";
 error(normal)           		-> "Normal termination";
 error(normal_termination) 		-> "Normal termination";
