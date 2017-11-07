@@ -83,8 +83,8 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
             Conn#nkconn{protocol=nkpacket_protocol_http, opts=Opts3};
         Transp==ws; Transp==wss ->
             Opts3 = Opts2#{
-                path => maps:get(path, Opts, <<"/">>),
                 class => {nkservice_rest, SrvId, Id},
+                path => maps:get(path, Opts2, <<"/">>),
                 get_headers => [<<"user-agent">>]
             },
             Conn#nkconn{opts=Opts3}
