@@ -23,7 +23,7 @@
 
 -export([add_config_obj/3, get_config_ids/1]).
 -export([apply/3, call/2, call/3]).
--export([error/2]).
+-export([is_error/2, error/2]).
 -export([parse_transports/1]).
 -export([make_id/1, update_uuid/2]).
 -export([get_debug/2, get_debug_info/2]).
@@ -104,32 +104,48 @@ call(Dest, Msg, Timeout) ->
     end.
 
 
+
+%% @private
+-spec is_error(nkservice:id(), nkservice:error()) ->
+    {true, term(), term()} | false.
+
+is_error(SrvId, Error) ->
+    case ?CALL_SRV(SrvId, error, [SrvId, Error]) of
+        {ErrCode, Fmt, List} when is_list(Fmt), is_list(List) ->
+            {true, get_error_code(ErrCode), get_error_fmt(Fmt, List)};
+        {Fmt, List} when is_list(Fmt), is_list(List) ->
+            {true, get_error_code(Error), get_error_fmt(Fmt, List)};
+        {ErrCode, ErrReason} when is_list(ErrReason); is_binary(ErrReason) ->
+            {true, get_error_code(ErrCode), to_bin(ErrReason)};
+        ErrReason when is_list(ErrReason) ->
+            {true, get_error_code(Error), to_bin(ErrReason)};
+        _ ->
+            false
+    end.
+
+
 %% @private
 -spec error(nkservice:id(), nkservice:error()) ->
     {binary(), binary()}.
 
 error(SrvId, Error) ->
-    {Code, Reason} = case SrvId:error(SrvId, Error) of
-        {ErrCode, Fmt, List} when is_list(Fmt), is_list(List) ->
-            {ErrCode, get_error_fmt(Fmt, List)};
-        {Fmt, List} when is_list(Fmt), is_list(List) ->
-            {Error, get_error_fmt(Fmt, List)};
-        {ErrCode, ErrReason} when is_list(ErrReason); is_binary(ErrReason) ->
-            {ErrCode, ErrReason};
-        ErrReason when is_list(ErrReason) ->
-            {Error, ErrReason};
-        _ ->
+    case is_error(SrvId, Error) of
+        {true, Code, Reason} ->
+            {Code, Reason};
+        false ->
             % This error is not in any table, but it can be an already processed one
             case Error of
                 {ErrCode, ErrReason} when is_binary(ErrCode), is_binary(ErrReason) ->
                     {ErrCode, ErrReason};
+                {ErrCode, _} when is_atom(ErrCode) ->
+                    lager:notice("NkSERVICE unknown error: ~p", [Error]),
+                    {to_bin(ErrCode), to_bin(ErrCode)};
                 Other ->
                     Ref = erlang:phash2(make_ref()) rem 10000,
                     lager:notice("NkSERVICE internal error (~p): ~p", [Ref, Other]),
-                    {internal_error, get_error_fmt("Internal error (~p)", [Ref])}
+                    {<<"internal_error">>, get_error_fmt("Internal error (~p)", [Ref])}
             end
-    end,
-    {get_error_code(Code), to_bin(Reason)}.
+    end.
 
 
 %% @private
@@ -289,6 +305,7 @@ get_debug_info2(SrvId, Module) ->
 
 
 %% @private
+to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).
 
 
