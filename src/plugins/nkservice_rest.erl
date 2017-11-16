@@ -30,5 +30,5 @@
 -type id() :: binary().
 -type http_method() :: nkservice_rest_http:method().
 -type http_path() :: nkservice_rest_http:path().
--type http_req() :: nkservice_rest_http:req().
+-type http_req() :: nkservice_rest_http:nkreq_http().
 -type http_reply() :: nkservice_rest_http:reply().

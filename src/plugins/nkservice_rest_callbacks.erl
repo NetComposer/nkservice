@@ -42,18 +42,21 @@
 -type http_method() :: nkservice_rest:method().
 -type http_path() :: nkservice_rest:path().
 -type http_req() :: nkservice_rest:req().
--type http_reply() :: nkservice_rest:reply().
+-type http_reply() :: nkservice_rest:http_reply().
 -type nkport() :: nkpacket:nkport().
 
 
 %% @doc called when a new http request has been received
 -spec nkservice_rest_http(id(), http_method(), http_path(), http_req()) ->
-    http_reply().
+    http_reply() |
+    {redirect, Path::binary(), http_req()} |
+    {cowboy_static, cowboy_static:opts()} |
+    {cowboy_rest, Callback::module(), State::term()}.
 
 nkservice_rest_http(_Id, _Method, _Path, Req) ->
     {Ip, _Port} = nkservice_rest_http:get_peer(Req),
-    ?LLOG(error, "path not found (~p, ~p): ~p from ~s", [_Id, _Method, _Path, nklib_util:to_host(Ip)]),
-    {http, 404, [], <<"Not Found">>}.
+    ?LLOG(error, "path not found (~p, ~s): ~p from ~s", [_Id, _Method, _Path, nklib_util:to_host(Ip)]),
+    {http, 404, [], <<"NkSERVICE: Path Not Found">>, Req}.
 
 
 %% @doc Called when a new connection starts

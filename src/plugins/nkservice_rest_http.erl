@@ -23,8 +23,8 @@
 -export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_headers/1, get_peer/1]).
 -export([get_accept/1, get_cowboy_req/1]).
 -export([reply_json/2]).
--export([init/2, terminate/3]).
--export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
+-export([init/4, terminate/3]).
+-export_type([method/0, reply/0, code/0, headers/0, body/0, nkreq_http/0, path/0, http_qs/0]).
 
 -define(MAX_BODY, 10000000).
 
@@ -36,9 +36,11 @@
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkSERVICE REST HTTP (~s) "++Txt, [State#req.remote|Args])).
+    lager:Type("NkSERVICE REST HTTP (~s) "++Txt, [State#nkreq_http.remote|Args])).
 
 -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nkpacket/include/nkpacket.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -49,18 +51,16 @@
 
 -type code() :: 100 .. 599.
 
--type header() :: [{binary(), binary()}].
+-type headers() :: #{binary() => iolist()}.
 
 -type body() ::  Body::binary()|map().
-
--type state() :: map().
 
 -type http_qs() ::
     [{binary(), binary()|true}].
 
 -type path() :: [binary()].
 
--record(req, {
+-record(nkreq_http, {
     srv_id :: nkservice:id(),
     id :: nkservice_rest:id(),
     req :: term(),
@@ -69,10 +69,10 @@
     remote :: binary()
 }).
 
--type req() :: #req{}.
+-type nkreq_http() :: #nkreq_http{}.
 
 -type reply() ::
-    {http, code(), [header()], body(), state()}.
+    {http, code(), headers(), body(), nkreq_http()}.
 
 
 %% ===================================================================
@@ -80,24 +80,25 @@
 %% ===================================================================
 
 %% @doc
--spec get_srv_id(req()) ->
+-spec get_srv_id(nkreq_http()) ->
     nkservice:id().
 
-get_srv_id(#req{srv_id=SrvId}) ->
+get_srv_id(#nkreq_http{srv_id=SrvId}) ->
     SrvId.
 
 
 %% @doc
--spec get_body(req(), #{max_size=>integer(), parse=>boolean()}) ->
-    {ok, binary()} | {error, term()}.
+-spec get_body(nkreq_http(), #{max_size=>integer(), parse=>boolean()}) ->
+    {ok, binary(), nkreq_http()} | {error, term()}.
 
-get_body(#req{req=Req}=State, Opts) ->
-    CT = get_ct(State),
+get_body(#nkreq_http{req=CowReq}=Req, Opts) ->
+    CT = get_ct(Req),
     MaxBody = maps:get(max_size, Opts, 100000),
-    case cowboy_req:body_length(Req) of
+    case cowboy_req:body_length(CowReq) of
         BL when is_integer(BL), BL =< MaxBody ->
-            %% https://ninenines.eu/docs/en/cowboy/1.0/guide/req_body/
-            {ok, Body, _} = cowboy_req:body(Req, [{length, infinity}]),
+            %% https://ninenines.eu/docs/en/cowboy/2.1/guide/req_body/
+            {ok, Body, CowReq2} = cowboy_req:read_body(CowReq, #{length=>infinity}),
+            Req2 = Req#nkreq_http{req=CowReq2},
             case maps:get(parse, Opts, false) of
                 true ->
                     case CT of
@@ -106,13 +107,13 @@ get_body(#req{req=Req}=State, Opts) ->
                                 error ->
                                     {error, invalid_json};
                                 Json ->
-                                    {ok, Json}
+                                    {ok, Json, Req2}
                             end;
                         _ ->
-                            {ok, Body}
+                            {ok, Body, Req2}
                     end;
                 _ ->
-                    {ok, Body}
+                    {ok, Body, Req2}
             end;
         BL ->
             {error, {body_too_large, BL, MaxBody}}
@@ -120,42 +121,42 @@ get_body(#req{req=Req}=State, Opts) ->
 
 
 %% @doc
--spec get_qs(req()) ->
+-spec get_qs(nkreq_http()) ->
     http_qs().
 
-get_qs(#req{req=Req}) ->
+get_qs(#nkreq_http{req=Req}) ->
     cowboy_req:parse_qs(Req).
 
 
 %% @doc
--spec get_ct(req()) ->
+-spec get_ct(nkreq_http()) ->
     binary().
 
-get_ct(#req{req=Req}) ->
+get_ct(#nkreq_http{req=Req}) ->
     cowboy_req:header(<<"content-type">>, Req).
 
 
 %% @doc
--spec get_accept(req()) ->
+-spec get_accept(nkreq_http()) ->
     binary().
 
-get_accept(#req{req=Req}) ->
+get_accept(#nkreq_http{req=Req}) ->
     cowboy_req:parse_header(<<"accept">>, Req).
 
 
 %% @doc
--spec get_headers(req()) ->
-    [{binary(), binary()}].
+-spec get_headers(nkreq_http()) ->
+    #{binary() => binary()}.
 
-get_headers(#req{req=Req}) ->
+get_headers(#nkreq_http{req=Req}) ->
     cowboy_req:headers(Req).
 
 
 %% @doc
--spec get_basic_auth(req()) ->
+-spec get_basic_auth(nkreq_http()) ->
     {user, binary(), binary()} | undefined.
 
-get_basic_auth(#req{req=Req}) ->
+get_basic_auth(#nkreq_http{req=Req}) ->
     case cowboy_req:parse_header(<<"authorization">>, Req) of
         {basic, User, Pass} ->
             {basic, User, Pass};
@@ -165,28 +166,28 @@ get_basic_auth(#req{req=Req}) ->
 
 
 %% @doc
--spec get_peer(req()) ->
+-spec get_peer(nkreq_http()) ->
     {inet:ip_address(), inet:port_number()}.
 
-get_peer(#req{req=Req}) ->
+get_peer(#nkreq_http{req=Req}) ->
     {Ip, Port} = cowboy_req:peer(Req),
     {Ip, Port}.
 
 
 %% @private
-get_cowboy_req(#req{req=Req}) ->
+get_cowboy_req(#nkreq_http{req=Req}) ->
     Req.
 
 
 
 %% @doc
 reply_json({ok, Data}, _Req) ->
-    Hds = [{<<"Content-Tytpe">>, <<"application/json">>}],
+    Hds = #{<<"Content-Tytpe">> => <<"application/json">>},
     Body = nklib_json:encode(Data),
     {http, 200, Hds, Body};
 
-reply_json({error, Error}, #req{srv_id=SrvId}) ->
-    Hds = [{<<"Content-Tytpe">>, <<"application/json">>}],
+reply_json({error, Error}, #nkreq_http{srv_id=SrvId}) ->
+    Hds = #{<<"Content-Tytpe">> => <<"application/json">>},
     {Code, Txt} = nkservice_util:error(SrvId, Error),
     Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
     {http, 400, Hds, Body}.
@@ -199,13 +200,13 @@ reply_json({error, Error}, #req{srv_id=SrvId}) ->
 
 
 %% @private
-init(HttpReq, [{srv_id, SrvId}, {id, Id}]) ->
-    {Ip, Port} = cowboy_req:peer(HttpReq),
+init(Paths, CowReq, Env, NkPort) ->
+    {Ip, Port} = cowboy_req:peer(CowReq),
     Remote = <<
         (nklib_util:to_host(Ip))/binary, ":",
         (to_bin(Port))/binary
     >>,
-    Method = case cowboy_req:method(HttpReq) of
+    Method = case cowboy_req:method(CowReq) of
         <<"GET">> -> get;
         <<"POST">> -> post;
         <<"PUT">> -> put;
@@ -213,29 +214,49 @@ init(HttpReq, [{srv_id, SrvId}, {id, Id}]) ->
         <<"HEAD">> -> head;
         OtherMethod -> OtherMethod
     end,
-    Path = case cowboy_req:path_info(HttpReq) of
-        [<<>>|Rest] -> Rest;
-        Rest -> Rest
-    end,
-    Req = #req{
+    {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
+    Req = #nkreq_http{
         srv_id = SrvId,
         id = Id,
-        req = HttpReq,
+        req = CowReq,
         method = Method,
-        path = Path,
+        path = Paths,
         remote = Remote
     },
     set_log(SrvId),
-    ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], Req),
-    case ?CALL_SRV(SrvId, nkservice_rest_http, [Id, Method, Path, Req]) of
+    ?DEBUG("received ~p (~s) from ~s", [Method, Paths, Remote], Req),
+    case ?CALL_SRV(SrvId, nkservice_rest_http, [Id, Method, Paths, Req]) of
         {http, Code, Hds, Body} ->
-            {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []};
-        {redirect, Path2} ->
-            Url = <<(cowboy_req:url(HttpReq))/binary, (to_bin(Path2))/binary>>,
-            HttpReq2 = cowboy_req:set_resp_header(<<"location">>, Url, HttpReq),
-            {ok, cowboy_req:reply(301, [], <<>>, HttpReq2), []};
+            lager:warning("Returning a REST reply without Req: ~p", [Body]),
+            {ok, nkpacket_cowboy:reply(Code, Hds, Body, CowReq), Env};
+        {http, Code, Hds, Body, #nkreq_http{req=CowReq2}} ->
+            {ok, nkpacket_cowboy:reply(Code, Hds, Body, CowReq2), Env};
+        {redirect, Path3} ->
+            Uri = list_to_binary(cowboy_req:uri(CowReq)),
+            Url = nkpacket_util:join_path(Uri, Path3),
+            lager:notice("Redirected to ~s", [Url]),
+            CowReq2 = cowboy_req:set_resp_header(<<"location">>, Url, CowReq),
+            {ok, nkpacket_cowboy:reply(301, #{}, <<>>, CowReq2), Env};
+        {cowboy_static, Opts} ->
+            % Emulate cowboy_router additions, expected by cowboy_static
+            CowReq2 = CowReq#{
+                path_info => Paths,
+                host_info => undefined,
+                bindings => #{}
+            },
+            {cowboy_rest, CowReq2, CowState} = cowboy_static:init(CowReq2, Opts),
+            cowboy_rest:upgrade(CowReq2, Env, cowboy_static, CowState);
+        {cowboy_rest, Module, State} ->
+            % Emulate cowboy_router additions, expected by cowboy_static
+            CowReq2 = CowReq#{
+                path_info => Paths,
+                host_info => undefined,
+                bindings => #{}
+            },
+            cowboy_rest:upgrade(CowReq2, Env, Module, State);
         continue ->
-            {ok, cowboy_req:reply(404, [], <<"Resource not found">>, HttpReq), []}
+            {ok, nkpacket_cowboy:reply(404, #{},
+                                        <<"NkSERVICE REST resource not found">>, CowReq)}
     end.
 
 

@@ -26,7 +26,7 @@
 -export([send/2, send_async/2, stop/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4,
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
-
+-export([http_init/4]).
 
 -define(DEBUG(Txt, Args, State),
     case erlang:get(nkservice_rest_debug) of
@@ -83,7 +83,7 @@ stop(Pid) ->
 
 
 %% ===================================================================
-%% Protocol callbacks
+%% WS Protocol callbacks
 %% ===================================================================
 
 -record(state, {
@@ -178,6 +178,14 @@ conn_handle_info(Info, _NkPort, State) ->
 
 conn_stop(Reason, _NkPort, State) ->
     catch handle(nkservice_rest_terminate, [Reason], State).
+
+
+%% ===================================================================
+%% HTTP Protocol callbacks
+%% ===================================================================
+
+http_init(Paths, Req, Env, NkPort) ->
+    nkservice_rest_http:init(Paths, Req, Env, NkPort).
 
 
 

@@ -43,7 +43,10 @@ start() ->
             #{
                 id => listen1,
                 url => "https://all:9010/test1, wss:all:9010/test1/ws;idle_timeout=10",
-                opts => #{debug=>true}
+                opts => #{
+                    cowboy_opts => #{max_headers=>100}, % To test in nkpacket
+                    debug=>true
+                }
             }
         ],
         debug => [nkservice_rest]
@@ -74,7 +77,6 @@ test2() ->
 
 
 
-
 %% ===================================================================
 %% API callbacks
 %% ===================================================================
@@ -82,13 +84,23 @@ test2() ->
 plugin_deps() ->
     [nkservice_rest].
 
+% Redirect .../test1/
+nkservice_rest_http(<<"listen1">>, get, [<<>>], _Req) ->
+    {redirect, "/index.html"};
+
+% Redirect .../test1
+nkservice_rest_http(<<"listen1">>, get, [], _Req) ->
+    {redirect, "/index.html"};
+
+nkservice_rest_http(<<"listen1">>, get, _Paths, _Req) ->
+    {cowboy_static, {priv_dir, nkservice, "/www"}};
 
 nkservice_rest_http(<<"listen1">>, post, [<<"test-a">>], Req) ->
     Qs = maps:from_list(nkservice_rest_http:get_qs(Req)),
     CT = nkservice_rest_http:get_ct(Req),
-    {ok, Body} = nkservice_rest_http:get_body(Req, #{parse=>true}),
+    {ok, Body, Req2} = nkservice_rest_http:get_body(Req, #{parse=>true}),
     Reply = nklib_json:encode(#{qs=>Qs, ct=>CT, body=>Body}),
-    {http, 200, [{<<"header1">>, 1}], Reply};
+    {http, 200, #{<<"header1">> => 1}, Reply, Req2};
 
 nkservice_rest_http(_Id, _Method, _Path, _Req) ->
     continue.
