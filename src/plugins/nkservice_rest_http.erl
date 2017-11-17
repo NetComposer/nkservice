@@ -232,28 +232,11 @@ init(Paths, CowReq, Env, NkPort) ->
         {http, Code, Hds, Body, #nkreq_http{req=CowReq2}} ->
             {ok, nkpacket_cowboy:reply(Code, Hds, Body, CowReq2), Env};
         {redirect, Path3} ->
-            Uri = list_to_binary(cowboy_req:uri(CowReq)),
-            Url = nkpacket_util:join_path(Uri, Path3),
-            lager:notice("Redirected to ~s", [Url]),
-            CowReq2 = cowboy_req:set_resp_header(<<"location">>, Url, CowReq),
-            {ok, nkpacket_cowboy:reply(301, #{}, <<>>, CowReq2), Env};
+            {redirect, Path3};
         {cowboy_static, Opts} ->
-            % Emulate cowboy_router additions, expected by cowboy_static
-            CowReq2 = CowReq#{
-                path_info => Paths,
-                host_info => undefined,
-                bindings => #{}
-            },
-            {cowboy_rest, CowReq2, CowState} = cowboy_static:init(CowReq2, Opts),
-            cowboy_rest:upgrade(CowReq2, Env, cowboy_static, CowState);
+            {cowboy_static, Opts};
         {cowboy_rest, Module, State} ->
-            % Emulate cowboy_router additions, expected by cowboy_static
-            CowReq2 = CowReq#{
-                path_info => Paths,
-                host_info => undefined,
-                bindings => #{}
-            },
-            cowboy_rest:upgrade(CowReq2, Env, Module, State);
+            {cowboy_rest, Module, State};
         continue ->
             {ok, nkpacket_cowboy:reply(404, #{},
                                         <<"NkSERVICE REST resource not found">>, CowReq)}

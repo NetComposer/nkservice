@@ -58,15 +58,27 @@ stop() ->
     nkservice:stop(?SRV).
 
 test1() ->
-    Url = "https://127.0.0.1:9010/test1/hi.txt",
-    {ok, {{_, 200, _}, _Hs, "nkservice"}} = httpc:request(Url),
-    Url2 = "http://127.0.0.1:9011/testB/hi.txt",
-    {ok, {{_, 200, _}, _Hs2, "nkservice"}} = httpc:request(Url2),
-    Src = filename:join(code:priv_dir(nkservice), "www/hi.txt"),
+    Url1 = "https://127.0.0.1:9010/test1/index.html",
+    {ok, {{_, 200, _}, _, "<!DOC"++_}} = httpc:request(Url1),
+    Url2 = "https://127.0.0.1:9010/test1/",
+    {ok, {{_, 200, _}, _, "<!DOC"++_}} = httpc:request(Url2),
+    Url3 = "https://127.0.0.1:9010/test1",
+    {ok, {{_, 200, _}, _, "<!DOC"++_}} = httpc:request(Url3),
+    Url4 = "https://127.0.0.1:9010/test1/dir/hi.txt",
+    {ok, {{_, 200, _}, _, "nkservice"}} = httpc:request(Url4),
+    Url5 = "http://127.0.0.1:9011/testB/dir/hi.txt",
+    {ok, {{_, 200, _}, _, "nkservice"}} = httpc:request(Url5),
+    Src = filename:join(code:priv_dir(nkservice), "www/dir/hi.txt"),
     {ok, _} = file:copy(Src, "/tmp/hi3.txt"),
-    Url3 = "https://127.0.0.1:9010/test2/hi3.txt",
-    {ok, {{_, 200, _}, _Hs3, "nkservice"}} = httpc:request(Url3),
+    Url6 = "https://127.0.0.1:9010/test2/hi3.txt",
+    {ok, {{_, 200, _}, _, "nkservice"}} = httpc:request(Url6),
     ok.
+
+
+cow_test() ->
+    Disp = cowboy_router:compile([{'_', [{"/test2/[...]", cowboy_static, {priv_dir, nkservice, "www"}}]}]),
+    {ok, _} = cowboy:start_clear(?MODULE, [{port, 9012}], #{env => #{dispatch=>Disp}}).
+
 
 
 

@@ -37,7 +37,7 @@ parse_url({nkservice_webserver_conns, Conns}) ->
 
 parse_url(Url) ->
     % Use protocol for transports and ports
-    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkpacket_protocol_http}) of
+    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_webserver_protocol}) of
         {ok, Conns} ->
             {ok, {nkservice_webserver_conns, Conns}};
         {error, Error} ->
@@ -75,9 +75,9 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
     Opts2 = maps:merge(ConnOpts, Opts),
     Opts3 = Opts2#{
         class => {nkservice_webserver, SrvId, Id},
-        http_proto => {static, #{path=>Path, index_file=><<"index.html">>}}
+        user_state => #{file_path=>Path, index_file=><<"index.html">>}
     },
-    Conn2 = Conn#nkconn{protocol=nkpacket_protocol_http, opts=Opts3},
+    Conn2 = Conn#nkconn{protocol=nkservice_webserver_protocol, opts=Opts3},
     make_listen_transps(SrvId, Id, Rest, Opts, Path, [Conn2|Acc]).
 
 
