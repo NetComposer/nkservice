@@ -39,13 +39,11 @@
 %% ===================================================================
 
 transports(_) ->
-    [http, https, ws, wss].
+    [http, https].
 
 
 default_port(http) -> 80;
-default_port(https) -> 443;
-default_port(ws) -> 80;
-default_port(wss) -> 443.
+default_port(https) -> 443.
 
 
 http_init([], _Req, _Env, NkPort) ->
