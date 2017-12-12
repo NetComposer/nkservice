@@ -210,6 +210,7 @@ init(HttpReq, [{srv_id, SrvId}, {id, Id}]) ->
         <<"POST">> -> post;
         <<"PUT">> -> put;
         <<"DELETE">> -> delete;
+        <<"OPTIONS">> -> options;
         <<"HEAD">> -> head;
         OtherMethod -> OtherMethod
     end,
