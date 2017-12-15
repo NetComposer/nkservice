@@ -26,7 +26,7 @@
 -export([init/2, terminate/3]).
 -export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
 
--define(MAX_BODY, 50000000).
+-define(MAX_BODY, 52428800).
 
 
 -define(DEBUG(Txt, Args, State),
