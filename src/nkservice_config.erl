@@ -204,11 +204,13 @@ get_callback(Plugin) ->
     case code:ensure_loaded(Mod) of
         {module, _} ->
             {ok, Mod};
-        {error, nofile} ->
+        {error, Reason} when Reason =:= nofile; Reason =:= embedded ->
             case code:ensure_loaded(Plugin) of
                 {module, _} ->
                     {ok, Plugin};
                 {error, nofile} ->
+                    error;
+                {error, embedded} ->
                     error
             end
     end.
