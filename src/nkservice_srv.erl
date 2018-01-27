@@ -167,11 +167,11 @@ stop_proc(SrvId, Name) ->
 
 
 %% @private
--spec start_link(nkservice:service()) ->
+-spec start_link(nkservice:spec()) ->
     {ok, pid()} | {error, term()}.
 
-start_link(#{id:=Id}=Service) ->
-    gen_server:start_link({local, Id}, ?MODULE, Service, []).
+start_link(#{id:=Id}=Spec) ->
+    gen_server:start_link({local, Id}, ?MODULE, Spec, []).
 
 
 
@@ -209,27 +209,23 @@ pending_msgs() ->
 
 
 %% @private
-init(#{id:=Id, name:=Name}=Service) ->
-    process_flag(trap_exit, true),          % Allow receiving terminate/2
-    case nkservice_srv_listen_sup:start_transports(Service) of
-        {ok, Service2} ->
-            Class = maps:get(class, Service, undefined),
-            nklib_proc:put(?MODULE, {Id, Class}),   
-            nklib_proc:put({?MODULE, Name}, Id),   
-            nkservice_config:make_cache(Service2),
-            case Id:service_init(Service, #{id=>Id}) of
-                {ok, User} ->
-                    % Someone could be listening (like events)
-                    nkservice_util:notify_updated_service(Id),
-                    %% Ensure all atoms are loaded
-                    %% _ = Id:api_server_syntax(#nkreq{class=none}, #{}, #{}, []),
-                    {ok, #state{id=Id, service=Service2, user=User}};
-                {stop, Reason} ->
-                    {stop, Reason}
-            end;
-        {error, Error} ->
-            {stop, {transport_error, Error}}
-    end.
+init(#{id:=Id}=Service) ->
+    lager:error("NKLOG SRV1"),
+%%    process_flag(trap_exit, true),          % Allow receiving terminate/2
+%%    Class = maps:get(class, Service, undefined),
+%%    Name = maps:get(name, Service, <<>>),
+%%    nklib_proc:put(?MODULE, {Id, Class}),
+%%    nklib_proc:put({?MODULE, Name}, Id),
+%%    timer:sleep(500),
+%%    %nkservice_config:make_cache(Service),
+%%    lager:error("NKLOG SRV1B"),
+%%    timer:sleep(500),
+%%    {ok, UserState} = Id:service_init(Service, #{}),
+%%    % Someone could be listening (like events)
+%%    nkservice_util:notify_updated_service(Id),
+%%    lager:error("NKLOG SRV1C"),
+    {ok, #state{id=Id, service=Service, user=#{}}}.
+
 
 
 %% @private
@@ -280,6 +276,7 @@ handle_call(Msg, From, State) ->
     term().
 
 handle_cast(nkservice_stop, State)->
+    % Will restart everything
     {stop, normal, State};
 
 handle_cast(Msg, State) ->
@@ -305,11 +302,11 @@ code_change(OldVsn, State, Extra) ->
 -spec terminate(term(), nkservice:service()) ->
     ok.
 
-terminate(Reason, #state{id=Id, service=Service}=State) ->  
+terminate(Reason, #state{id=Id, service=_Service}=State) ->
     catch nklib_gen_server:terminate(nkservice_terminate, Reason, State, ?P1, ?P2),
-    #{name:=Name, plugins:=Plugins} = Service,  
-    _Service2 = nkservice_config:stop_plugins(Plugins, Service),
-    lager:notice("Service '~s' (~p) has terminated (~p)", [Name, Id, Reason]).
+    %#{plugins:=Plugins} = Service,
+    %_Service2 = nkservice_config:stop_plugins(Plugins, Service),
+    lager:notice("Service '~s' has terminated (~p)", [Id, Reason]).
     
 
 

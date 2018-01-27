@@ -33,7 +33,7 @@
 
 -type continue() :: continue | {continue, list()}.
 -type req() :: #nkreq{}.
--type state() :: map().
+-type user_state() :: map().
 
 
 
@@ -140,15 +140,16 @@ i18n(SrvId, Key, Lang) ->
 -type service() :: nkservice:service().
 
 %% @doc Called when a new service starts, first for the top-level plugin
--spec service_init(service(), state()) ->
-	{ok, state()} | {stop, term()}.
+-spec service_init(service(), user_state()) ->
+	{ok, user_state()} | {stop, term()}.
 
-service_init(_Service, State) ->
-	{ok, State}.
+service_init(_Service, UserState) ->
+	{ok, UserState}.
+
 
 %% @doc Called when the service process receives a handle_call/3.
--spec service_handle_call(term(), {pid(), reference()}, state()) ->
-	{reply, term(), state()} | {noreply, state()} | continue().
+-spec service_handle_call(term(), {pid(), reference()}, user_state()) ->
+	{reply, term(), user_state()} | {noreply, user_state()} | continue().
 
 service_handle_call(Msg, _From, State) ->
     lager:error("Module nkservice_srv received unexpected call ~p", [Msg]),
@@ -156,8 +157,8 @@ service_handle_call(Msg, _From, State) ->
 
 
 %% @doc Called when the NkApp process receives a handle_cast/3.
--spec service_handle_cast(term(), state()) ->
-	{noreply, state()} | continue().
+-spec service_handle_cast(term(), user_state()) ->
+	{noreply, user_state()} | continue().
 
 service_handle_cast(Msg, State) ->
     lager:error("Module nkservice_srv received unexpected cast ~p", [Msg]),
@@ -165,8 +166,8 @@ service_handle_cast(Msg, State) ->
 
 
 %% @doc Called when the NkApp process receives a handle_info/3.
--spec service_handle_info(term(), state()) ->
-	{noreply, state()} | continue().
+-spec service_handle_info(term(), user_state()) ->
+	{noreply, user_state()} | continue().
 
 service_handle_info({'EXIT', _, normal}, State) ->
 	{noreply, State};
@@ -176,7 +177,7 @@ service_handle_info(Msg, State) ->
 	{noreply, State}.
 
 
--spec service_code_change(term()|{down, term()}, state(), term()) ->
+-spec service_code_change(term()|{down, term()}, user_state(), term()) ->
     ok | {ok, service()} | {error, term()} | continue().
 
 service_code_change(OldVsn, State, Extra) ->
@@ -209,7 +210,7 @@ service_api_syntax(_Id, SyntaxAcc, Req) ->
 
 %% @doc Called to authorize process a new API command
 -spec service_api_allow(api_id(), req()) ->
-    boolean() | {true, req(), state()}.
+    boolean() | {true, req(), user_state()}.
 
 service_api_allow(_Id, _Req) ->
     false.

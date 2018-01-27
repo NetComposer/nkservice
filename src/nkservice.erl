@@ -24,8 +24,8 @@
 -export([start/2, stop/1, reload/1, update/2, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export([get_listeners/2]).
--export([call/2, call/3, cast/2, get_data/2, get_pid/1, get_timestamp/1]).
--export_type([id/0, name/0, class/0, spec/0, config/0, service/0]).
+-export([call/2, call/3, cast/2, get_pid/1, get_timestamp/1]).
+-export_type([id/0, class/0, spec/0, config/0, service/0]).
 -export_type([error/0, event/0]).
 -export_type([user_id/0, user_state/0, session_id/0]).
 -export_type([req_cmd/0, req_data/0, req_tid/0]).
@@ -41,43 +41,41 @@
 %% Service's id must be an atom
 -type id() :: atom().
 
--type service_select() :: id() | name().
-
-%% Service's name
--type name() :: term().
-
 %% Service's class
 -type class() :: term().
 
+
+
 %% Service specification
-%% - class: only used to find services
-%% - plugins: list of dependant plugins
-%% - callback: if present, will be the top-level plugin
-%%
--type spec() :: 
+-type spec() ::
 	#{
-		class => term(),              % Only to find services
-		plugins => [module()],
-        callback => module(),         % If present, will be the top-level plugin
-        term() => term()              % Any user info
+        plugins => [atom()],
+		class => term(),                % Only to find services
+        name => binary(),                 % Optional name
+        %listen => listen_spec(),
+        log_level => log_level(),
+        debug => [atom() | {atom, term()}], % Specific to each plugin
+        config => map()                 % Any user info, usually one entry per plugin
 	}.
 
 -type config() :: #{term() => term()}.
 
+-type log_level() :: 0..8 |
+    none | emergency | alert | critical | error | warning | notice | info |debug.
+
+
 -type service() ::
     #{
         id => atom(),
-        name => term(),
-        class => class(),
         plugins => [atom()],
-        callback => module(),
-        log_level => integer(),
-        uuid => binary(),
-        timestamp => nklib_util:l_timestamp(),
+        name => term(),                 % Optional name
+        class => class(),               % Optional class
+        uuid => binary(),               % Each service is assigned an uuid
+        log_level => log_level(),
+        timestamp => nklib_util:m_timestamp(),  % Started time
         config => config(),
         listen => #{Plugin::atom() => [{Id::term(), [nkpacket:conn()]}]},
-        listen_started => #{Plugin::atom() => [Id::term()]},
-        term() => term()           % "config_(plugin)" values
+        listen_started => #{Plugin::atom() => [Id::term()]}
     }.
 
 
@@ -101,71 +99,82 @@
 
 
 %% @doc Starts a new service.
--spec start(name(), spec()) ->
-    {ok, id()} | {error, term()}.
+%% It tries to find its UUID from a file in log_dir with the same name, if it
+%% is not present, it will generate a new one
 
-start(Name, UserSpec) ->
-    Id = nkservice_util:make_id(Name),
-    try
-        case nkservice_srv:get_srv_id(Id) of
-            {ok, OldId} -> 
-                case is_pid(whereis(OldId)) of
-                    true -> throw(already_started);
-                    false -> ok
-                end;
-            not_found -> 
-                ok
-        end,
-        case nkservice_srv_sup:pre_start_service(Id) of
-            ok -> ok;
-            {error, PreError} -> throw(PreError)
-        end,
-        Service = #{
-            id => Id,
-            name => Name,
-            uuid => nkservice_util:update_uuid(Id, Name)
-        },
-        case nkservice_config:config_service(UserSpec, Service) of
-            {ok, Service2} ->
-                case nkservice_srv_sup:start_service(Service2) of
-                    ok ->
-                        lager:notice("Service '~s' (~p) has started", [Name, Id]),
-                        {ok, Id};
-                    {error, Error} -> 
-                        {error, Error}
-                end;
-            {error, Error} ->
-                throw(Error)
-        end
-    catch
-        throw:already_started ->
-            {error, already_started};
-        throw:Throw -> 
-            nkservice_srv_sup:stop_service(Id),
-            {error, Throw};
-        error:EError -> 
-            Trace = erlang:get_stacktrace(),
-            nkservice_srv_sup:stop_service(Id),
-            {error, {EError, Trace}}
+
+
+-spec start(id(), spec()) ->
+    {ok, pid()} | {error, term()}.
+
+start(Id, Spec) ->
+    case whereis(Id) of
+        Pid when is_pid(Pid) ->
+            {error, {already_started, Pid}};
+        undefined ->
+            Service = #{
+                id => Id,
+                uuid => nkservice_util:update_uuid(Id, Spec)
+            },
+            case nkservice_config:config_service(Spec, Service) of
+                {ok, Service2} ->
+                    lager:error("NKLOG S2 ~p", [Service2]),
+                    nkservice_srv_sup:start_service(Service2);
+                {error, Error} ->
+                    {error, Error}
+            end
     end.
+
+
+
+%%    try
+%%        case nkservice_srv_sup:pre_start_service(Id) of
+%%            ok ->
+%%                ok;
+%%            {error, PreError} ->
+%%                throw(PreError)
+%%        end,
+%%        Service = #{
+%%            id => Id,
+%%            uuid => nkservice_util:update_uuid(Id, Spec)
+%%        },
+%%        case nkservice_config:config_service(Spec, Service) of
+%%            {ok, Service4} ->
+%%                case nkservice_srv_sup:start_service(Service4) of
+%%                    ok ->
+%%                        lager:notice("NkSERVICE '~s' has started", [Id]),
+%%                        {ok, whereis(Id)};
+%%                    {error, Error} ->
+%%                        {error, Error}
+%%                end;
+%%            {error, Error} ->
+%%                throw(Error)
+%%        end
+%%    catch
+%%        throw:{already_started, Pid} ->
+%%            {error, {already_started, Pid}};
+%%        throw:Throw ->
+%%            nkservice_srv_sup:stop_service(Id),
+%%            {error, Throw};
+%%        error:EError ->
+%%            Trace = erlang:get_stacktrace(),
+%%            nkservice_srv_sup:stop_service(Id),
+%%            {error, {EError, Trace}}
+%%    end.
 
 
 %% @doc Stops a service
--spec stop(service_select()) ->
+-spec stop(id()) ->
     ok | {error, not_running|term()}.
 
-stop(Service) ->
-    case nkservice_srv:get_srv_id(Service) of
-        {ok, Id} ->
-            nkservice_srv_sup:stop_service(Id);
-        not_found ->
-            {error, not_running}
-    end.
+stop(Id) ->
+    nkservice_srv_sup:stop_service(Id).
+
 
 
 
 %% @doc Reloads a configuration
--spec reload(service_select()) ->
+-spec reload(id()) ->
     ok | {error, term()}.
 
 reload(ServiceId) ->
@@ -176,7 +185,7 @@ reload(ServiceId) ->
 %% New transports can be added, but old transports will not be automatically
 %% stopped. Use get_listeners/2 to find transports and stop them manually.
 %% (the info on get_listeners/2 will not be updated).
--spec update(service_select(), spec()) ->
+-spec update(id(), spec()) ->
     ok | {error, term()}.
 
 update(ServiceId, UserSpec) ->
@@ -190,7 +199,7 @@ update(ServiceId, UserSpec) ->
     
 %% @doc Gets all started services
 -spec get_all() ->
-    [{id(), name(), class(), pid()}].
+    [{id(), binary(), class(), pid()}].
 
 get_all() ->
     [{Id, Id:name(), Class, Pid} || 
@@ -199,7 +208,7 @@ get_all() ->
 
 %% @doc Gets all started services
 -spec get_all(class()) ->
-    [{id(), name(), pid()}].
+    [{id(), binary(), pid()}].
 
 get_all(Class) ->
     [{Id, Name, Pid} || {Id, Name, C, Pid} <- get_all(), C==Class].
@@ -207,7 +216,7 @@ get_all(Class) ->
 
 
 %% @doc Gets a value from service's store
--spec get(service_select(), term()) ->
+-spec get(id(), term()) ->
     term().
 
 get(ServiceId, Key) ->
@@ -215,7 +224,7 @@ get(ServiceId, Key) ->
 
 
 %% @doc Gets a value from service's store
--spec get(service_select(), term(), term()) ->
+-spec get(id(), term(), term()) ->
     term().
 
 get(ServiceId, Key, Default) ->
@@ -228,7 +237,7 @@ get(ServiceId, Key, Default) ->
 
 
 %% @doc Inserts a value in service's store
--spec put(service_select(), term(), term()) ->
+-spec put(id(), term(), term()) ->
     ok.
 
 put(ServiceId, Key, Value) ->
@@ -242,7 +251,7 @@ put(ServiceId, Key, Value) ->
 
 
 %% @doc Inserts a value in service's store
--spec put_new(service_select(), term(), term()) ->
+-spec put_new(id(), term(), term()) ->
     true | false.
 
 put_new(ServiceId, Key, Value) ->
@@ -255,7 +264,7 @@ put_new(ServiceId, Key, Value) ->
 
 
 %% @doc Deletes a value from service's store
--spec del(service_select(), term()) ->
+-spec del(id(), term()) ->
     ok.
 
 del(ServiceId, Key) ->
@@ -269,7 +278,7 @@ del(ServiceId, Key) ->
 
 
 %% @doc Synchronous call to the service's gen_server process
--spec call(service_select(), term()) ->
+-spec call(id(), term()) ->
     term().
 
 call(ServiceId, Term) ->
@@ -277,7 +286,7 @@ call(ServiceId, Term) ->
 
 
 %% @doc Synchronous call to the service's gen_server process with a timeout
--spec call(service_select(), term(), pos_integer()|infinity|default) ->
+-spec call(id(), term(), pos_integer()|infinity|default) ->
     term().
 
 call(ServiceId, Term, Time) ->
@@ -290,7 +299,7 @@ call(ServiceId, Term, Time) ->
 
 
 %% @doc Asynchronous call to the service's gen_server process
--spec cast(service_select(), term()) ->
+-spec cast(id(), term()) ->
     term().
 
 cast(ServiceId, Term) ->
@@ -302,16 +311,10 @@ cast(ServiceId, Term) ->
     end.
 
 
-%% @doc Gets current service configuration
--spec get_data(service_select(), atom()) ->
-   term().
-
-get_data(ServiceId, Term) ->
-    nkservice_srv:get_from_mod(ServiceId, Term).
 
 
 %% @doc Gets current service timestamp
--spec get_timestamp(service_select()) ->
+-spec get_timestamp(id()) ->
     nklib_util:l_timestamp().
 
 get_timestamp(ServiceId) ->
@@ -322,7 +325,7 @@ get_timestamp(ServiceId) ->
 
 
 %% @doc Gets the internal name of an existing service
--spec get_pid(service_select()) ->
+-spec get_pid(id()) ->
     pid() | undefined.
 
 get_pid(ServiceId) ->
@@ -338,7 +341,7 @@ get_pid(ServiceId) ->
 
 
 %% @doc Get all current listeners for a plugin
--spec get_listeners(service_select(), atom()) ->
+-spec get_listeners(id(), atom()) ->
     [nkpacket:listen_id()].
 
 get_listeners(SrvId, Plugin) ->

@@ -27,6 +27,7 @@
 -define(HTTP, "https://127.0.0.1:9010/rpc/api").
 
 -compile(export_all).
+-compile(nowarn_export_all).
 
 -include_lib("nkservice/include/nkservice.hrl").
 

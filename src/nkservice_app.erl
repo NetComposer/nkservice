@@ -40,7 +40,7 @@
     ok | {error, Reason::term()}.
 
 start() ->
-    start(temporary).
+    start(permanent).
 
 
 %% @doc Starts NkSERVICE stand alone.

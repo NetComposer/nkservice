@@ -9,6 +9,7 @@
 
 -define(CALL_SRV(SrvId, Fun, Args), erlang:apply(SrvId, Fun, Args)).
 
+-define(CALL_SRV(SrvId, Fun), erlang:apply(SrvId, Fun, [])).
 
 
 %% ===================================================================

@@ -24,6 +24,7 @@
 
 -define(SRV, web_test).
 
+-compile(nowarn_export_all).
 -compile(export_all).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -36,19 +37,21 @@
 %% @doc Starts the service
 start() ->
     Spec = #{
-        callback => ?MODULE,
-        nkservice_webserver => [
-            #{
-                id => web1,
-                url => "https://all:9010/test1, http://all:9011/testB",
-                opts => #{debug=>false}
-            },
-            #{
-                id => web2,
-                url => "https://all:9010/test2",
-                file_path => "/tmp"
-            }
-        ]
+        plugins => [?MODULE],
+        config => #{
+            nkservice_webserver => [
+                #{
+                    id => web1,
+                    url => "https://all:9010/test1, http://all:9011/testB",
+                    opts => #{debug=>false}
+                },
+                #{
+                    id => web2,
+                    url => "https://all:9010/test2",
+                    file_path => "/tmp"
+                }
+            ]
+        }
     },
     nkservice:start(?SRV, Spec).
 

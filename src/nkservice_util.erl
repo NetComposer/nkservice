@@ -206,17 +206,15 @@ make_id(Name) ->
 
 
 %% @private
-update_uuid(Id, Name) ->
+update_uuid(Id, Spec) ->
     LogPath = nkservice_app:get(log_path),
     Path = filename:join(LogPath, atom_to_list(Id)++".uuid"),
     case read_uuid(Path) of
         {ok, UUID} ->
-            ok;
+            UUID;
         {error, Path} ->
-            UUID = nklib_util:uuid_4122(),
-            save_uuid(Path, Name, UUID)
-    end,
-    UUID.
+            save_uuid(Path, nklib_util:uuid_4122(), Spec)
+    end.
 
 
 %% @private
@@ -233,14 +231,14 @@ read_uuid(Path) ->
 
 
 %% @private
-save_uuid(Path, Name, UUID) ->
-    Content = [UUID, $,, to_bin(Name)],
+save_uuid(Path, UUID, Spec) ->
+    Content = io_lib:format("~p", [Spec]),
     case file:write_file(Path, Content) of
         ok ->
-            ok;
+            UUID;
         Error ->
-            lager:warning("Could not write file ~s: ~p", [Path, Error]),
-            ok
+            lager:warning("NkSERVICE: Could not write file ~s: ~p", [Path, Error]),
+            UUID
     end.
 
 

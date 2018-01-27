@@ -19,9 +19,9 @@
 %% -------------------------------------------------------------------
 
 %% @doc Main supervisor
-%% This main supervisor starts a single supervisor, 
-%% registered as 'nkservice_all_srvs_sup'
-%% Each started service will be placed a supervisor here (see nkservice_srv_sup) 
+%% This main supervisor, starts a single supervisor registered as
+%% 'nkservice_all_srvs_sup'
+%% Each started service will start a supervisor under it (see nkservice_srv_sup)
 
 -module(nkservice_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -31,17 +31,14 @@
 
 -include("nkservice.hrl").
 
-
-
 %% @private
 start_link() ->
     ChildsSpec = [
-        {nkservice_all_srvs_sup,
-            {?MODULE, start_services_sup, []},
-            permanent,
-            infinity,
-            supervisor,
-            [?MODULE]}
+        #{
+            id => nkservice_all_srvs_sup,
+            start => {?MODULE, start_services_sup, []},
+            type => supervisor
+        }
     ],
     supervisor:start_link({local, ?MODULE}, ?MODULE, 
                             {{one_for_one, 10, 60}, ChildsSpec}).
