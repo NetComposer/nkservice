@@ -18,5 +18,48 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_webserver).
+-module(nkservice_sample).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+-export([start/0, stop/0]).
+
+start() ->
+    Spec = #{
+        name => my_name,
+        plugins => [
+            #{
+                class => nkservice_webserver,
+                config => #{
+                    servers => [
+                        #{
+                            id => web1,
+                            url => "https://all:9010/test1, http://all:9011/testB",
+                            opts => #{debug=>false}
+                        },
+                        #{
+                            id => web2,
+                            url => "https://all:9010/test2",
+                            file_path => "/tmp"
+                        }
+                    ]
+                }
+            }
+        ],
+        cache => [
+            #{
+                key => a,
+                value => 1
+            }
+        ],
+        debug => [
+            #{
+                key => a,
+                spec => true
+            }
+
+        ]
+    },
+    nkservice:start(sample, Spec).
+
+
+stop() ->
+    nkservice:stop(sample).
