@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_link/1, init/1]).
+-export([start_link/1, init/1, get_pid/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
 -include("nkservice.hrl").
@@ -54,14 +54,20 @@ start_link(Id) ->
         end,
         Listen2),
     ChildSpec = {{one_for_one, 10, 60}, Childs},
-    supervisor:start_link(?MODULE, {Id, ChildSpec}).
+    {ok, Pid} = supervisor:start_link(?MODULE, ChildSpec),
+    yes = nklib_proc:register_name({?MODULE, Id}, Pid),
+    {ok, Pid}.
+
 
 
 %% @private
-init({Id, ChildSpecs}) ->
-    yes = nklib_proc:register_name({?MODULE, Id}, self()),
+init(ChildSpecs) ->
     {ok, ChildSpecs}.
 
+
+%% @private
+get_pid(Id) ->
+    nklib_proc:whereis_name({?MODULE, Id}).
 
 
 %% @doc

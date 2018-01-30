@@ -65,6 +65,7 @@ syntax() ->
             id => binary,
             class => atom,
             config => map,
+            remove => boolean,
             '__mandatory' => [class],
             '__defaults' => #{config => #{}}
         }},
@@ -77,7 +78,8 @@ syntax() ->
         }},
         cache => {list, #{
             key => atom,
-            value => any
+            value => any,
+            remove => boolean
         }},
         scripts => {list, #{
             id => binary,
@@ -85,6 +87,7 @@ syntax() ->
             file => binary,
             url => binary,
             code => binary,
+            remove => boolean,
             '__mandatory' => [id, class],
             '__post_check' => fun ?MODULE:syntax_scripts/1
         }},
@@ -93,6 +96,7 @@ syntax() ->
             class => {atom, [luerl, http, remove]},
             luerl_id => binary,
             url => binary,
+            remove => boolean,
             '__mandatory' => [id, class],
             '__post_check' => fun ?MODULE:syntax_callbacks/1
         }},

@@ -21,7 +21,8 @@
 -module(nkservice).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, stop/1, reload/1, update/2, modify/2, get_all/0, get_all/1]).
+-export([start/2, stop/1, reload/1, update/2, modify/2]).
+-export([get_name/1, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export_type([id/0, spec/0, config/0, service/0]).
 -export_type([error/0, event/0]).
@@ -40,9 +41,21 @@
 %% Service's id must be an atom
 -type id() :: atom().
 
--type plugin_spec() :: #{class=>atom(), config=>map()}.
+-type plugin_spec() ::
+    #{
+        class => atom(),
+        config => map(),
+        remove => boolean()
+    }.
+
 -type debug_spec() :: #{key=>atom(), spec=>map()}.
--type cache_spec() :: #{key=>atom(), value=>term()}.
+
+-type cache_spec() ::
+    #{
+        key => atom(),
+        value => term(),
+        remove => boolean()         % true to remove the entry
+    }.
 
 -type script_spec() ::
     #{
@@ -50,7 +63,8 @@
         class => luerl | remove,
         file => binary(),
         url => binary(),
-        code => binary()
+        code => binary(),
+        remove => boolean()         % true to remove the entry
     }.
 
 -type callback_spec() ::
@@ -58,15 +72,18 @@
         id => binary(),
         class => luerl | http | remove,
         luerl_id => binary(),
-        url => binary()
+        url => binary(),
+        remove => boolean()         % true to remove the entry
     }.
 
 -type listen_spec() ::
     #{
         id => binary(),
         url => binary(),
-        opts => nkpacket:listen_opts()
+        opts => nkpacket:listen_opts(),
+        remove => boolean()         % true to remove the entry
     }.
+
 
 
 %% Service specification
@@ -93,19 +110,18 @@
 -type service() ::
     #{
         id => atom(),
-        class => binary(),               % Optional class
-        name => binary(),                 % Optional name
-        plugins => [atom()],
-        config => #{atom() => map()},
-        uuid => binary(),               % Each service is assigned an uuid
+        class => binary(),
+        name => binary(),
+        plugins => #{Plugin::atom() => plugin_spec()},
+        plugin_list => [Plugin::atom()],    % Bottom to top
+        uuid => binary(),                   % Each service is assigned an uuid
         log_level => log_level(),
         timestamp => nklib_util:m_timestamp(),  % Started time
         cache => #{atom() => map()},
         debug => #{atom() => map()},
         scripts => #{Id::binary() => map()},
         callbacks => #{Id::binary() => map()},
-        listen => #{Plugin::atom() => [{Id::term(), [nkpacket:conn()]}]},
-        listen_started => #{Plugin::atom() => [Id::term()]}
+        listen => #{Plugin::atom() => [{Id::term(), [nkpacket:conn()]}]}
     }.
 
 
@@ -177,11 +193,10 @@ reload(Id) ->
 
 
 %% @doc Updates a service configuration
-%% Full replacement configuration must be used
+%% Fields class, name, log_level and debug, if used, overwrite previous settings
+%% Fields cache, scripts and callbacks are merged. Use remove => true to remove an old one
+%% Field plugins, if used, replaces configuration, and removes plugin no longer present
 
-%% New transports can be added, but old transports will not be automatically
-%% stopped. Use get_listeners/2 to find transports and stop them manually.
-%% (the info on get_listeners/2 will not be updated).
 -spec update(id(), spec()) ->
     ok | {error, term()}.
 
@@ -190,6 +205,7 @@ update(Id, Spec) ->
 
 
 %% @doc Modifies a service configuration
+%% Similar to update,
 
 modify(Id, UserSpec) ->
     Spec1 = Id:spec(),
@@ -197,7 +213,17 @@ modify(Id, UserSpec) ->
     update(Id, Spec2).
 
 
-    
+%% @private Finds a service's id from its name
+-spec get_name(binary()) ->
+    {ok, nkservice:id()} | not_found.
+
+get_name(Name) ->
+    case nklib_proc:values({?MODULE, Name}) of
+        [] -> not_found;
+        [{Id, _Pid}|_] -> {ok, Id}
+    end.
+
+
 %% @doc Gets all started services
 -spec get_all() ->
     [{id(), binary(), binary(), pid()}].

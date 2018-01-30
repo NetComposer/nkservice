@@ -21,9 +21,8 @@
 %% @doc Default callbacks for plugin definitions
 -module(nkservice_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_group/0, 
-	     plugin_syntax/0, plugin_config/2,
-		 plugin_start/2, plugin_update/2, plugin_stop/2]).
+-export([plugin_deps/0, plugin_group/0, plugin_config/2, plugin_start/3,
+         plugin_update/2, plugin_stop/2]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
@@ -57,34 +56,29 @@ plugin_group() ->
 	undefined.
 
 
-%% @doc This function, if implemented, can offer a nklib_config:syntax()
-%% that will be checked against service configuration. Entries passing will be
-%% updated on the configuration with their parsed values
--spec plugin_syntax() ->
-	nklib_config:syntax().
-
-plugin_syntax() ->
-	#{}.
-
-
 %% @doc This function can modify the service configuration, and can also
 %% generate a specific plugin configuration (in the second return), that will be 
 %% accessible in the generated module as config_(plugin_name).
 %% Top-level plugins will be called first, so they can set up configurations for low-level
+%% This call will block the startup or upgrade of the service!
 -spec plugin_config(PluginConfig::map(), service()) ->
-	ok | {ok, service()} | {error, term()}.
+	ok | {ok, NewConfig::map()} | {ok, NewConfig::map(), service()} | {error, term()}.
 
 plugin_config(_Config, _Service) ->
 	ok.
 
 
 %% @doc Called during service's start
+%% All plugins are started in parallel. If a plugin depends on another,
+%% it can wait for a while, checking nkservice_srv_plugin_sup:get_pid/2 or
+%% calling nkservice_srv:get_status/1
+%% This call is non-blocking
 %% The plugin must start and can update the service's config
--spec plugin_start(spec(), service()) ->
-	{ok, spec()} | {error, term()}.
+-spec plugin_start(PluginConfig::map(), Supervisor::pid(), service()) ->
+	ok | {error, term()}.
 
-plugin_start(Config, _Service) ->
-	{ok, Config}.
+plugin_start(_Config, _Pid, _Service) ->
+    ok.
 
 
 %% @doc Called during service's update

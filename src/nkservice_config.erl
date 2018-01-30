@@ -60,12 +60,10 @@ config_service(Spec, #{id:=Id}=Service) ->
         Service3 = maps:merge(Defaults, Service2),
         Service4 = update_cache(Spec2, Service3),
         Service5 = update_debug(Spec2, Service4),
-        {NewPlugins, ToStop,  Service6} = update_plugins(Spec2, Service5),
-        Service7 = configure_plugins(NewPlugins, Service6),
-        Service8 = stop_plugins(ToStop, Service7),
-        Service9 = update_scripts(Spec, Service8),
-        Service10 = update_callbacks(Spec, Service9),
-        {ok, Service10}
+        Service6 = update_plugins(Spec2, Service5),
+        Service7 = update_scripts(Spec, Service6),
+        Service8 = update_callbacks(Spec, Service7),
+        {ok, Service8}
     catch
         throw:Throw -> {error, Throw}
     end.
@@ -78,7 +76,8 @@ update_cache(#{cache:=Cache}, Service) ->
     OldCache = maps:get(cache, Service, #{}),
     NewCache = maps:from_list([{Key, Val} || #{key:=Key, value:=Val} <- Cache]),
     Cache1 = maps:merge(OldCache, NewCache),
-    Cache2= maps:filter(fun(_K, V) -> V /= null end, Cache1),
+    ToRemove = [Key || #{key:=Key, remove:=true} <- Cache],
+    Cache2 = maps:without(ToRemove, Cache1),
     Service#{cache=>Cache2};
 
 update_cache(_Spec, Service) ->
@@ -96,17 +95,18 @@ update_debug(_Spec, Service) ->
 
 %% @private
 update_plugins(#{plugins:=Plugins}, Service) ->
-    OldPlugins = maps:get(plugins, Service, []),
-    OldConfig = maps:get(config, Service, #{}),
-    NewConfig = maps:from_list([
+    OldConfig = maps:get(plugins, Service, #{}),
+    NewConfig1 = maps:from_list([
         {Class, PConfig} || #{class:=Class, config:=PConfig} <- Plugins
     ]),
-    NewPlugins = expand_plugins(maps:keys(NewConfig)),   % down to top
-    ToStart = NewPlugins -- OldPlugins,
-    ToStop = OldPlugins -- ToStart,
-    % We store for now config for old and new plugins
-    Service2 = Service#{plugins=>NewPlugins, config=>maps:merge(OldConfig, NewConfig)},
-    {NewPlugins, ToStop, Service2};
+    NewConfig2 = maps:merge(OldConfig, NewConfig1),
+    ToRemove = [Class || #{class:=Class, remove:=true} <- Plugins],
+    NewPluginList = expand_plugins(maps:keys(NewConfig2) -- ToRemove),
+    Service2 = Service#{
+        plugin_list => NewPluginList,           % down to top
+        plugins => NewConfig2                   % keep removed configs for now
+    },
+    configure_plugins(NewPluginList, Service2);
 
 update_plugins(_Spec, Service) ->
     Service.
@@ -117,8 +117,8 @@ update_scripts(#{scripts:=Scripts}, Service) ->
     OldScripts = maps:get(scripts, Service, #{}),
     SpecScripts = maps:from_list([maps:take(id, Spec) || Spec <- Scripts]),
     NewScripts1 = maps:merge(OldScripts, SpecScripts),
-    NewScripts2 = maps:filter(
-        fun(_Id, #{class:=Class}) -> Class /= remove end, NewScripts1),
+    ToRemove = [Id || #{id:=Id, remove:=true} <- Scripts],
+    NewScripts2 = maps:without(ToRemove, NewScripts1),
     Service2 = Service#{scripts=>NewScripts2},
     load_scripts(NewScripts2, Service2);
 
@@ -131,8 +131,8 @@ update_callbacks(#{callbacks:=Callbacks}, Service) ->
     OldCallbacks = maps:get(callbacks, Service, #{}),
     SpecCallbacks = maps:from_list([maps:take(id, Spec) || Spec <- Callbacks]),
     NewCallbacks1 = maps:merge(OldCallbacks, SpecCallbacks),
-    NewCallbacks2 = maps:filter(
-        fun(_Id, #{class:=Class}) -> Class /= remove end, NewCallbacks1),
+    ToRemove = [Id || #{id:=Id, remove:=true} <- Callbacks],
+    NewCallbacks2 = maps:without(ToRemove, NewCallbacks1),
     Service#{callbacks=>NewCallbacks2};
 
 update_callbacks(_Spec, Service) ->
@@ -144,7 +144,7 @@ update_callbacks(_Spec, Service) ->
 configure_plugins([], Service) ->
     Service;
 
-configure_plugins([Plugin|Rest], #{config:=Config}=Service) ->
+configure_plugins([Plugin|Rest], #{plugins:=Config}=Service) ->
     Mod = get_plugin(Plugin),
     PluginConfig = maps:get(Plugin, Config, #{}),
     ?LLOG(notice, "configuring plugin ~p", [Plugin], Service),
@@ -157,10 +157,10 @@ configure_plugins([Plugin|Rest], #{config:=Config}=Service) ->
             Service;
         {ok, NewPluginConfig} ->
             Config2 = Config#{Plugin=>NewPluginConfig},
-            Service#{config:=Config2};
+            Service#{plugins:=Config2};
         {ok, NewPluginConfig, NewService} ->
             Config2 = Config#{Plugin=>NewPluginConfig},
-            NewService#{config:=Config2};
+            NewService#{plugins:=Config2};
         {error, Error2} ->
             throw({{Plugin, Error2}})
     end,
@@ -168,18 +168,19 @@ configure_plugins([Plugin|Rest], #{config:=Config}=Service) ->
 
 
 %% @private
-start_plugin(Plugin, Pid, #{config:=Config}=Service) ->
+start_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
     Mod = get_plugin(Plugin),
+    PluginConfig = maps:get(Plugin, Config, #{}),
     ?LLOG(info, "starting plugin ~p", [Plugin], Service),
-    case nklib_util:apply(Mod, plugin_start, [Config, Pid, Service]) of
+    case nklib_util:apply(Mod, plugin_start, [PluginConfig, Pid, Service]) of
         ok ->
             ok;
-        {stop, Error} ->
-            {error, Error};
         not_exported ->
             ok;
         continue ->
-            ok
+            ok;
+        {error, Error} ->
+            {error, Error}
     end.
 
 
@@ -187,7 +188,7 @@ start_plugin(Plugin, Pid, #{config:=Config}=Service) ->
 stop_plugins([], Service) ->
     Service;
 
-stop_plugins([Plugin|Rest], #{config:=Config}=Service) ->
+stop_plugins([Plugin|Rest], #{plugins:=Config}=Service) ->
     Mod = get_plugin(Plugin),
     Config = maps:get(Plugin, Config, #{}),
     Service2 = case nklib_util:apply(Mod, plugin_stop, [Config, Service]) of
@@ -431,7 +432,7 @@ make_cache(#{id:=Id}=Service) ->
     Service2 = Service#{timestamp => nklib_util:l_timestamp()},
     BaseKeys = [
         id, class, name, plugins, config, uuid, log_level, timestamp,
-        debug, listen, meta
+        debug, cache, listen, meta
     ],
     Spec1 = maps:with(BaseKeys, Service),
     Spec2 = lists:foldl(

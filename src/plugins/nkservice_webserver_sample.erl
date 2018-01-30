@@ -37,21 +37,25 @@
 %% @doc Starts the service
 start() ->
     Spec = #{
-        plugins => [?MODULE],
-        config => #{
-            nkservice_webserver => [
-                #{
-                    id => web1,
-                    url => "https://all:9010/test1, http://all:9011/testB",
-                    opts => #{debug=>false}
-                },
-                #{
-                    id => web2,
-                    url => "https://all:9010/test2",
-                    file_path => "/tmp"
+        plugins => [
+            #{
+                class => nkservice_webserver,
+                config => #{
+                    servers => [
+                        #{
+                            id => web1,
+                            url => "https://all:9010/test1, http://all:9011/testB",
+                            opts => #{debug=>false}
+                        },
+                        #{
+                            id => web2,
+                            url => "https://all:9010/test2",
+                            file_path => "/tmp"
+                        }
+                    ]
                 }
-            ]
-        }
+            }
+        ]
     },
     nkservice:start(?SRV, Spec).
 

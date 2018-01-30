@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([find_name/1, get_status/1]).
+-export([get_status/1, force_check_plugins/1]).
 -export([get/3, put/3, put_new/3, del/2]).
 -export([call/2, call/3, cast/2]).
 -export([start_link/1, stop_all/1]).
@@ -41,22 +41,37 @@
 
 
 %% ===================================================================
+%% Types
+%% ===================================================================
+
+-type id() :: nkservice:id().
+
+-type plugin_status() ::
+    #{
+        status => starting | running | fail,
+        last_status_time => nklib_util:m_timestamp(),
+        error => term(),
+        last_error_time => nklib_util:m_timestamp()
+    }.
+
+
+
+%% ===================================================================
 %% Public
 %% ===================================================================
 
-%% @private Finds a service's id from its name
--spec find_name(nkservice:name()) ->
-    {ok, nkservice:id()} | not_found.
-
-find_name(Name) ->
-    case nklib_proc:values({?MODULE, Name}) of
-        [] -> not_found;
-        [{Id, _Pid}|_] -> {ok, Id}
-    end.
 
 %% @doc
+-spec get_status(id()) ->
+    #{Plugin::atom() => plugin_status()}.
+
 get_status(Id) ->
     call(Id, {?MODULE, get_status}).
+
+
+%% @doc
+force_check_plugins(Id) ->
+    cast(Id, {?MODULE, force_check_plugins}).
 
 
 %% @doc Gets a value from service's store
@@ -157,8 +172,6 @@ pending_msgs() ->
 %% gen_server
 %% ===================================================================
 
--type plugin_status() :: starting | started | failed.
-
 -record(state, {
         id :: nkservice:id(),
         service :: nkservice:service(),
@@ -173,7 +186,6 @@ pending_msgs() ->
 
 %% @private
 init(#{id:=Id}=Service) ->
-    lager:error("NKLOG SRV ~p", [Id]),
     process_flag(trap_exit, true),          % Allow receiving terminate/2
     Class = maps:get(class, Service, <<>>),
     Name = maps:get(name, Service, <<>>),
@@ -204,18 +216,33 @@ handle_call({?MODULE, get_status}, _From, #state{plugins=Plugins}=State) ->
 
 handle_call({?MODULE, update, Spec}, From, #state{id=Id, service=Service}=State) ->
     case nkservice_config:config_service(Spec, Service) of
-        {ok, Service2} ->
-            Class = maps:get(class, Service2, <<>>),
-            Name = maps:get(name, Service2, <<>>),
-            nklib_proc:put(?MODULE, {Id, Class}),
-            nklib_proc:put({?MODULE, Name}, Id),
-            nkservice_config:make_cache(Service2),
+        {ok, NewService} ->
+            OldName = ?CALL_SRV(Id, name),
+            NewName = maps:get(name, NewService),
+            case OldName == NewName of
+                true ->
+                    ok;
+                false ->
+                    nklib_proc:del({?MODULE, OldName}, Id),
+                    nklib_proc:put({?MODULE, NewName}, Id)
+            end,
+            OldClass = ?CALL_SRV(Id, class),
+            NewClass = maps:get(class, NewService),
+            case OldClass==NewClass of
+                true ->
+                    ok;
+                false ->
+                    nklib_proc:del(?MODULE, {Id, OldClass}),
+                    nklib_proc:put(?MODULE, {Id, NewClass})
+            end,
+%%            NewPlugins = maps:get(plugin_list, NewService),
+%%            OldPlugins = ?CALL_SRV(Id, plugin_list),
+            % _ToStop = OldPlugins -- NewPlugins,
+            %spawn_stop_plugins(ToStop, State),
+            nkservice_config:make_cache(NewService),
             nkservice_util:notify_updated_service(Id),
             gen_server:reply(From, ok),
-            State2 = State#state{
-                service = Service2
-            },
-            State3 = check_plugins(?CALL_SRV(Id, plugins), State2),
+            State3 = check_plugins(State#state{service=NewService}),
             {noreply, State3};
         {error, Error} ->
             {reply, {error, Error}, State}
@@ -264,25 +291,25 @@ handle_call(Msg, From, State) ->
 -spec handle_cast(term(), nkservice:service()) ->
     term().
 
-handle_cast({?MODULE, plugin_started, Plugin, Pid}, State)->
-    #state{id=Id, plugins=Plugins} = State,
+handle_cast({?MODULE, force_check_plugins}, State)->
+    {noreply, check_plugins(State)};
+
+handle_cast({?MODULE, plugin_start, Plugin, Pid, ok}, State)->
+    #state{plugins=Plugins} = State,
     Status2 = case maps:get(Plugin, Plugins) of
-        {ok, #{pid:=Pid}=Status} ->
+        #{pid:=Pid}=Status ->
             Status#{status=>running};
-        {ok, Status} ->
+        Status ->
             monitor(process, Pid),
             Status#{status=>running, pid=>Pid}
     end,
-    Plugins2 = Plugins#{Plugin => Status2},
-    State2 = State#state{plugins=Plugins2},
-    State3 = check_plugins(?CALL_SRV(Id, plugins), State2),
-    {noreply, State3};
+    State2 = update_plugin_status(Plugin, Status2, State),
+    {noreply, State2};
 
-handle_cast({?MODULE, plugin_start_error, Plugin, Error}, #state{plugins=Plugins}=State)->
-    Status1 = maps:get(Plugin, Plugins),
-    Status2 = Status1#{status=>failed, error=>Error},
-    Plugins2 = Plugins#{Plugin => Status2},
-    State2 = State#state{plugins=Plugins2},
+handle_cast({?MODULE, plugin_start, Plugin, _Pid, {error, Error}}, State)->
+    #state{plugins=Plugins} = State,
+    Status = maps:get(Plugin, Plugins),
+    State2 = update_plugin_status_error(Plugin, Status, Error, State),
     {noreply, State2};
 
 handle_cast(nkservice_stop, State)->
@@ -296,9 +323,9 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), nkservice:service()) ->
     nklib_util:gen_server_info(nkservice:service()).
 
-handle_info({?MODULE, check_plugins}, #state{id=Id}=State) ->
-    State2 = check_plugins(?CALL_SRV(Id, plugins), State),
-    % erlang:send_after(?SRV_CHECK_TIME, self(), {?MODULE, check_plugins}),
+handle_info({?MODULE, check_plugins}, State) ->
+    State2 = check_plugins(State),
+    erlang:send_after(?SRV_CHECK_TIME, self(), {?MODULE, check_plugins}),
     {noreply, State2};
 
 handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
@@ -306,11 +333,9 @@ handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
     Pids = [{Plugin, PluginPid} || {Plugin, #{pid:=PluginPid}} <- maps:to_list(Plugins)],
     case lists:keyfind(Pid, 2, Pids) of
         {Plugin, Pid} ->
-            ?LLOG(warning, "plugin ~s failed", [Plugin], State),
-            Status1 = maps:get(Plugin, Plugins),
-            Status2 = Status1#{status=>failed, error=>Reason},
-            Plugins2 = Plugins#{Plugin => Status2},
-            State2 = State#state{plugins=Plugins2},
+            ?LLOG(warning, "plugin ~s failed: ~p", [Plugin, Reason], State),
+            Status = maps:get(Plugin, Plugins),
+            State2 = update_plugin_status_error(Plugin, Status, process_down, State),
             {noreply, State2};
         error ->
             nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2)
@@ -346,22 +371,64 @@ terminate(Reason, #state{id=Id, service=_Service}=State) ->
 
 
 %% @private Plugins will be checked from low to high
+check_plugins(#state{id=Id}=State) ->
+    check_plugins(?CALL_SRV(Id, plugins), State).
+
+
+%% @private Plugins will be checked from low to high
+check_plugins([], State) ->
+    State;
+
+check_plugins([nkservice|Rest], State) ->
+    check_plugins(Rest, State);
+
 check_plugins([Plugin|Rest], State) ->
     #state{id=Id, plugins=Plugins} = State,
-    {ok, Pid} = nkservice_srv_plugins_sup:start_plugin(Id, Plugin),
-    case maps:get(Plugin, Plugins, #{}) of
-        #{status:=running, pid:=Pid} ->
-            % Plugin is ok, let's go next
-            check_plugins(Rest, State);
-        PluginStatus ->
-            % Plugin is not ok, let's spawn a process to try
-            % to start it, and abort the operation
-            % it will call us later
-            spawn_start_plugin(Plugin, Pid, State),
-            PluginStatus2 = PluginStatus#{status=>starting},
-            Plugins2 = Plugins#{Plugin => PluginStatus2},
-            State#state{plugins=Plugins2}
+    Status = maps:get(Plugin, Plugins, #{}),
+    case nkservice_srv_plugins_sup:get_pid(Id, Plugin) of
+        Pid when is_pid(Pid) ->
+            case Status of
+                #{status:=running, pid:=Pid} ->
+                    % Plugin is ok, let's go next
+                    check_plugins(Rest, State);
+                _ ->
+                    % Plugin is not ok, let's spawn a process to try
+                    % to start it, it will call us later
+                    spawn_start_plugin(Plugin, Pid, State),
+                    Status2 = Status#{status=>starting},
+                    State2 = update_plugin_status(Plugin, Status2, State),
+                    check_plugins(Rest, State2)
+            end;
+        undefined ->
+            case nkservice_srv_plugins_sup:start_plugin(Id, Plugin) of
+                {ok, _Pid} ->
+                    check_plugins([Plugin|Rest], State);
+                {error, Error} ->
+                    State2 = update_plugin_status_error(Plugin, Status, Error, State),
+                    check_plugins(Rest, State2)
+            end
     end.
+
+
+%% @private
+update_plugin_status(Plugin, Status, State) ->
+    ?LLOG(notice, "updated plugin '~s' status: ~p", [Plugin, Status], State),
+    Status2 = Status#{
+        last_status_time => nklib_util:m_timestamp()
+    },
+    #state{plugins=Plugins} = State,
+    Plugins2 = Plugins#{Plugin => Status2},
+    State#state{plugins=Plugins2}.
+
+
+%% @private
+update_plugin_status_error(Plugin, Status, Error, State) ->
+    Status2 = Status#{
+        status => fail,
+        last_error => Error,
+        last_error_time => nklib_util:m_timestamp()
+    },
+    update_plugin_status(Plugin, Status2, State).
 
 
 %% @private
@@ -369,13 +436,37 @@ spawn_start_plugin(Plugin, Pid, #state{service=Service}) ->
     Self = self(),
     spawn_link(
         fun() ->
-            case nkservice_config:start_plugin(Plugin, Pid, Service) of
+            Res = try nkservice_config:start_plugin(Plugin, Pid, Service) of
                 ok ->
-                    gen_server:cast(Self, {?MODULE, plugin_started, Plugin, Pid});
+                    ok;
                 {error, Error} ->
-                    gen_server:cast(Self, {?MODULE, plugin_start_error, Plugin, Error})
-            end
+                    {error, Error}
+            catch
+                error:Error ->
+                    Trace = erlang:get_stacktrace(),
+                    {error, {Error, Trace}}
+            end,
+            gen_server:cast(Self, {?MODULE, plugin_start, Plugin, Pid, Res})
         end).
+
+
+%%%% @private
+%%spawn_stop_plugins(Plugins, #state{service=Service}) ->
+%%    Self = self(),
+%%    spawn_link(
+%%        fun() ->
+%%            Res = try nkservice_config:start_plugin(Plugin, Pid, Service) of
+%%                ok ->
+%%                    ok;
+%%                {error, Error} ->
+%%                    {error, Error}
+%%            catch
+%%                error:Error ->
+%%                    Trace = erlang:get_stacktrace(),
+%%                    {error, {Error, Trace}}
+%%            end,
+%%            gen_server:cast(Self, {?MODULE, plugin_start, Plugin, Pid, Res})
+%%        end).
 
 
 
