@@ -24,26 +24,38 @@
 -behaviour(supervisor).
 
 -export([start_plugin/2, stop_plugin/2, get_pid/1]).
--export([init/1, start_link/1, start_plugin_sup/2]).
+-export([init/1, start_link/1, start_plugin_sup/0]).
 
 -include("nkservice.hrl").
 
 
+%% @doc Tries to start a plugin supervisor, or returns existing one
 start_plugin(Id, Plugin) ->
     Pid = get_pid(Id),
-    Child = #{
-        id => Plugin,
-        start => {?MODULE, start_plugin_sup, [Id, Plugin]},
-        type => supervisor
-    },
-    case supervisor:start_child(Pid, Child) of
-        {ok, _} ->
-            ok;
-        {error, Error} ->
-            {error, Error}
+    Childs = supervisor:which_children(Pid),
+    case lists:keyfind(Id, 1, Childs) of
+        {Id, Pid, _, _} when is_pid(Pid) ->
+            {ok, Pid};
+        {Id, _, _, _} ->
+            ok = supervisor:delete_child(Pid, Id),
+            start_plugin(Id, Plugin);
+        false ->
+            Child = #{
+                id => Plugin,
+                start => {?MODULE, start_plugin_sup, []},
+                type => supervisor,
+                restart => temporary
+            },
+            case supervisor:start_child(Pid, Child) of
+                {ok, ChildPid} ->
+                    {ok, ChildPid};
+                {error, Error} ->
+                    {error, Error}
+            end
     end.
 
 
+%% @doc
 stop_plugin(Id, Plugin) ->
     Pid = get_pid(Id),
     case supervisor:terminate_child(Pid, Plugin) of
@@ -54,26 +66,20 @@ stop_plugin(Id, Plugin) ->
     end.
 
 
+%% @private
 get_pid(Id) ->
     nklib_proc:whereis_name({?MODULE, Id}).
 
 
-%% @private
+%% @private Starts the main supervisor for all plugins
+%% It starts empty, nkservice_srv will add child supervisors calling
+%% start_plugin/2
 -spec start_link(nkservice:id()) ->
     {ok, pid()}.
 
 start_link(Id) ->
-    Childs = [
-        #{
-            id => Plugin,
-            start => {?MODULE, start_plugin_sup, [Id, Plugin]},
-            type => supervisor
-        }
-        || Plugin <- ?CALL_SRV(Id, plugins)
-    ],
-
     yes = nklib_proc:register_name({?MODULE, Id}, self()),
-    ChildSpec = {{one_for_one, 10, 60}, Childs},
+    ChildSpec = {{one_for_one, 10, 60}, []},
     supervisor:start_link(?MODULE, ChildSpec).
 
 
@@ -84,10 +90,8 @@ init(ChildsSpec) ->
 
 
 %% @private Called for each configured plugin
-start_plugin_sup(Id, Plugin) ->
-    Childs = [],
-    ChildSpec = {{one_for_one, 10, 60}, Childs},
-    lager:notice("Start plugin ~p ~p", [Id, Plugin]),
+start_plugin_sup() ->
+    ChildSpec = {{one_for_one, 10, 60}, []},
     supervisor:start_link(?MODULE, ChildSpec).
 
 

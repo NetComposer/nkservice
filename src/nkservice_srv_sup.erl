@@ -82,20 +82,20 @@ get_pid(Id) ->
 start_link(#{id:=Id}=Spec) ->
     Childs = [
         #{
+            id => plugins,
+            start => {nkservice_srv_plugins_sup, start_link, [Id]},
+            type => supervisor
+        },
+        #{
             id => server,
             start => {nkservice_srv, start_link, [Spec]},
             shutdown => 30000
         },
         #{
-            id => plugins,
-            start => {nkservice_srv_plugins_sup, start_link, [Id]},
+            id => listen,
+            start => {nkservice_srv_listen_sup, start_link, [Id]},
             type => supervisor
         }
-%%        #{
-%%            id => listen,
-%%            start => {?MODULE, start_listen_sup, [Id]},
-%%            type => supervisor
-%%        }
     ],
     % If server or any supervisor fails, everything is restarted
     ChildSpec = {Id, {{one_for_all, 10, 60}, Childs}},

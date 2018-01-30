@@ -22,12 +22,12 @@
 -module(nkservice_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_group/0, 
-	     plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
-		 plugin_listen/2, plugin_start/2, plugin_update/2, plugin_stop/2]).
+	     plugin_syntax/0, plugin_config/2,
+		 plugin_start/2, plugin_update/2, plugin_stop/2]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
--type config() :: nkservice:config().
+-type spec() :: nkservice:spec().
 -type service() :: nkservice:service().
 
 
@@ -67,49 +67,29 @@ plugin_syntax() ->
 	#{}.
 
 
-%% @doc This function, if implemented, can offer a defaults specification
-%% for the syntax processing
--spec plugin_defaults() ->
-	map().
-
-plugin_defaults() ->
-	#{}.
-
-
 %% @doc This function can modify the service configuration, and can also
 %% generate a specific plugin configuration (in the second return), that will be 
 %% accessible in the generated module as config_(plugin_name).
 %% Top-level plugins will be called first, so they can set up configurations for low-level
--spec plugin_config(config(), service()) ->
-	{ok, config()} | {ok, config(), term()} | {error, term()}.
+-spec plugin_config(PluginConfig::map(), service()) ->
+	ok | {ok, service()} | {error, term()}.
 
-plugin_config(Config, _Service) ->
-	{ok, Config, #{}}.
-
-
-%% @doc This function, if implemented, allows to add listening transports.
-%% By default start the web_server and api_server transports.
--spec plugin_listen(config(), service()) ->
-	#{Id::term() =>
-        nkpacket:connect_spec()| [nkpacket:connect_spec()] |
-        {nkpacket:connect_spec() | [nkpacket:connect_spec()], nkpacket:connect_opts()}}.
-
-plugin_listen(_Config, #{id:=_SrvId}) ->
-	#{}.
+plugin_config(_Config, _Service) ->
+	ok.
 
 
 %% @doc Called during service's start
 %% The plugin must start and can update the service's config
--spec plugin_start(config(), service()) ->
-	{ok, config()} | {error, term()}.
+-spec plugin_start(spec(), service()) ->
+	{ok, spec()} | {error, term()}.
 
 plugin_start(Config, _Service) ->
 	{ok, Config}.
 
 
 %% @doc Called during service's update
--spec plugin_update(config(), service()) ->
-	{ok, config()} | {error, term()}.
+-spec plugin_update(spec(), service()) ->
+	{ok, spec()} | {error, term()}.
 
 plugin_update(Config, _Service) ->
 	{ok, Config}.
@@ -117,8 +97,8 @@ plugin_update(Config, _Service) ->
 
 %% @doc Called during service's stop
 %% The plugin must remove any key from the service
--spec plugin_stop(config(), service()) ->
-	{ok, config()}.
+-spec plugin_stop(spec(), service()) ->
+	{ok, spec()}.
 
 plugin_stop(Config, _Service) ->
 	{ok, Config}.
