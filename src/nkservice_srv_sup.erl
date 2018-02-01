@@ -89,7 +89,7 @@ start_link(#{id:=Id}=Spec) ->
         #{
             id => server,
             start => {nkservice_srv, start_link, [Spec]},
-            shutdown => 30000
+            shutdown => 30000       % Time for plugins to stop
         },
         #{
             id => listen,

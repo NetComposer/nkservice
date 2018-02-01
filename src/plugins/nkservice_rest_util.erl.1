@@ -19,27 +19,26 @@
 %% -------------------------------------------------------------------
 
 %% @doc Default callbacks
--module(nkservice_webserver_util).
+-module('nkservice_rest_util.erl').
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([parse_url/1, make_listen/2]).
 
+-include_lib("nklib/include/nklib.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
 
 %% ===================================================================
-%% Webserver & rest
+%% Util
 %% ===================================================================
 
 
-
 %% @private
-parse_url({nkservice_webserver_conns, Conns}) ->
-    {ok, {nkservice_webserver_conns, Conns}};
+parse_url({nkservice_rest_conns, Multi}) ->
+    {ok, {nkservice_rest_conns, Multi}};
 
 parse_url(Url) ->
-    % Use protocol for transports and ports
-    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_webserver_protocol}) of
-        {ok, Conns} ->
-            {ok, {nkservice_webserver_conns, Conns}};
+    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_rest_protocol}) of
+        {ok, Multi} ->
+            {ok, {nkservice_rest_conns, Multi}};
         {error, Error} ->
             {error, Error}
     end.
@@ -53,31 +52,24 @@ make_listen(SrvId, Endpoints) ->
 %% @private
 make_listen(_SrvId, [], Acc) ->
     Acc;
-make_listen(SrvId, [#{id:=Id, url:={nkservice_webserver_conns, Conns}}=Entry|Rest], Acc) ->
+make_listen(SrvId, [#{id:=Id, url:={nkservice_rest_conns, Conns}}=Entry|Rest], Acc) ->
     Opts = maps:get(opts, Entry, #{}),
-    Path = case Entry of
-        #{file_path:=FilePath} ->
-            FilePath;
-        _ ->
-            Priv = list_to_binary(code:priv_dir(nkservice)),
-            <<Priv/binary, "/www">>
-    end,
-    Transps = make_listen_transps(SrvId, Id, Conns, Opts, Path, []),
+    Transps = make_listen_transps(SrvId, Id, Conns, Opts, []),
     make_listen(SrvId, Rest, Acc#{Id => Transps}).
 
 
 %% @private
-make_listen_transps(_SrvId, _Id, [], _Opts, _Path, Acc) ->
+make_listen_transps(_SrvId, _Id, [], _Opts, Acc) ->
     lists:reverse(Acc);
 
-make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
-    #nkconn{opts=ConnOpts} = Conn,
+make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
+    #nkconn{opts=ConnOpts, transp=_Transp} = Conn,
     Opts2 = maps:merge(ConnOpts, Opts),
     Opts3 = Opts2#{
-        class => {nkservice_webserver, SrvId, Id},
-        user_state => #{file_path=>Path, index_file=><<"index.html">>}
+        class => {nkservice_rest, SrvId, Id},
+        path => maps:get(path, Opts2, <<"/">>),
+        get_headers => [<<"user-agent">>]
     },
-    Conn2 = Conn#nkconn{protocol=nkservice_webserver_protocol, opts=Opts3},
-    make_listen_transps(SrvId, Id, Rest, Opts, Path, [Conn2|Acc]).
-
+    Conn2 = Conn#nkconn{opts=Opts3},
+    make_listen_transps(SrvId, Id, Rest, Opts, [Conn2|Acc]).
 

@@ -20,7 +20,7 @@
 
 -module(nkservice_sample).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([start/0, stop/0]).
+-export([start/0, stop/0, update1/0, update2/0, update3/0]).
 
 start() ->
     Spec = #{
@@ -28,20 +28,7 @@ start() ->
         plugins => [
             #{
                 class => nkservice_webserver,
-                config => #{
-                    servers => [
-                        #{
-                            id => web1,
-                            url => "https://all:9010/test1, http://all:9011/testB",
-                            opts => #{debug=>false}
-                        },
-                        #{
-                            id => web2,
-                            url => "https://all:9010/test2",
-                            file_path => "/tmp"
-                        }
-                    ]
-                }
+                config => webserver_config()
             }
         ],
         cache => [
@@ -50,6 +37,9 @@ start() ->
                 value => 1
             }
         ],
+        listen => #{
+            url => <<"http://all/1/2">>
+        },
         debug => [
             #{
                 key => a,
@@ -63,3 +53,79 @@ start() ->
 
 stop() ->
     nkservice:stop(sample).
+
+
+
+update1() ->
+    nkservice:update(sample, #{
+        plugins => [
+            #{
+                class => nkservice_webserver,
+                remove => true
+            }
+
+        ]
+    }).
+
+
+update2() ->
+    nkservice:update(sample, #{
+        plugins => [
+            #{
+                class => nkservice_webserver,
+                config => webserver_config()
+            }
+        ]
+    }).
+
+
+update3() ->
+    nkservice:update(sample, #{
+        plugins => [
+            #{
+                class => nkservice_webserver,
+                config => #{
+                    servers => [
+                        #{
+                            id => web1,
+                            url => <<>>
+                        }
+                    ]
+                }
+            }
+        ]
+    }).
+
+
+
+%%
+%%update3_b() ->
+%%    nkservice:update(sample, #{
+%%        plugins => [
+%%            #{
+%%                id => web1,
+%%                class => nkservice_webserver,
+%%                config => #{
+%%                    url => <<>>
+%%                }
+%%            }
+%%        ]
+%%    }).
+
+
+
+webserver_config() ->
+    #{
+        servers => [
+            #{
+                id => web1,
+                url => "https://all:9010/test1, http://all:9011/testB",
+                opts => #{debug=>false}
+            },
+            #{
+                id => web2,
+                url => "https://all:9010/test2",
+                file_path => "/tmp"
+            }
+        ]
+    }.

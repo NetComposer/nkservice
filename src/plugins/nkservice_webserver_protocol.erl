@@ -38,13 +38,18 @@
 %% Public
 %% ===================================================================
 
+%% Default options for resolve
 transports(_) ->
     [http, https].
 
 
+%% Default options for resolve
 default_port(http) -> 80;
 default_port(https) -> 443.
 
+
+%% For HTTP-based protocol, function http_init is expected
+%% See nkpacket_protocol
 
 http_init([], _Req, _Env, NkPort) ->
     {ok, #{index_file:=Index}} = nkpacket:get_user_state(NkPort),

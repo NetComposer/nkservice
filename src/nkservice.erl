@@ -21,7 +21,7 @@
 -module(nkservice).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, stop/1, reload/1, update/2, modify/2]).
+-export([start/2, stop/1, reload/1, replace/2, update/2]).
 -export([get_name/1, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export_type([id/0, spec/0, config/0, service/0]).
@@ -148,8 +148,6 @@
 %% It tries to find its UUID from a file in log_dir with the same name, if it
 %% is not present, it will generate a new one
 
-
-
 -spec start(id(), spec()) ->
     {ok, pid()} | {error, term()}.
 
@@ -166,7 +164,6 @@ start(Id, Spec) ->
             end,
             case nkservice_config:config_service(Spec, Service) of
                 {ok, Service2} ->
-                    lager:error("NKLOG S2 ~p", [Service2]),
                     nkservice_srv_sup:start_service(Service2);
                 {error, Error} ->
                     {error, Error}
@@ -189,28 +186,26 @@ stop(Id) ->
     ok | {error, term()}.
 
 reload(Id) ->
-    modify(Id, #{}).
+    update(Id, #{}).
+
+
+%% @doc Replaces a service configuration with a new full set of parameters
+-spec replace(id(), spec()) ->
+    ok | {error, term()}.
+
+replace(Id, Spec) ->
+    nkservice_srv:call(Id, {nkservice_srv, replace, Spec}, 30000).
 
 
 %% @doc Updates a service configuration
 %% Fields class, name, log_level and debug, if used, overwrite previous settings
 %% Fields cache, scripts and callbacks are merged. Use remove => true to remove an old one
 %% Field plugins, if used, replaces configuration, and removes plugin no longer present
-
 -spec update(id(), spec()) ->
     ok | {error, term()}.
 
 update(Id, Spec) ->
-    nkservice_srv:call(Id, {?MODULE, update, Spec}, 30000).
-
-
-%% @doc Modifies a service configuration
-%% Similar to update,
-
-modify(Id, UserSpec) ->
-    Spec1 = Id:spec(),
-    Spec2 = maps:merge(Spec1, UserSpec),
-    update(Id, Spec2).
+    nkservice_srv:call(Id, {nkservice_srv, update, Spec}, 30000).
 
 
 %% @private Finds a service's id from its name
@@ -218,7 +213,7 @@ modify(Id, UserSpec) ->
     {ok, nkservice:id()} | not_found.
 
 get_name(Name) ->
-    case nklib_proc:values({?MODULE, Name}) of
+    case nklib_proc:values({nkservice_srv, nklib_util:to_binary(Name)}) of
         [] -> not_found;
         [{Id, _Pid}|_] -> {ok, Id}
     end.
@@ -238,7 +233,8 @@ get_all() ->
     [{id(), binary(), pid()}].
 
 get_all(Class) ->
-    [{Id, Name, Pid} || {Id, Name, C, Pid} <- get_all(), C==Class].
+    Class2 = nklib_util:to_binary(Class),
+    [{Id, Name, Pid} || {Id, Name, C, Pid} <- get_all(), C==Class2].
 
 
 

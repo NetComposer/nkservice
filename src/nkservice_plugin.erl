@@ -22,13 +22,13 @@
 -module(nkservice_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_group/0, plugin_config/2, plugin_start/3,
-         plugin_update/2, plugin_stop/2]).
+         plugin_update/3, plugin_stop/3]).
 -export_type([continue/0]).
 
 -type continue() :: continue | {continue, list()}.
 -type spec() :: nkservice:spec().
 -type service() :: nkservice:service().
-
+-type plugin_config() :: map().
 
 %% ===================================================================
 %% Plugin Callbacks
@@ -61,7 +61,7 @@ plugin_group() ->
 %% accessible in the generated module as config_(plugin_name).
 %% Top-level plugins will be called first, so they can set up configurations for low-level
 %% This call will block the startup or upgrade of the service!
--spec plugin_config(PluginConfig::map(), service()) ->
+-spec plugin_config(plugin_config(), service()) ->
 	ok | {ok, NewConfig::map()} | {ok, NewConfig::map(), service()} | {error, term()}.
 
 plugin_config(_Config, _Service) ->
@@ -74,27 +74,28 @@ plugin_config(_Config, _Service) ->
 %% calling nkservice_srv:get_status/1
 %% This call is non-blocking
 %% The plugin must start and can update the service's config
--spec plugin_start(PluginConfig::map(), Supervisor::pid(), service()) ->
+-spec plugin_start(plugin_config(), Supervisor::pid(), service()) ->
 	ok | {error, term()}.
 
 plugin_start(_Config, _Pid, _Service) ->
     ok.
 
 
-%% @doc Called during service's update
--spec plugin_update(spec(), service()) ->
-	{ok, spec()} | {error, term()}.
-
-plugin_update(Config, _Service) ->
-	{ok, Config}.
-
-
 %% @doc Called during service's stop
-%% The plugin must remove any key from the service
--spec plugin_stop(spec(), service()) ->
-	{ok, spec()}.
+%% The supervisor pid, if started, if passed
+%% After the call, the supervisor will be stopped
+-spec plugin_stop(spec(), Supervisor::pid(), service()) ->
+	ok | {error, term()}.
 
-plugin_stop(Config, _Service) ->
-	{ok, Config}.
+plugin_stop(_Config, _Pid, _Service) ->
+	ok.
+
+
+%% @doc Called during service's update, for plugins with updated configuration
+-spec plugin_update(plugin_config(), Supervisor::pid(), service()) ->
+    ok | {error, term()}.
+
+plugin_update(_Config, _Pid, _Service) ->
+    ok.
 
 

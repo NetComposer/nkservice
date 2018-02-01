@@ -21,25 +21,29 @@
 %% @doc Default callbacks
 -module(nkservice_webserver_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_config/2, plugin_start/3]).
+-export([plugin_deps/0, plugin_config/2, plugin_start/3, plugin_update/3]).
 -export([parse_url/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
+
+-define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE Webserver "++Txt, Args)).
 
 
 %% ===================================================================
 %% Plugin Callbacks
 %% ===================================================================
 
+%% @doc
 plugin_deps() ->
 	[].
 
 
+%% @doc
 plugin_config(Config, #{id:=SrvId}) ->
     Syntax = #{
         servers => {list, #{
             id => binary,
-            url => fun ?MODULE:parse_url/1,
+            url => fun ?MODULE:parse_url/1,     % Use <<>> to remove the id
             file_path => binary,
             opts => nkpacket_syntax:safe_syntax(),
             '__mandatory' => [id, url]
@@ -60,12 +64,20 @@ plugin_config(Config, #{id:=SrvId}) ->
     end.
 
 
+%% @doc
 plugin_start(#{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
     insert_listeners(Listeners, Pid);
 
 plugin_start(_Config, _Pid, _Service) ->
     ok.
 
+
+%% @doc
+plugin_update(#{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+    insert_listeners(Listeners, Pid);
+
+plugin_update(_Config, _Pid, _Service) ->
+    ok.
 
 
 
@@ -80,9 +92,12 @@ plugin_start(_Config, _Pid, _Service) ->
 parse_url({nkservice_webserver_conns, Conns}) ->
     {ok, {nkservice_webserver_conns, Conns}};
 
+parse_url(<<>>) ->
+    {ok, <<>>};
+
 parse_url(Url) ->
-    % Use protocol for transports and ports
-    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_webserver_protocol}) of
+    Opts = #{resolve_type=>listen, protocol=>nkservice_webserver_protocol},
+    case nkpacket_resolve:resolve(Url, Opts) of
         {ok, Conns} ->
             {ok, {nkservice_webserver_conns, Conns}};
         {error, Error} ->
@@ -93,6 +108,9 @@ parse_url(Url) ->
 %% @private
 make_listen(_SrvId, [], Acc) ->
     {ok, Acc};
+
+make_listen(SrvId, [#{id:=Id, url:=<<>>}|Rest], Acc) ->
+    make_listen(SrvId, Rest, [{Id, <<>>}|Acc]);
 
 make_listen(SrvId, [#{id:=Id, url:={nkservice_webserver_conns, Conns}}=Entry|Rest], Acc) ->
     Opts = maps:get(opts, Entry, #{}),
@@ -120,7 +138,6 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
         user_state => #{file_path=>Path, index_file=><<"index.html">>}
     },
     Conn2 = Conn#nkconn{protocol=nkservice_webserver_protocol, opts=Opts3},
-    lager:error("NKLOG CONNS ~p", [Conn2]),
     case nkpacket:get_listener(Conn2) of
         {ok, Id, Spec} ->
             make_listen_transps(SrvId, Id, Rest, Opts, Path, [{Id, Spec}|Acc]);
@@ -133,13 +150,33 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
 insert_listeners([], _Pid) ->
     ok;
 
+insert_listeners([{Id, <<>>}|Rest], Pid) ->
+    Childs = nkservice_srv_plugins_sup:get_childs(Pid),
+    lists:foreach(
+        fun({ChildId, _, _, _}) ->
+            case element(1, ChildId) of
+                Id ->
+                    ?LLOG(info, "stopping ~s", [Id]),
+                    nkservice_srv_plugins_sup:remove_child(Pid, ChildId);
+                _ ->
+                    ok
+            end
+        end,
+        Childs),
+    insert_listeners(Rest, Pid);
+
 insert_listeners([{Id, Spec}|Rest], Pid) ->
-    Hash = erlang:phash2(Spec),
-    case supervisor:start_child(Pid, Spec#{id:={Id, Hash}}) of
+    case nkservice_srv_plugins_sup:update_child(Pid, Spec, #{}) of
         {ok, _} ->
-            lager:warning("Started listener ~s", [Id]),
+            ?LLOG(info, "started ~s", [Id]),
+            insert_listeners(Rest, Pid);
+        not_updated ->
+            ?LLOG(info, "didn't upgrade ~s", [Id]),
+            insert_listeners(Rest, Pid);
+        {upgraded, _} ->
+            ?LLOG(info, "upgraded ~s", [Id]),
             insert_listeners(Rest, Pid);
         {error, Error} ->
+            ?LLOG(warning, "insert error: ~p", [Error]),
             {error, Error}
     end.
-

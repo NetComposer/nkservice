@@ -38,11 +38,11 @@
 
 -type state() :: nkapi_server:user_state().
 -type continue() :: nkservice_callbacks:continue().
--type id() :: nkservice_rest:id().
--type http_method() :: nkservice_rest:method().
--type http_path() :: nkservice_rest:path().
--type http_req() :: nkservice_rest:req().
--type http_reply() :: nkservice_rest:http_reply().
+-type id() :: nkservice_rest_plugin:id().
+-type http_method() :: nkservice_rest_plugin:method().
+-type http_path() :: nkservice_rest_plugin:path().
+-type http_req() :: nkservice_rest_plugin:req().
+-type http_reply() :: nkservice_rest_plugin:http_reply().
 -type nkport() :: nkpacket:nkport().
 
 

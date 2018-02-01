@@ -39,18 +39,27 @@
 %% @doc Starts the service
 start() ->
     Spec = #{
-        callback => ?MODULE,
-        nkservice_rest => [
+        plugins => [
             #{
-                id => listen1,
-                url => "https://all:9010/test1, wss:all:9010/test1/ws;idle_timeout=10",
-                opts => #{
-                    cowboy_opts => #{max_headers=>100}, % To test in nkpacket
-                    debug=>true
+                class => ?MODULE
+            },
+            #{
+                class => nkservice_rest,
+                config => #{
+                    servers => [
+                        #{
+                            id => listen1,
+                            url => "https://all:9010/test1, wss:all:9010/test1/ws;idle_timeout=10",
+                            opts => #{
+                                cowboy_opts => #{max_headers=>100}, % To test in nkpacket
+                                debug=>true
+                            }
+                        }
+                    ]
                 }
             }
         ],
-        debug => [nkservice_rest]
+        debug => [#{key => nkservice_rest}]
     },
     nkservice:start(?SRV, Spec).
 
@@ -58,6 +67,7 @@ start() ->
 %% @doc Stops the service
 stop() ->
     nkservice:stop(?SRV).
+
 
 test1() ->
     Url = "https://127.0.0.1:9010/test1/test-a?b=1&c=2",

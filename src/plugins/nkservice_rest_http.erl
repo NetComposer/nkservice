@@ -62,7 +62,7 @@
 
 -record(nkreq_http, {
     srv_id :: nkservice:id(),
-    id :: nkservice_rest:id(),
+    id :: nkservice_rest_plugin:id(),
     req :: term(),
     method :: method(),
     path :: [binary()],
@@ -210,6 +210,7 @@ init(Paths, CowReq, Env, NkPort) ->
         <<"GET">> -> get;
         <<"POST">> -> post;
         <<"PUT">> -> put;
+        <<"PATCH">> -> patch;
         <<"DELETE">> -> delete;
         <<"HEAD">> -> head;
         OtherMethod -> OtherMethod

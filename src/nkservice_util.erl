@@ -274,7 +274,7 @@ get_debug(SrvId, Module) ->
     {ok, term()} | not_found.
 
 get_debug_info(SrvId, Module) ->
-    try nkservice_srv:get_item(SrvId, debug) of
+    try ?CALL_SRV(SrvId, debug) of
         Debug ->
             case lists:keyfind(Module, 1, Debug) of
                 {_, Data} -> {true, Data};

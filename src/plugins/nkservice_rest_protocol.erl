@@ -184,6 +184,9 @@ conn_stop(Reason, _NkPort, State) ->
 %% HTTP Protocol callbacks
 %% ===================================================================
 
+%% For HTTP based connections, http_init is called
+%% See nkpacket_protocol
+
 http_init(Paths, Req, Env, NkPort) ->
     nkservice_rest_http:init(Paths, Req, Env, NkPort).
 
