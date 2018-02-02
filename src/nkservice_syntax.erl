@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([parse/1]).
--export([syntax_scripts/1, syntax_callbacks/1, syntax_url/1, syntax_duplicated_ids/1]).
+-export([syntax_scripts/1, syntax_callbacks/1, syntax_duplicated_ids/1]).
 
 
 -define(LLOG(Type, Txt, Args, Service),
@@ -104,12 +104,11 @@ syntax() ->
         % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
         listen => {list, #{
             id => binary,
-            url => fun ?MODULE:syntax_url/1,
+            url => fun nkservice_rest_plugin:parse_url/1,
             opts => nkpacket_syntax:safe_syntax(),
             remove => boolean,
             '__mandatory' => [url],
-            '__defaults' => #{id => <<"main">>},
-            '__post_check' => fun ?MODULE:syntax_duplicated_ids/1
+            '__defaults' => #{id => <<"main">>}
         }},
         meta => map,
         '__post_check' => fun ?MODULE:syntax_duplicated_ids/1
@@ -152,19 +151,6 @@ syntax_callbacks(List) ->
             end;
         remove ->
             ok
-    end.
-
-
-%% @private
-syntax_url({nkpacket_lisen_conns, Multi}) ->
-    {ok, {nkpacket_lisen_conns, Multi}};
-
-syntax_url(Url) ->
-    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_rest_protocol}) of
-        {ok, Multi} ->
-            {ok, {nkpacket_lisen_conns, Multi}};
-        {error, Error} ->
-            {error, Error}
     end.
 
 

@@ -60,9 +60,9 @@ plugin_config(Id, Config, #{id:=SrvId}) ->
     % For debug at nkpacket level, add debug=>true to opts (or in a url)
     % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
     Syntax = #{
-       url => fun ?MODULE:parse_url/1,  % Use <<>> to remove id
+       url => fun ?MODULE:parse_url/1,
        opts => nkpacket_syntax:safe_syntax(),
-       '__mandatory' => [id, url]
+       '__mandatory' => [url]
     },
     case nklib_syntax:parse(Config, Syntax) of
         {ok, Parsed, _} ->
@@ -78,19 +78,20 @@ plugin_config(Id, Config, #{id:=SrvId}) ->
 
 
 %% @doc
-plugin_start(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
-    insert_listeners(Listeners, Pid);
+plugin_start(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+    insert_listeners(Id, Pid, Listeners);
 
 plugin_start(_Id, _Config, _Pid, _Service) ->
     ok.
 
 
 %% @doc
-plugin_update(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
-    insert_listeners(Listeners, Pid);
+plugin_update(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+    insert_listeners(Id, Pid, Listeners);
 
 plugin_update(_Id, _Config, _Pid, _Service) ->
     ok.
+
 
 
 %% ===================================================================
@@ -118,7 +119,7 @@ parse_url(Url) ->
 
 
 %% @private
-make_listen(SrvId, Id, #{id:=Id, url:={nkservice_rest_conns, Conns}}=Entry) ->
+make_listen(SrvId, Id, #{url:={nkservice_rest_conns, Conns}}=Entry) ->
     Opts = maps:get(opts, Entry, #{}),
     make_listen_transps(SrvId, Id, Conns, Opts, []).
 
@@ -146,36 +147,18 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
 
 
 %% @private
-insert_listeners([], _Pid) ->
-    ok;
-
-insert_listeners([{Id, <<>>}|Rest], Pid) ->
-    Childs = nkservice_srv_plugins_sup:get_childs(Pid),
-    lists:foreach(
-        fun({ChildId, _, _, _}) ->
-            case element(1, ChildId) of
-                Id ->
-                    ?LLOG(info, "stopping ~s", [Id]),
-                    nkservice_srv_plugins_sup:remove_child(Pid, ChildId);
-                _ ->
-                    ok
-            end
-        end,
-        Childs),
-    insert_listeners(Rest, Pid);
-
-insert_listeners([{Id, Spec}|Rest], Pid) ->
-    case nkservice_srv_plugins_sup:update_child(Pid, Spec, #{}) of
-        {ok, _} ->
+insert_listeners(Id, Pid, SpecList) ->
+    case nkservice_srv_plugins_sup:update_child_multi(Pid, SpecList, #{}) of
+        ok ->
             ?LLOG(info, "started ~s", [Id]),
-            insert_listeners(Rest, Pid);
+            ok;
         not_updated ->
             ?LLOG(info, "didn't upgrade ~s", [Id]),
-            insert_listeners(Rest, Pid);
-        {upgraded, _} ->
+            ok;
+        upgraded ->
             ?LLOG(info, "upgraded ~s", [Id]),
-            insert_listeners(Rest, Pid);
+            ok;
         {error, Error} ->
-            ?LLOG(warning, "insert error: ~p", [Error]),
+            ?LLOG(warning, "start/update error ~s: ~p", [Id, Error]),
             {error, Error}
     end.

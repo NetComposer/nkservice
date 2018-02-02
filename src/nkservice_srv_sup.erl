@@ -90,11 +90,6 @@ start_link(#{id:=Id}=Spec) ->
             id => server,
             start => {nkservice_srv, start_link, [Spec]},
             shutdown => 30000       % Time for plugins to stop
-        },
-        #{
-            id => listen,
-            start => {nkservice_srv_listen_sup, start_link, [Id]},
-            type => supervisor
         }
     ],
     % If server or any supervisor fails, everything is restarted

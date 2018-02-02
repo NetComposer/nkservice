@@ -49,9 +49,9 @@ start() ->
                 value => 1
             }
         ],
-%%        listen => #{
-%%            url => <<"http://all/1/2">>
-%%        },
+        listen => #{
+            url => <<"http://all/1/2">>
+        },
         debug => [
             #{
                 key => a,
@@ -72,6 +72,7 @@ update1() ->
     nkservice:update(sample, #{
         plugins => [
             #{
+                id => webserver_1,
                 class => nkservice_webserver,
                 remove => true
             }

@@ -47,7 +47,7 @@
 -export([get/3, put/3, put_new/3, del/2]).
 -export([call/2, call/3, cast/2]).
 -export([start_link/1, stop_all/1]).
--export([pending_msgs/0]).
+-export([pending_msgs/0, print_childs/1, print_childs/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
 
@@ -167,6 +167,12 @@ cast(Id, Term) ->
     gen_server:cast(Id, Term).
 
 
+print_childs(Id) ->
+    nkservice_srv_plugins_sup:get_childs(Id).
+
+print_childs(Id, PluginId) ->
+    nkservice_srv_plugins_sup:get_childs(Id, nklib_util:to_binary(PluginId)).
+
 
 
 %% ===================================================================
@@ -210,11 +216,10 @@ pending_msgs() ->
         id :: nkservice:id(),
         service :: nkservice:service(),
         plugins_status2 :: #{nkservice:plugin_id() => plugin_status()},
-        plugins_sup2 :: [{nkservice:plugin_id(), pid()}],
+        plugins_sup :: [{nkservice:plugin_id(), pid()}],
         sorted_plugin_ids :: [nkservice:plugin_id()],
         events :: {Size::integer(), queue:queue()},
-        user :: map(),
-        updating :: boolean()
+        user :: map()
     }).
 
 -define(P1, #state.id).
@@ -236,11 +241,10 @@ init(#{id:=Id}=Service) ->
         id = Id,
         service = Service,
         plugins_status2 = #{},
-        plugins_sup2 = [],
+        plugins_sup = [],
         sorted_plugin_ids = get_plugin_ids(Service),
         events = {0, queue:new()},
-        user = UserState,
-        updating = false
+        user = UserState
     },
     self() ! {?MODULE, check_plugins},
     event(service_started),
@@ -324,7 +328,7 @@ handle_info({?MODULE, check_plugins}, State) ->
     {noreply, State2};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
-    #state{plugins_status2=PluginsStatus, plugins_sup2=Sups} = State,
+    #state{plugins_status2=PluginsStatus, plugins_sup=Sups} = State,
     case lists:keytake(Pid, 2, Sups) of
         {value, {Plugin, Pid}, Sups2} ->
             State2 = case maps:is_key(Plugin, PluginsStatus) of
@@ -335,7 +339,7 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
                     event({supervisor_stopped, Plugin}),
                     State
             end,
-            State3 = State2#state{plugins_sup2=Sups2},
+            State3 = State2#state{plugins_sup=Sups2},
             {noreply, State3};
         false ->
             nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2)
@@ -382,6 +386,8 @@ get_plugin_ids(#{plugins:=Plugins, plugin_modules:=Modules}) ->
 
 %% @private
 do_upgrade(NewService, #state{id=Id, sorted_plugin_ids=OldPluginIds}=State) ->
+    lager:error("NKLOG NS ~p", [maps:get(plugins, NewService)]),
+
     OldName = ?CALL_SRV(Id, name),
     NewName = maps:get(name, NewService),
     case OldName == NewName of
@@ -402,13 +408,15 @@ do_upgrade(NewService, #state{id=Id, sorted_plugin_ids=OldPluginIds}=State) ->
     end,
     NewPluginIds = get_plugin_ids(NewService),
     ToStop = OldPluginIds -- NewPluginIds,
-    % Plugins to stop are removed from 'plugins_status'
     State2 = do_stop_plugins(ToStop, State),
     NewPlugins1 = maps:get(plugins, NewService, #{}),
-    % Remove config for stopped plugins
+    % Remove config for stopped plugins (config fun left them)
     NewPlugins2 = maps:without(ToStop, NewPlugins1),
     NewService2 = NewService#{plugins=>NewPlugins2},
-    State3 = State2#state{service = NewService2},
+    State3 = State2#state{
+        service = NewService2,
+        sorted_plugin_ids = get_plugin_ids(NewService2)
+    },
     nkservice_config:make_cache(NewService2),
     ToStart = NewPluginIds -- OldPluginIds,
     ToUpdate = (OldPluginIds -- ToStart) -- ToStop,
@@ -564,7 +572,7 @@ update_plugin_status(PluginId, Status, #state{plugins_status2=PluginsStatus}=Sta
 
 
 %% @private
-start_plugin_sup(PluginId, #state{id=Id, plugins_sup2=Sups}=State) ->
+start_plugin_sup(PluginId, #state{id=Id, plugins_sup=Sups}=State) ->
     case find_plugin_sup_pid(PluginId, State) of
         {ok, Pid} ->
             {ok, Pid, State};
@@ -573,7 +581,7 @@ start_plugin_sup(PluginId, #state{id=Id, plugins_sup2=Sups}=State) ->
                 {ok, Pid} ->
                     monitor(process, Pid),
                     Sups2 = lists:keystore(PluginId, 1, Sups, {PluginId, Pid}),
-                    {ok, Pid, State#state{plugins_sup2=Sups2}};
+                    {ok, Pid, State#state{plugins_sup=Sups2}};
                 {error, Error} ->
                     ?LLOG(warning, "could not start plugin '~s' supervisor: ~p",
                         [PluginId, Error], State),
@@ -583,7 +591,7 @@ start_plugin_sup(PluginId, #state{id=Id, plugins_sup2=Sups}=State) ->
 
 
 %% @private
-find_plugin_sup_pid(PluginId, #state{plugins_sup2=Sups}) ->
+find_plugin_sup_pid(PluginId, #state{plugins_sup=Sups}) ->
     case lists:keyfind(PluginId, 1, Sups) of
         {PluginId, Pid} when is_pid(Pid) ->
             {ok, Pid};
@@ -594,7 +602,7 @@ find_plugin_sup_pid(PluginId, #state{plugins_sup2=Sups}) ->
 
 %% @private
 insert_event(Event, #state{events={Size, Queue}}=State) ->
-    ?LLOG(info, "EVENT: ~p", [Event], State),
+    %?LLOG(info, "EVENT: ~p", [Event], State),
     {Size2, Queue2} = case Size >= ?MAX_EVENT_QUEUE_SIZE of
         true ->
             {Size-1, queue:drop(Queue)};

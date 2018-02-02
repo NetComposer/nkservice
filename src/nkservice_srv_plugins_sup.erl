@@ -24,10 +24,13 @@
 -behaviour(supervisor).
 
 -export([start_plugin_sup/2, stop_plugin_sup/2]).
--export([update_child/3, remove_child/2, get_pid/1, get_pid/2, get_childs/1]).
+-export([update_child/3, update_child_multi/3, remove_child/2]).
+-export([get_pid/1, get_pid/2, get_childs/1, get_childs/2]).
 -export([init/1, start_link/1, start_link_plugin_sup/2]).
 
 -include("nkservice.hrl").
+
+
 
 
 %% @doc Tries to start a plugin supervisor, or returns existing one
@@ -66,12 +69,14 @@ update_child(Id, Spec, _Opts) ->
     end,
     case supervisor:get_childspec(Pid, ChildId) of
         {ok, Spec} ->
+            lager:warning("Child ~p not updated", [ChildId]),
             not_updated;
         {ok, _OldSpec} ->
             case remove_child(Pid, ChildId) of
                 ok ->
                     case supervisor:start_child(Pid, Spec) of
                         {ok, ChildPid} ->
+                            lager:warning("Child ~p upgraded", [ChildId]),
                             {upgraded, ChildPid};
                         {error, Error} ->
                             {error, Error}
@@ -82,6 +87,7 @@ update_child(Id, Spec, _Opts) ->
         {error, not_found} ->
             case supervisor:start_child(Pid, Spec) of
                 {ok, ChildPid} ->
+                    lager:warning("Child ~p started", [ChildId]),
                     {ok, ChildPid};
                 {error, Error} ->
                     {error, Error}
@@ -104,9 +110,56 @@ remove_child(Id, ChildId) ->
 
 
 
+%% @doc Updates a series of childs, all or nothing
+-spec update_child_multi(term()|pid(), [supervisor:child_spec()], map()) ->
+    ok | upgraded | not_updated | {error, term()}.
+
+update_child_multi(Id, SpecList, Opts) ->
+    Pid = get_pid(Id),
+    OldIds = [ChildId || {ChildId, _, _, _} <- supervisor:which_children(Pid)],
+    NewIds = [
+        case is_map(Spec) of
+            true -> maps:get(id, Spec);
+            false -> element(1, Spec)
+        end
+        || Spec <- SpecList
+    ],
+    ToStop = OldIds -- NewIds,
+    lists:foreach(fun(ChildId) -> remove_child(Pid, ChildId) end, ToStop),
+    case update_child_multi(Pid, SpecList, Opts, not_updated) of
+        {error, Error} ->
+            lists:foreach(fun(ChildId) -> remove_child(Pid, ChildId) end, OldIds++NewIds),
+            {error, Error};
+        Other ->
+            Other
+    end.
+
+
+%% @private
+update_child_multi(_Pid, [], _Opts, Res) ->
+    Res;
+
+update_child_multi(Pid, [Spec|Rest], Opts, Res) ->
+    case update_child(Pid, Spec, Opts) of
+        {ok, _} ->
+            update_child_multi(Pid, Rest, Opts, ok);
+        {upgraded, _} ->
+            update_child_multi(Pid, Rest, Opts, upgraded);
+        not_updated ->
+            update_child_multi(Pid, Rest, Opts, Res);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
 %% @doc
 get_childs(Id) ->
     supervisor:which_children(get_pid(Id)).
+
+%% @doc
+get_childs(Id, PluginId) ->
+    supervisor:which_children(get_pid(Id, PluginId)).
+
 
 
 %% @private

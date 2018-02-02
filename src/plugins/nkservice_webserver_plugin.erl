@@ -60,16 +60,16 @@ plugin_config(Id, Config, #{id:=SrvId}) ->
 
 
 %% @doc
-plugin_start(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
-    insert_listeners(Listeners, Pid);
+plugin_start(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+    insert_listeners(Id, Pid, Listeners);
 
 plugin_start(_Id, _Config, _Pid, _Service) ->
     ok.
 
 
 %% @doc
-plugin_update(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
-    insert_listeners(Listeners, Pid);
+plugin_update(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+    insert_listeners(Id, Pid, Listeners);
 
 plugin_update(_Id, _Config, _Pid, _Service) ->
     ok.
@@ -135,9 +135,6 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
 
 
 %% @private
-insert_listeners([], _Pid) ->
-    ok;
-
 %%insert_listeners([{Id, <<>>}|Rest], Pid) ->
 %%    Childs = nkservice_srv_plugins_sup:get_childs(Pid),
 %%    lists:foreach(
@@ -153,18 +150,18 @@ insert_listeners([], _Pid) ->
 %%        Childs),
 %%    insert_listeners(Rest, Pid);
 
-insert_listeners([#{id:={Id, Url}}=Spec|Rest], Pid) ->
-    case nkservice_srv_plugins_sup:update_child(Pid, Spec, #{}) of
-        {ok, _} ->
-            ?LLOG(info, "started ~s (~s)", [Id, Url]),
-            insert_listeners(Rest, Pid);
+insert_listeners(Id, Pid, SpecList) ->
+    case nkservice_srv_plugins_sup:update_child_multi(Pid, SpecList, #{}) of
+        ok ->
+            ?LLOG(info, "started ~s", [Id]),
+            ok;
         not_updated ->
-            ?LLOG(info, "didn't upgrade ~s (~s)", [Id, Url]),
-            insert_listeners(Rest, Pid);
-        {upgraded, _} ->
-            ?LLOG(info, "upgraded ~s (~s)", [Id, Url]),
-            insert_listeners(Rest, Pid);
+            ?LLOG(info, "didn't upgrade ~s", [Id]),
+            ok;
+        upgraded ->
+            ?LLOG(info, "upgraded ~s", [Id]),
+            ok;
         {error, Error} ->
-            ?LLOG(warning, "insert error ~s (~s): ~p", [Id, Url, Error]),
+            ?LLOG(warning, "start/update error ~s: ~p", [Id, Error]),
             {error, Error}
     end.

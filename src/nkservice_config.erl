@@ -53,7 +53,7 @@ config_service(Spec, #{id:=Id}=Service) ->
             {error, SyntaxError} ->
                 throw(SyntaxError)
         end,
-        Spec3 = update_listen(Spec2, Service),
+        Spec3 = update_listen(Spec2),
         % nkservice_srv:put(Id, nkservice_debug, Debug),
         %% Keys class, name, log_level, if present, are updated on service
         Global = maps:with([class, name, log_level], Spec3),
@@ -76,16 +76,22 @@ config_service(Spec, #{id:=Id}=Service) ->
 
 
 %% @private
-update_listen(#{listen:=Listen}=Spec, Service) ->
-    OldListen = maps:get(listen, Service, #{}),
-    NewListen1 = maps:from_list([{Id, S} || #{id:=Id}=S <- Listen]),
-    NewListen2 = maps:merge(OldListen, NewListen1),
-    ListenSpecs = [S#{class=>nkservice_rest} || S <- maps:to_list(NewListen2)],
+update_listen(#{listen:=Listen}=Spec) ->
+    Rest = lists:map(
+        fun(#{id:=Id}=L1) ->
+            L2 = maps:with([remove], L1),
+            L2#{
+                id => <<"nkservice_listen_", Id/binary>>,
+                class => nkservice_rest,
+                config => maps:with([url, opts], L1)
+             }
+        end,
+        Listen),
     Plugins1 = maps:get(plugins, Spec, []),
-    Plugins2 = ListenSpecs ++ Plugins1,
+    Plugins2 = Rest ++ Plugins1,
     Spec#{plugins=>Plugins2};
 
-update_listen(Spec, _Service) ->
+update_listen(Spec) ->
     Spec.
 
 
