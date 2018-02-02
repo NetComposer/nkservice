@@ -30,6 +30,10 @@
 
 -include("nkservice.hrl").
 
+-type update_opts() ::
+    #{
+        restart_delay => integer()          % msecs
+    }.
 
 
 
@@ -58,10 +62,10 @@ stop_plugin_sup(Id, Plugin) ->
 
 
 %% @doc Updates (if Spec is different) or starts a new child
--spec update_child(term()|pid(), supervisor:child_spec(), map()) ->
+-spec update_child(term()|pid(), supervisor:child_spec(), update_opts()) ->
     {ok, pid()} | {upgraded, pid()} | not_updated | {error, term()}.
 
-update_child(Id, Spec, _Opts) ->
+update_child(Id, Spec, Opts) ->
     Pid = get_pid(Id),
     ChildId = case Spec of
         #{id:=CI} -> CI;
@@ -74,7 +78,9 @@ update_child(Id, Spec, _Opts) ->
         {ok, _OldSpec} ->
             case remove_child(Pid, ChildId) of
                 ok ->
-                    case supervisor:start_child(Pid, Spec) of
+                    Delay = maps:get(restart_delay, Opts, 500),
+                    timer:sleep(Delay),
+                                case supervisor:start_child(Pid, Spec) of
                         {ok, ChildPid} ->
                             lager:warning("Child ~p upgraded", [ChildId]),
                             {upgraded, ChildPid};

@@ -67,6 +67,7 @@ stop() ->
     nkservice:stop(sample).
 
 
+% Try to modify parameters, activate remove
 
 update1() ->
     nkservice:update(sample, #{
@@ -74,54 +75,26 @@ update1() ->
             #{
                 id => webserver_1,
                 class => nkservice_webserver,
-                remove => true
+                remove => false,
+                config => #{
+                    url => "https://all:9010/test1, http://all:9011/testB",
+                    opts => #{debug=>false}
+                }
+            },
+            #{
+                id => webserver_2,
+                class => nkservice_webserver,
+                remove => false,
+                config => #{
+                    url => "https://all:9010/test2",
+                    file_path => "/tmp"
+                }
             }
 
-        ]
+        ],
+        listen => #{
+            url => <<"http://all/1/2/3">>,
+            remove => false
+        }
     }).
-
-
-%%update2() ->
-%%    nkservice:update(sample, #{
-%%        plugins => [
-%%            #{
-%%                class => nkservice_webserver,
-%%                config => webserver_config()
-%%            }
-%%        ]
-%%    }).
-
-
-%%update3() ->
-%%    nkservice:update(sample, #{
-%%        plugins => [
-%%            #{
-%%                class => nkservice_webserver,
-%%                config => #{
-%%                    servers => [
-%%                        #{
-%%                            id => web1,
-%%                            url => <<>>
-%%                        }
-%%                    ]
-%%                }
-%%            }
-%%        ]
-%%    }).
-
-
-
-%%
-%%update3_b() ->
-%%    nkservice:update(sample, #{
-%%        plugins => [
-%%            #{
-%%                id => web1,
-%%                class => nkservice_webserver,
-%%                config => #{
-%%                    url => <<>>
-%%                }
-%%            }
-%%        ]
-%%    }).
 

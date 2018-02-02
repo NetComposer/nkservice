@@ -386,8 +386,6 @@ get_plugin_ids(#{plugins:=Plugins, plugin_modules:=Modules}) ->
 
 %% @private
 do_upgrade(NewService, #state{id=Id, sorted_plugin_ids=OldPluginIds}=State) ->
-    lager:error("NKLOG NS ~p", [maps:get(plugins, NewService)]),
-
     OldName = ?CALL_SRV(Id, name),
     NewName = maps:get(name, NewService),
     case OldName == NewName of
@@ -406,16 +404,20 @@ do_upgrade(NewService, #state{id=Id, sorted_plugin_ids=OldPluginIds}=State) ->
             nklib_proc:del(?MODULE),
             nklib_proc:put(?MODULE, {Id, NewClass})
     end,
-    NewPluginIds = get_plugin_ids(NewService),
-    ToStop = OldPluginIds -- NewPluginIds,
-    State2 = do_stop_plugins(ToStop, State),
     NewPlugins1 = maps:get(plugins, NewService, #{}),
-    % Remove config for stopped plugins (config fun left them)
+    ToStop = maps:fold(
+        fun(Id0, K, Acc) ->
+            case K of #{remove:=true} -> [Id0|Acc]; _ -> Acc end
+        end,
+        [],
+        NewPlugins1),
+    State2 = do_stop_plugins(ToStop, State),
     NewPlugins2 = maps:without(ToStop, NewPlugins1),
     NewService2 = NewService#{plugins=>NewPlugins2},
+    NewPluginIds = get_plugin_ids(NewService2),
     State3 = State2#state{
         service = NewService2,
-        sorted_plugin_ids = get_plugin_ids(NewService2)
+        sorted_plugin_ids = NewPluginIds
     },
     nkservice_config:make_cache(NewService2),
     ToStart = NewPluginIds -- OldPluginIds,
