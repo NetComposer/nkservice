@@ -21,7 +21,7 @@
 %% @doc Default callbacks
 -module(nkservice_webserver_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_config/2, plugin_start/3, plugin_update/3]).
+-export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/4]).
 -export([parse_url/1]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -39,44 +39,39 @@ plugin_deps() ->
 
 
 %% @doc
-plugin_config(Config, #{id:=SrvId}) ->
+plugin_config(Id, Config, #{id:=SrvId}) ->
     Syntax = #{
-        servers => {list, #{
-            id => binary,
-            url => fun ?MODULE:parse_url/1,     % Use <<>> to remove the id
-            file_path => binary,
-            opts => nkpacket_syntax:safe_syntax(),
-            '__mandatory' => [id, url]
-        }}
+        url => fun ?MODULE:parse_url/1,     % Use <<>> to remove the id
+        file_path => binary,
+        opts => nkpacket_syntax:safe_syntax(),
+        '__mandatory' => [url]
     },
     case nklib_syntax:parse(Config, Syntax) of
-        {ok, #{servers:=Servers}, _} ->
-            case make_listen(SrvId, Servers, []) of
+        {ok, Parsed, _} ->
+            case make_listen(SrvId, Id, Parsed) of
                 {ok, Listeners} ->
                     {ok, Config#{listeners=>Listeners}};
                 {error, Error} ->
                     {error, Error}
             end;
-        {ok, _, _} ->
-            ok;
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc
-plugin_start(#{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+plugin_start(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
     insert_listeners(Listeners, Pid);
 
-plugin_start(_Config, _Pid, _Service) ->
+plugin_start(_Id, _Config, _Pid, _Service) ->
     ok.
 
 
 %% @doc
-plugin_update(#{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+plugin_update(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
     insert_listeners(Listeners, Pid);
 
-plugin_update(_Config, _Pid, _Service) ->
+plugin_update(_Id, _Config, _Pid, _Service) ->
     ok.
 
 
@@ -106,13 +101,7 @@ parse_url(Url) ->
 
 
 %% @private
-make_listen(_SrvId, [], Acc) ->
-    {ok, Acc};
-
-make_listen(SrvId, [#{id:=Id, url:=<<>>}|Rest], Acc) ->
-    make_listen(SrvId, Rest, [{Id, <<>>}|Acc]);
-
-make_listen(SrvId, [#{id:=Id, url:={nkservice_webserver_conns, Conns}}=Entry|Rest], Acc) ->
+make_listen(SrvId, Id, #{url:={nkservice_webserver_conns, Conns}}=Entry) ->
     Opts = maps:get(opts, Entry, #{}),
     Path = case Entry of
         #{file_path:=FilePath} ->
@@ -121,13 +110,12 @@ make_listen(SrvId, [#{id:=Id, url:={nkservice_webserver_conns, Conns}}=Entry|Res
             Priv = list_to_binary(code:priv_dir(nkservice)),
             <<Priv/binary, "/www">>
     end,
-    Acc2 = make_listen_transps(SrvId, Id, Conns, Opts, Path, Acc),
-    make_listen(SrvId, Rest, Acc2).
+    make_listen_transps(SrvId, Id, Conns, Opts, Path, []).
 
 
 %% @private
 make_listen_transps(_SrvId, _Id, [], _Opts, _Path, Acc) ->
-    Acc;
+    {ok, Acc};
 
 make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
     #nkconn{opts=ConnOpts} = Conn,
@@ -140,7 +128,7 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
     Conn2 = Conn#nkconn{protocol=nkservice_webserver_protocol, opts=Opts3},
     case nkpacket:get_listener(Conn2) of
         {ok, Id, Spec} ->
-            make_listen_transps(SrvId, Id, Rest, Opts, Path, [{Id, Spec}|Acc]);
+            make_listen_transps(SrvId, Id, Rest, Opts, Path, [Spec|Acc]);
         {error, Error} ->
             {error, Error}
     end.
@@ -150,33 +138,33 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
 insert_listeners([], _Pid) ->
     ok;
 
-insert_listeners([{Id, <<>>}|Rest], Pid) ->
-    Childs = nkservice_srv_plugins_sup:get_childs(Pid),
-    lists:foreach(
-        fun({ChildId, _, _, _}) ->
-            case element(1, ChildId) of
-                Id ->
-                    ?LLOG(info, "stopping ~s", [Id]),
-                    nkservice_srv_plugins_sup:remove_child(Pid, ChildId);
-                _ ->
-                    ok
-            end
-        end,
-        Childs),
-    insert_listeners(Rest, Pid);
+%%insert_listeners([{Id, <<>>}|Rest], Pid) ->
+%%    Childs = nkservice_srv_plugins_sup:get_childs(Pid),
+%%    lists:foreach(
+%%        fun({ChildId, _, _, _}) ->
+%%            case element(1, ChildId) of
+%%                Id ->
+%%                    ?LLOG(info, "stopping ~s", [Id]),
+%%                    nkservice_srv_plugins_sup:remove_child(Pid, ChildId);
+%%                _ ->
+%%                    ok
+%%            end
+%%        end,
+%%        Childs),
+%%    insert_listeners(Rest, Pid);
 
-insert_listeners([{Id, Spec}|Rest], Pid) ->
+insert_listeners([#{id:={Id, Url}}=Spec|Rest], Pid) ->
     case nkservice_srv_plugins_sup:update_child(Pid, Spec, #{}) of
         {ok, _} ->
-            ?LLOG(info, "started ~s", [Id]),
+            ?LLOG(info, "started ~s (~s)", [Id, Url]),
             insert_listeners(Rest, Pid);
         not_updated ->
-            ?LLOG(info, "didn't upgrade ~s", [Id]),
+            ?LLOG(info, "didn't upgrade ~s (~s)", [Id, Url]),
             insert_listeners(Rest, Pid);
         {upgraded, _} ->
-            ?LLOG(info, "upgraded ~s", [Id]),
+            ?LLOG(info, "upgraded ~s (~s)", [Id, Url]),
             insert_listeners(Rest, Pid);
         {error, Error} ->
-            ?LLOG(warning, "insert error: ~p", [Error]),
+            ?LLOG(warning, "insert error ~s (~s): ~p", [Id, Url, Error]),
             {error, Error}
     end.

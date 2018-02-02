@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/2, stop/1, reload/1, replace/2, update/2]).
--export([get_name/1, get_all/0, get_all/1]).
+-export([get_by_name/1, get_all/0, get_all/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
 -export_type([id/0, spec/0, config/0, service/0]).
 -export_type([error/0, event/0]).
@@ -41,9 +41,16 @@
 %% Service's id must be an atom
 -type id() :: atom().
 
+-type class() :: binary().
+
+-type name() :: binary().
+
+-type plugin_id() :: binary().
+
 -type plugin_spec() ::
     #{
-        class => atom(),
+        id => plugin_id(),      % Mandatory
+        class => atom(),        % Mandatory
         config => map(),
         remove => boolean()
     }.
@@ -52,14 +59,16 @@
 
 -type cache_spec() ::
     #{
-        key => atom(),
-        value => term(),
+        key => atom(),              % Mandatory
+        value => term(),            % Mandatory
         remove => boolean()         % true to remove the entry
     }.
 
+-type script_id() :: binary().
+
 -type script_spec() ::
     #{
-        id => binary(),
+        id => script_id(),
         class => luerl | remove,
         file => binary(),
         url => binary(),
@@ -67,18 +76,22 @@
         remove => boolean()         % true to remove the entry
     }.
 
+-type callback_id() :: binary().
+
 -type callback_spec() ::
     #{
-        id => binary(),
+        id => callback_id(),
         class => luerl | http | remove,
         luerl_id => binary(),
         url => binary(),
         remove => boolean()         % true to remove the entry
     }.
 
+-type listen_id() :: binary().
+
 -type listen_spec() ::
     #{
-        id => binary(),
+        id => listen_id(),
         url => binary(),
         opts => nkpacket:listen_opts(),
         remove => boolean()         % true to remove the entry
@@ -89,16 +102,15 @@
 %% Service specification
 -type spec() ::
 	#{
-        class => binary(),                % Used to find similar services
-        name => binary(),                 % Optional name
+        class => class(),                % Used to find similar services
+        name => name(),                  % Optional name
         plugins => [plugin_spec()],
-        %listen => listen_spec(),
-        log_level => log_level(),
-        debug => [debug_spec()],
-        cache => [cache_spec()],
         scripts => [script_spec()],
         callbacks => [callback_spec()],
-        listen => [listen_spec()]
+        listen => [listen_spec()],
+        log_level => log_level(),
+        debug => [debug_spec()],
+        cache => [cache_spec()]
 	}.
 
 -type config() :: #{term() => term()}.
@@ -110,10 +122,10 @@
 -type service() ::
     #{
         id => atom(),
-        class => binary(),
-        name => binary(),
-        plugins => #{Plugin::atom() => plugin_spec()},
-        plugin_list => [Plugin::atom()],    % Bottom to top
+        class => class(),
+        name => name(),
+        plugins => #{plugin_id() => plugin_spec()},
+        plugin_modules => [atom()],         % Bottom to top
         uuid => binary(),                   % Each service is assigned an uuid
         log_level => log_level(),
         timestamp => nklib_util:m_timestamp(),  % Started time
@@ -209,10 +221,10 @@ update(Id, Spec) ->
 
 
 %% @private Finds a service's id from its name
--spec get_name(binary()) ->
+-spec get_by_name(name()) ->
     {ok, nkservice:id()} | not_found.
 
-get_name(Name) ->
+get_by_name(Name) ->
     case nklib_proc:values({nkservice_srv, nklib_util:to_binary(Name)}) of
         [] -> not_found;
         [{Id, _Pid}|_] -> {ok, Id}
@@ -221,7 +233,7 @@ get_name(Name) ->
 
 %% @doc Gets all started services
 -spec get_all() ->
-    [{id(), binary(), binary(), pid()}].
+    [{id(), class(), name(), pid()}].
 
 get_all() ->
     [{Id, Id:name(), Class, Pid} || 
@@ -229,8 +241,8 @@ get_all() ->
 
 
 %% @doc Gets all started services
--spec get_all(Class::binary()) ->
-    [{id(), binary(), pid()}].
+-spec get_all(class()) ->
+    [{id(), name(), pid()}].
 
 get_all(Class) ->
     Class2 = nklib_util:to_binary(Class),

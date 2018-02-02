@@ -21,7 +21,7 @@
 %% @doc Default callbacks
 -module(nkservice_rest_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_config/2, plugin_start/3, plugin_update/3]).
+-export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/4]).
 -export([parse_url/1]).
 -export_type([id/0, http_method/0, http_path/0, http_req/0, http_reply/0]).
 
@@ -56,46 +56,40 @@ plugin_deps() ->
 
 
 %% @doc
-plugin_config(Config, #{id:=SrvId}) ->
+plugin_config(Id, Config, #{id:=SrvId}) ->
     % For debug at nkpacket level, add debug=>true to opts (or in a url)
     % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
     Syntax = #{
-        servers => {list,
-           #{
-               id => binary,
-               url => fun ?MODULE:parse_url/1,  % Use <<>> to remove id
-               opts => nkpacket_syntax:safe_syntax(),
-               '__mandatory' => [id, url]
-           }}
+       url => fun ?MODULE:parse_url/1,  % Use <<>> to remove id
+       opts => nkpacket_syntax:safe_syntax(),
+       '__mandatory' => [id, url]
     },
     case nklib_syntax:parse(Config, Syntax) of
-        {ok, #{servers:=Servers}, _} ->
-            case make_listen(SrvId, Servers, []) of
+        {ok, Parsed, _} ->
+            case make_listen(SrvId, Id, Parsed) of
                 {ok, Listeners} ->
                     {ok, Config#{listeners=>Listeners}};
                 {error, Error} ->
                     {error, Error}
             end;
-        {ok, _, _} ->
-            ok;
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc
-plugin_start(#{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+plugin_start(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
     insert_listeners(Listeners, Pid);
 
-plugin_start(_Config, _Pid, _Service) ->
+plugin_start(_Id, _Config, _Pid, _Service) ->
     ok.
 
 
 %% @doc
-plugin_update(#{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+plugin_update(_Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
     insert_listeners(Listeners, Pid);
 
-plugin_update(_Config, _Pid, _Service) ->
+plugin_update(_Id, _Config, _Pid, _Service) ->
     ok.
 
 
@@ -124,21 +118,14 @@ parse_url(Url) ->
 
 
 %% @private
-make_listen(_SrvId, [], Acc) ->
-    {ok, Acc};
-
-make_listen(SrvId, [#{id:=Id, url:=<<>>}|Rest], Acc) ->
-    make_listen(SrvId, Rest, [{Id, <<>>}|Acc]);
-
-make_listen(SrvId, [#{id:=Id, url:={nkservice_rest_conns, Conns}}=Entry|Rest], Acc) ->
+make_listen(SrvId, Id, #{id:=Id, url:={nkservice_rest_conns, Conns}}=Entry) ->
     Opts = maps:get(opts, Entry, #{}),
-    Acc2 = make_listen_transps(SrvId, Id, Conns, Opts, Acc),
-    make_listen(SrvId, Rest, Acc2).
+    make_listen_transps(SrvId, Id, Conns, Opts, []).
 
 
 %% @private
 make_listen_transps(_SrvId, _Id, [], _Opts, Acc) ->
-    Acc;
+    {ok, Acc};
 
 make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
     #nkconn{opts=ConnOpts, transp=_Transp} = Conn,
@@ -152,7 +139,7 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
     Conn2 = Conn#nkconn{opts=Opts3},
     case nkpacket:get_listener(Conn2) of
         {ok, Id, Spec} ->
-            make_listen_transps(SrvId, Id, Rest, Opts, [{Id, Spec}|Acc]);
+            make_listen_transps(SrvId, Id, Rest, Opts, [Spec|Acc]);
         {error, Error} ->
             {error, Error}
     end.

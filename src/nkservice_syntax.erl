@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([parse/1]).
--export([syntax_scripts/1, syntax_callbacks/1, syntax_url/1]).
+-export([syntax_scripts/1, syntax_callbacks/1, syntax_url/1, syntax_duplicated_ids/1]).
 
 
 -define(LLOG(Type, Txt, Args, Service),
@@ -66,7 +66,7 @@ syntax() ->
             class => atom,
             config => map,
             remove => boolean,
-            '__mandatory' => [class],
+            '__mandatory' => [id, class],
             '__defaults' => #{config => #{}}
         }},
         log_level => log_level,
@@ -102,12 +102,17 @@ syntax() ->
         }},
         % For debug at nkpacket level, add debug=>true to opts (or in a url)
         % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
-        listen => #{
-            url => fun ?MODULE:syntax_url/1,        %% <<>> to remove
+        listen => {list, #{
+            id => binary,
+            url => fun ?MODULE:syntax_url/1,
             opts => nkpacket_syntax:safe_syntax(),
-            '__mandatory' => [url]
-        },
-        meta => map
+            remove => boolean,
+            '__mandatory' => [url],
+            '__defaults' => #{id => <<"main">>},
+            '__post_check' => fun ?MODULE:syntax_duplicated_ids/1
+        }},
+        meta => map,
+        '__post_check' => fun ?MODULE:syntax_duplicated_ids/1
     }.
 
 
@@ -136,14 +141,14 @@ syntax_callbacks(List) ->
                 #{luerl_id:=_} ->
                     ok;
                 _ ->
-                    {error, {missing_field, luerl_id}}
+                    {error, {missing_field, <<"luerl_id">>}}
             end;
         http ->
             case Map of
                 #{url:=_} ->
                     ok;
                 _ ->
-                    {error, {missing_field, url}}
+                    {error, {missing_field, <<"url">>}}
             end;
         remove ->
             ok
@@ -161,3 +166,32 @@ syntax_url(Url) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+syntax_duplicated_ids([]) ->
+    ok;
+
+syntax_duplicated_ids([{Key, List}|Rest])
+        when Key==plugins; Key==scripts; Key==callbacks ->
+    case find_duplicated_ids(List) of
+        ok ->
+            syntax_duplicated_ids(Rest);
+        error ->
+            {error, {duplicated_field, nklib_util:bjoin([Key, "id"], <<".">>)}}
+    end;
+
+syntax_duplicated_ids([_|Rest]) ->
+    syntax_duplicated_ids(Rest).
+
+%% @private
+find_duplicated_ids(List) ->
+    Ids = [Id || #{id:=Id} <- List],
+    case lists:usort(Ids) of
+        Ids ->
+            ok;
+        _ ->
+            error
+    end.
+
+

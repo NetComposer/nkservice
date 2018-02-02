@@ -53,7 +53,7 @@ config_service(Spec, #{id:=Id}=Service) ->
             {error, SyntaxError} ->
                 throw(SyntaxError)
         end,
-        Spec3 = update_listen(Spec2),
+        Spec3 = update_listen(Spec2, Service),
         % nkservice_srv:put(Id, nkservice_debug, Debug),
         %% Keys class, name, log_level, if present, are updated on service
         Global = maps:with([class, name, log_level], Spec3),
@@ -76,20 +76,39 @@ config_service(Spec, #{id:=Id}=Service) ->
 
 
 %% @private
-update_listen(#{listen:=Listen}=Spec) ->
-    Plugins1 = maps:get(plugins, Spec, #{}),
-    Rest1 = maps:get(nkservice_rest, Plugins1, #{}),
-    RestConfig1 = maps:get(config, Rest1, #{}),
-    RestServers1 = maps:get(servers, RestConfig1, []),
-    ListenConfig = maps:with([id, url, opts], Listen#{id=><<"nkservice">>}),
-    RestServers2 = [ListenConfig|RestServers1],
-    RestConfig2 = RestConfig1#{servers=>RestServers2},
-    Rest2 = Rest1#{config=>RestConfig2},
-    Plugins2 = Plugins1#{nkservice_rest=>Rest2},
+update_listen(#{listen:=Listen}=Spec, Service) ->
+    OldListen = maps:get(listen, Service, #{}),
+    NewListen1 = maps:from_list([{Id, S} || #{id:=Id}=S <- Listen]),
+    NewListen2 = maps:merge(OldListen, NewListen1),
+    ListenSpecs = [S#{class=>nkservice_rest} || S <- maps:to_list(NewListen2)],
+    Plugins1 = maps:get(plugins, Spec, []),
+    Plugins2 = ListenSpecs ++ Plugins1,
     Spec#{plugins=>Plugins2};
 
-update_listen(Spec) ->
+update_listen(Spec, _Service) ->
     Spec.
+
+
+
+%% @private
+update_plugins(#{plugins:=Plugins}, Service) ->
+    OldPlugins = maps:get(plugins, Service, #{}),
+    NewPlugins1 = maps:from_list([{Id, Spec} || #{id:=Id}=Spec <- Plugins]),
+    NewPlugins2 = maps:merge(OldPlugins, NewPlugins1),
+    ToRemove = [Id || #{id:=Id, remove:=true} <- Plugins],
+    PluginList1 = maps:to_list(maps:without(ToRemove, NewPlugins2)),
+    Modules1 = [Class || {_, #{class:=Class}} <- PluginList1],
+    Modules2 = expand_plugins(Modules1),
+    Service2 = Service#{
+        plugin_modules => Modules2,           % down to top
+        plugins => NewPlugins2                % keep removed configs to stop them
+    },
+    % We call configure only for plugins listen in new Spec and not removed
+    configure_plugins(maps:keys(NewPlugins1)--ToRemove, Service2);
+
+update_plugins(_Spec, Service) ->
+    Service.
+
 
 
 %% @private
@@ -114,26 +133,6 @@ update_debug(#{debug:=Debug}, Service) ->
 
 update_debug(_Spec, Service) ->
     maps:merge(#{debug=>[]}, Service).
-
-
-%% @private
-update_plugins(#{plugins:=Plugins}, Service) ->
-    OldConfig = maps:get(plugins, Service, #{}),
-    NewConfig1 = maps:from_list([
-        {Class, PConfig} || #{class:=Class, config:=PConfig} <- Plugins
-    ]),
-    NewConfig2 = maps:merge(OldConfig, NewConfig1),
-    ToRemove = [Class || #{class:=Class, remove:=true} <- Plugins],
-    NewPluginList = expand_plugins(maps:keys(NewConfig2) -- ToRemove),
-    Service2 = Service#{
-        plugin_list => NewPluginList,           % down to top
-        plugins => NewConfig2                   % keep removed configs for now
-    },
-    % We call configure only for plugins listen in new Spec and not removed
-    configure_plugins(maps:keys(NewConfig1)--ToRemove, Service2);
-
-update_plugins(_Spec, Service) ->
-    Service.
 
 
 %% @private
@@ -163,16 +162,18 @@ update_callbacks(_Spec, Service) ->
     Service.
 
 
-
 %% @private
 configure_plugins([], Service) ->
     Service;
 
-configure_plugins([Plugin|Rest], #{plugins:=Config}=Service) ->
-    Mod = get_plugin(Plugin),
-    PluginConfig = maps:get(Plugin, Config, #{}),
-    ?LLOG(notice, "configuring plugin ~p", [Plugin], Service),
-    Service2 = case nklib_util:apply(Mod, plugin_config, [PluginConfig, Service]) of
+configure_plugins([PluginId|Rest], #{plugins:=Config}=Service) ->
+    #{class:=Class} = PluginSpec = maps:get(PluginId, Config),
+    Mod = get_plugin(Class),
+    PluginConfig = maps:get(config, PluginSpec, #{}),
+    ?LLOG(notice, "configuring plugin ~s (~s)", [PluginId, Class], Service),
+    Service2 = case
+        nklib_util:apply(Mod, plugin_config, [PluginId, PluginConfig, Service])
+    of
         ok ->
             Service;
         not_exported ->
@@ -180,23 +181,26 @@ configure_plugins([Plugin|Rest], #{plugins:=Config}=Service) ->
         continue ->
             Service;
         {ok, NewPluginConfig} ->
-            Config2 = Config#{Plugin=>NewPluginConfig},
+            PluginSpec2 = PluginSpec#{config=>NewPluginConfig},
+            Config2 = Config#{PluginId=>PluginSpec2},
             Service#{plugins:=Config2};
         {ok, NewPluginConfig, NewService} ->
-            Config2 = Config#{Plugin=>NewPluginConfig},
+            PluginSpec2 = PluginSpec#{config=>NewPluginConfig},
+            Config2 = Config#{PluginId=>PluginSpec2},
             NewService#{plugins:=Config2};
         {error, Error2} ->
-            throw({{Plugin, Error2}})
+            throw({{PluginId, Error2}})
     end,
     configure_plugins(Rest, Service2).
 
 
 %% @private
-start_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
-    Mod = get_plugin(Plugin),
-    PluginConfig = maps:get(Plugin, Config, #{}),
-    ?LLOG(info, "starting plugin ~p", [Plugin], Service),
-    case nklib_util:apply(Mod, plugin_start, [PluginConfig, Pid, Service]) of
+start_plugin(PluginId, Pid, #{plugins:=Config}=Service) ->
+    #{class:=Class} = PluginSpec = maps:get(PluginId, Config, #{}),
+    PluginConfig = maps:get(config, PluginSpec, #{}),
+    ?LLOG(info, "starting plugin ~s (~s)", [PluginId, Class], Service),
+    Mod = get_plugin(Class),
+    case nklib_util:apply(Mod, plugin_start, [PluginId, PluginConfig, Pid, Service]) of
         ok ->
             ok;
         not_exported ->
@@ -210,10 +214,11 @@ start_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
 
 %% @private
 stop_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
-    Mod = get_plugin(Plugin),
-    PluginConfig = maps:get(Plugin, Config, #{}),
-    ?LLOG(info, "stopping plugin ~p", [Plugin], Service),
-    case nklib_util:apply(Mod, plugin_stop, [PluginConfig, Pid, Service]) of
+    #{class:=Class} = PluginSpec = maps:get(Plugin, Config, #{}),
+    PluginConfig = maps:get(config, PluginSpec, #{}),
+    ?LLOG(info, "stopping plugin ~s (~s)", [Plugin, Class], Service),
+    Mod = get_plugin(Class),
+    case nklib_util:apply(Mod, plugin_stop, [Plugin, PluginConfig, Pid, Service]) of
         ok ->
             ok;
         not_exported ->
@@ -228,10 +233,11 @@ stop_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
 
 %% @private
 update_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
-    Mod = get_plugin(Plugin),
-    PluginConfig = maps:get(Plugin, Config, #{}),
-    ?LLOG(info, "updating plugin ~p", [Plugin], Service),
-    case nklib_util:apply(Mod, plugin_update, [PluginConfig, Pid, Service]) of
+    #{class:=Class} = PluginSpec = maps:get(Plugin, Config, #{}),
+    PluginConfig = maps:get(config, PluginSpec, #{}),
+    ?LLOG(info, "updating plugin ~s (~s)", [Plugin, Class], Service),
+    Mod = get_plugin(Class),
+    case nklib_util:apply(Mod, plugin_update, [Plugin, PluginConfig, Pid, Service]) of
         ok ->
             ok;
         not_exported ->
@@ -244,33 +250,33 @@ update_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
 
 
 %% @private
-get_plugin(Plugin) ->
-    Mod = list_to_atom(atom_to_list(Plugin)++"_plugin"),
+get_plugin(Class) ->
+    Mod = list_to_atom(atom_to_list(Class)++"_plugin"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
             Mod;
         {error, nofile} ->
-            case code:ensure_loaded(Plugin) of
+            case code:ensure_loaded(Class) of
                 {module, _} ->
-                    Plugin;
+                    Class;
                 {error, nofile} ->
-                    throw({unknown_plugin, Plugin})
+                    throw({unknown_plugin, Class})
             end
     end.
 
 
 %% @private
-get_callback(Plugin) ->
-    Mod = list_to_atom(atom_to_list(Plugin)++"_callbacks"),
+get_callback(Class) ->
+    Mod = list_to_atom(atom_to_list(Class)++"_callbacks"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
             Mod;
         {error, nofile} ->
-            case code:ensure_loaded(Plugin) of
+            case code:ensure_loaded(Class) of
                 {module, _} ->
-                    Plugin;
+                    Class;
                 {error, nofile} ->
-                    throw({unknown_plugin, Plugin})
+                    throw({unknown_plugin, Class})
             end
     end.
 
@@ -467,7 +473,7 @@ lua_sys_funs() ->
 make_cache(#{id:=Id}=Service) ->
     Service2 = Service#{timestamp => nklib_util:m_timestamp()},
     BaseKeys = [
-        id, class, name, plugin_list, plugins, uuid, log_level, timestamp,
+        id, class, name, plugin_modules, plugins, uuid, log_level, timestamp,
         debug, cache, listen, meta
     ],
     Spec1 = maps:with(BaseKeys, Service2),
@@ -494,7 +500,7 @@ make_cache(#{id:=Id}=Service) ->
         maps:to_list(maps:get(scripts, Service, #{}))),
     BaseSyntax = make_base_syntax(Spec4#{spec=>Spec1}),
     % Gather all fun specs from all callbacks modules on all plugins
-    PluginList = maps:get(plugin_list, Service2),
+    PluginList = maps:get(plugin_modules, Service2),
     PluginSyntax = plugin_callbacks_syntax(PluginList),
     FullSyntax = PluginSyntax ++ BaseSyntax,
     {ok, Tree} = nklib_code:compile(Id, FullSyntax),
