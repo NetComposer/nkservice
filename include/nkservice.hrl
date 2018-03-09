@@ -12,28 +12,33 @@
 -define(CALL_SRV(SrvId, Fun), erlang:apply(SrvId, Fun, [])).
 
 
+-define(PKG_REST, <<"RestServer">>).
+-define(PKG_WEBSERVER, <<"WebServer">>).
+-define(PKG_JOSE, <<"JOSE">>).
+
+
 %% ===================================================================
 %% Records
 %% ===================================================================
 
 
--record(nkreq, {
-    srv_id :: nkservice:id(),
-    api_id :: term(),
-    session_module :: module(),
-    session_id = <<>> :: nkservice:session_id(),
-    session_pid :: pid(),
-    session_meta = #{} :: map(),
-    tid :: term(),
-    cmd = <<>> :: nkservice:req_cmd(),
-    data = #{} :: nkservice:req_data(),
-    user_id = <<>> :: nkservice:user_id(),      % <<>> if not authenticated
-    user_state = #{} :: nkservice:user_state(),
-    req_state :: term(),
-    unknown_fields = [] :: [binary()],
-    timeout_pending = false :: boolean(),
-    debug = false :: boolean()
-}).
+%%-record(nkreq, {
+%%    srv_id :: nkservice:id(),
+%%    api_id :: term(),
+%%    session_module :: module(),
+%%    session_id = <<>> :: nkservice:session_id(),
+%%    session_pid :: pid(),
+%%    session_meta = #{} :: map(),
+%%    tid :: term(),
+%%    cmd = <<>> :: nkservice:req_cmd(),
+%%    data = #{} :: nkservice:req_data(),
+%%    user_id = <<>> :: nkservice:user_id(),      % <<>> if not authenticated
+%%    user_state = #{} :: nkservice:user_state(),
+%%    req_state :: term(),
+%%    unknown_fields = [] :: [binary()],
+%%    timeout_pending = false :: boolean(),
+%%    debug = false :: boolean()
+%%}).
 
 
 

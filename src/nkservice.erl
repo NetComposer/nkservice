@@ -21,13 +21,13 @@
 -module(nkservice).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, stop/1, reload/1, replace/2, update/2]).
--export([get_by_name/1, get_all/0, get_all/1]).
+-export([start/2, stop/1, replace/2, update/2]).
+-export([force_stop/1, force_reload/1]).
+-export([get_services/0, get_status/1]).
 -export([get/2, get/3, put/3, put_new/3, del/2]).
--export_type([id/0, spec/0, config/0, service/0]).
+-export_type([id/0, service_spec/0]).
+-export_type([service/0]).
 -export_type([error/0, event/0]).
--export_type([user_id/0, user_state/0, session_id/0]).
--export_type([req_cmd/0, req_data/0, req_tid/0]).
 
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -38,118 +38,137 @@
 %% Types
 %% ===================================================================
 
-%% Service's id must be an atom
 -type id() :: atom().
 
 -type class() :: binary().
 
 -type name() :: binary().
 
--type plugin_id() :: binary().
+%%
+%% Types for a specifying a service
+%%
 
--type plugin_spec() ::
+-type package_id() :: binary().
+
+-type package_class() :: binary().
+
+-type package_spec() ::
     #{
-        id => plugin_id(),      % Mandatory
-        class => atom(),        % Mandatory
+        id => package_id(),             % Mandatory
+        class => package_class(),       % Mandatory
         config => map(),
         remove => boolean()
     }.
 
--type debug_spec() :: #{key=>atom(), spec=>map()}.
+-type module_id() :: binary().
 
--type cache_spec() ::
+-type module_spec() ::
     #{
-        key => atom(),              % Mandatory
-        value => term(),            % Mandatory
-        remove => boolean()         % true to remove the entry
-    }.
-
--type script_id() :: binary().
-
--type script_spec() ::
-    #{
-        id => script_id(),
-        class => luerl | remove,
+        id => module_id(),
+        class => luerl,
         file => binary(),
         url => binary(),
         code => binary(),
         remove => boolean()         % true to remove the entry
     }.
 
--type callback_id() :: binary().
 
--type callback_spec() ::
+-type secret_spec() ::
     #{
-        id => callback_id(),
-        class => luerl | http | remove,
-        luerl_id => binary(),
-        url => binary(),
-        remove => boolean()         % true to remove the entry
+        key => atom(),                % Mandatory
+        value => map(),
+        remove => boolean()
     }.
-
--type listen_id() :: binary().
-
--type listen_spec() ::
-    #{
-        id => listen_id(),
-        url => binary(),
-        opts => nkpacket:listen_opts(),
-        remove => boolean()         % true to remove the entry
-    }.
-
-
 
 %% Service specification
--type spec() ::
+-type service_spec() ::
 	#{
         class => class(),                % Used to find similar services
         name => name(),                  % Optional name
-        plugins => [plugin_spec()],
-        scripts => [script_spec()],
-        callbacks => [callback_spec()],
-        listen => [listen_spec()],
-        log_level => log_level(),
-        debug => [debug_spec()],
-        cache => [cache_spec()]
+        plugins => [binary()],           % Plugins to add to all packages
+        uuid => binary(),                % Generated automatically
+        packages => [package_spec()],
+        modules => [module_spec()],
+        secret => [secret_spec()],
+        meta => map()
 	}.
 
--type config() :: #{term() => term()}.
+%%
+%% Types for a running service
+%%
 
--type log_level() :: 0..8 |
-    none | emergency | alert | critical | error | warning | notice | info |debug.
+-type service_package() ::
+    #{
+        id => id(),
+        class => package_class(),
+        config => map(),
+        hash => integer(),
+        plugin => atom(),
+        cache => map(),
+        debug => map()
+    }.
 
+-type service_module() ::
+    #{
+        id => module_id(),
+        class => luerl,
+        code => binary(),
+        debug => boolean(),
+        max_instances => integer(),
+        hash => integer(),
+        lua_state => binary(),          % Accessible only in direct functions
+        packages => [package_id()],     % Used packages
+        cache => map(),
+        debug => map()
+    }.
+
+
+-type service_secret() ::
+    #{
+        module_id => module_id(),
+        value => term()
+    }.
 
 -type service() ::
     #{
         id => atom(),
         class => class(),
         name => name(),
-        plugins => #{plugin_id() => plugin_spec()},
-        plugin_modules => [atom()],         % Bottom to top
-        uuid => binary(),                   % Each service is assigned an uuid
-        log_level => log_level(),
-        timestamp => nklib_util:m_timestamp(),  % Started time
-        cache => #{atom() => map()},
-        debug => #{atom() => map()},
-        scripts => #{Id::binary() => map()},
-        callbacks => #{Id::binary() => map()},
-        listen => #{Plugin::atom() => [{Id::term(), [nkpacket:conn()]}]}
+        uuid => binary(),
+        plugins => [atom()],
+        plugin_ids => [atom()],         % Expanded,bottom to top
+        packages => #{package_id() => service_package()},
+        modules => #{module_id() => service_module()},
+        timestamp => nklib_util:m_timestamp(),
+        secret => #{{term(), binary(), binary()} => service_secret()},
+        hash => integer(),
+        meta => map()
+    }.
+
+%%
+%% Service info
+%%
+
+
+-type service_info() ::
+    #{
+        class => class(),
+        name => name(),
+        hash => integer(),
+        pid => pid()
     }.
 
 
+-type service_status() ::
+    nkservice_srv:service_status().
+
+
+
+-type event() ::
+    atom() | {atom(), map()}.
+
 %% See nkservice_callbacks:error_code/1
 -type error() :: term().
-
--type user_id() :: binary().
--type user_state() :: map().
--type session_id() :: binary().
--type req_cmd() :: binary().
--type req_data() :: map() | list().
--type req_tid() :: integer() | binary().
-
--type event() :: nkevent:event().
-
-
 
 %% ===================================================================
 %% Public
@@ -159,133 +178,150 @@
 %% @doc Starts a new service.
 %% It tries to find its UUID from a file in log_dir with the same name, if it
 %% is not present, it will generate a new one
+-spec start(id(), service_spec()) ->
+    ok | {error, term()}.
 
--spec start(id(), spec()) ->
-    {ok, pid()} | {error, term()}.
-
-start(Id, Spec) ->
-    case whereis(Id) of
+start(SrvId, Spec) ->
+    case nkservice_master:get_leader_pid(SrvId) of
         Pid when is_pid(Pid) ->
-            {error, {already_started, Pid}};
+            {error, already_started};
         undefined ->
-            Service = case Spec of
-                #{uuid:=UUID} ->
-                    #{id=>Id, uuid=>UUID};
-                _ ->
-                    #{id=>Id, uuid=>nkservice_util:update_uuid(Id, Spec)}
-            end,
-            case nkservice_config:config_service(Spec, Service) of
+            case nkservice_config:config_service(SrvId, Spec, #{}) of
                 {ok, Service2} ->
-                    nkservice_srv_sup:start_service(Service2);
+                    % Master will be started and leader elected,
+                    % and it will start service in all nodes
+                    nkservice_srv:start(Service2);
                 {error, Error} ->
                     {error, Error}
             end
     end.
 
 
-%% @doc Stops a service
+%% @doc Stops a service, only in local node
 -spec stop(id()) ->
     ok | {error, not_running|term()}.
 
-stop(Id) ->
-    Reply = nkservice_srv_sup:stop_service(Id),
-    code:purge(Id),
-    Reply.
-
-
-%% @doc Reloads a configuration
--spec reload(id()) ->
-    ok | {error, term()}.
-
-reload(Id) ->
-    update(Id, #{}).
+stop(SrvId) ->
+    nkservice_master:stop(SrvId).
 
 
 %% @doc Replaces a service configuration with a new full set of parameters
--spec replace(id(), spec()) ->
+-spec replace(id(), service_spec()) ->
     ok | {error, term()}.
 
-replace(Id, Spec) ->
-    nkservice_srv:call(Id, {nkservice_srv, replace, Spec}, 30000).
+replace(SrvId, Spec) ->
+    nkservice_master:replace(SrvId, Spec).
 
 
-%% @doc Updates a service configuration
-%% Fields class, name, log_level and debug, if used, overwrite previous settings
-%% Fields cache, scripts and callbacks are merged. Use remove => true to remove an old one
-%% Field plugins, if used, replaces configuration, and removes plugin no longer present
--spec update(id(), spec()) ->
+%% @doc Updates a service configuration in local node
+%% Fields class, name, global, plugins, uuid, meta, if used, overwrite previous settings
+%% Packages and modules are merged. Use remove => true to remove an old one
+%% Fields cache, debug, secret are merged. Use remove => true to remove an old one
+-spec update(id(), service_spec()) ->
     ok | {error, term()}.
 
-update(Id, Spec) ->
-    nkservice_srv:call(Id, {nkservice_srv, update, Spec}, 30000).
+update(SrvId, Spec) ->
+    nkservice_master:update(SrvId, Spec).
 
 
-%% @private Finds a service's id from its name
--spec get_by_name(name()) ->
-    {ok, nkservice:id()} | not_found.
-
-get_by_name(Name) ->
-    case nklib_proc:values({nkservice_srv, nklib_util:to_binary(Name)}) of
-        [] -> not_found;
-        [{Id, _Pid}|_] -> {ok, Id}
-    end.
+%% @private
+force_stop(SrvId) ->
+    rpc:eval_everywhere(nkservice_srv, stop, [SrvId]).
 
 
-%% @doc Gets all started services
--spec get_all() ->
-    [{id(), class(), name(), pid()}].
+%% @doc Reloads a configuration
+-spec force_reload(id()) ->
+    ok | {error, term()}.
 
-get_all() ->
-    [{Id, Id:name(), Class, Pid} || 
-     {{Id, Class}, Pid}<- nklib_proc:values(nkservice_srv)].
+force_reload(Id) ->
+    rpc:eval_everywhere(nkservice_srv, update, [Id, #{}]),
+    ok.
 
 
-%% @doc Gets all started services
--spec get_all(class()) ->
-    [{id(), name(), pid()}].
+%% @doc Gets quick info on all services on all nodes
+-spec get_services() ->
+    #{id() => [service_info()]}.
 
-get_all(Class) ->
-    Class2 = nklib_util:to_binary(Class),
-    [{Id, Name, Pid} || {Id, Name, C, Pid} <- get_all(), C==Class2].
+get_services() ->
+    Nodes = [node()|nodes()],
+    {ResL, _Bad} = rpc:multicall(Nodes, nkservice_srv, get_all, []),
+    lists:foldl(
+        fun
+            (List, Acc1) when is_list(List) ->
+                lists:foldl(
+                    fun({Id, Class, Name, Hash, Pid}, Acc2) ->
+                        Srvs = maps:get(Id, Acc2, []),
+                        Value = #{class=>Class, name=>Name, hash=>Hash, pid=>Pid},
+                        Acc2#{Id => [Value|Srvs]}
+                    end,
+                    Acc1,
+                    List);
+            (_, Acc1) ->
+                Acc1
+        end,
+        #{},
+        ResL).
 
+
+%% @doc
+-spec get_status(id()) ->
+    #{node() => [service_status()]}.
+
+get_status(SrvId) ->
+    Nodes = [node()|nodes()],
+    {ResL, _Bad} = rpc:multicall(Nodes, nkservice_srv, get_status, [SrvId]),
+    lists:foldl(
+        fun
+            ({ok, #{node:=Node}=LocalStatus}, Acc) ->
+                Acc#{Node => LocalStatus};
+            (_, Acc1) ->
+                Acc1
+        end,
+        #{},
+        ResL).
 
 
 %% @doc Gets a value from service's store
 -spec get(id(), term()) ->
     term().
 
-get(Id, Key) ->
-    get(Id, Key, undefined).
+get(SrvId, Key) ->
+    get(SrvId, Key, undefined).
 
 
 %% @doc Gets a value from service's store
 -spec get(id(), term(), term()) ->
     term().
 
-get(Id, Key, Default) ->
-    nkservice_srv:get(Id, Key, Default).
+get(SrvId, Key, Default) ->
+    case ets:lookup(SrvId, Key) of
+        [{_, Value}] -> Value;
+        [] -> Default
+    end.
 
 
 %% @doc Inserts a value in service's store
 -spec put(id(), term(), term()) ->
     ok.
 
-put(Id, Key, Value) ->
-    nkservice_srv:put(Id, Key, Value).
+put(SrvId, Key, Value) ->
+    true = ets:insert(SrvId, {Key, Value}),
+    ok.
 
 
 %% @doc Inserts a value in service's store
 -spec put_new(id(), term(), term()) ->
     true | false.
 
-put_new(Id, Key, Value) ->
-    nkservice_srv:put_new(Id, Key, Value).
+put_new(SrvId, Key, Value) ->
+    ets:insert_new(SrvId, {Key, Value}).
 
 
 %% @doc Deletes a value from service's store
 -spec del(id(), term()) ->
     ok.
 
-del(Id, Key) ->
-    nkservice_srv:del(Id, Key).
+del(SrvId, Key) ->
+    true = ets:delete(SrvId, Key),
+    ok.
 

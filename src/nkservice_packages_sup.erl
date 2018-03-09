@@ -18,17 +18,22 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Supervisor for the plugins
--module(nkservice_srv_plugins_sup).
+%% @doc Supervisor for the packages
+-module(nkservice_packages_sup).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_plugin_sup/2, stop_plugin_sup/2]).
--export([update_child/3, update_child_multi/3, remove_child/2]).
--export([get_pid/1, get_pid/2, get_childs/1, get_childs/2]).
--export([init/1, start_link/1, start_link_plugin_sup/2]).
+-export([start_package_sup/2, stop_package_sup/2]).
+-export([start_child/3, start_child/2, update_child/3, update_child_multi/3,
+         remove_child/3, remove_child/2]).
+-export([get_pid/1, get_pid/2, get_packages/1, get_childs/2]).
+-export([init/1, start_link/1, start_link_package_sup/2]).
 
 -include("nkservice.hrl").
+
+-define(LLOG(Type, Txt, Args),lager:Type("NkSERVICE "++Txt, Args)).
+
+
 
 -type update_opts() ::
     #{
@@ -36,13 +41,12 @@
     }.
 
 
-
-%% @doc Tries to start a plugin supervisor, or returns existing one
-start_plugin_sup(Id, Plugin) ->
-    Pid = get_pid(Id),
+%% @doc Tries to start a package supervisor, or returns existing one
+start_package_sup(SrvId, PackageId) ->
+    Pid = get_pid(SrvId),
     Child = #{
-        id => Plugin,
-        start => {?MODULE, start_link_plugin_sup, [Id, Plugin]},
+        id => PackageId,
+        start => {?MODULE, start_link_package_sup, [SrvId, PackageId]},
         type => supervisor,
         restart => temporary
     },
@@ -57,32 +61,54 @@ start_plugin_sup(Id, Plugin) ->
 
 
 %% @doc
-stop_plugin_sup(Id, Plugin) ->
-    remove_child(Id, Plugin).
+stop_package_sup(SrvId, PackageId) ->
+    Pid = get_pid(SrvId),
+    case supervisor:terminate_child(Pid, PackageId) of
+        ok ->
+            supervisor:delete_child(Pid, PackageId),
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
+start_child(SrvId, PackageId, Spec) ->
+    Pid = get_pid(SrvId, PackageId),
+    start_child(Pid, Spec).
+
+
+%% @doc
+start_child(Pid, Spec) when is_pid(Pid) ->
+    case supervisor:start_child(Pid, Spec) of
+        {ok, ChildPid} ->
+            {ok, ChildPid};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Updates (if Spec is different) or starts a new child
--spec update_child(term()|pid(), supervisor:child_spec(), update_opts()) ->
+-spec update_child(pid(), supervisor:child_spec(), update_opts()) ->
     {ok, pid()} | {upgraded, pid()} | not_updated | {error, term()}.
 
-update_child(Id, Spec, Opts) ->
-    Pid = get_pid(Id),
+update_child(Pid, Spec, Opts) when is_pid(Pid) ->
     ChildId = case Spec of
         #{id:=CI} -> CI;
         _ -> element(1, Spec)
     end,
     case supervisor:get_childspec(Pid, ChildId) of
         {ok, Spec} ->
-            lager:warning("Child ~p not updated", [ChildId]),
+            ?LLOG(warning, "child ~p not updated", [ChildId]),
             not_updated;
         {ok, _OldSpec} ->
             case remove_child(Pid, ChildId) of
                 ok ->
                     Delay = maps:get(restart_delay, Opts, 500),
                     timer:sleep(Delay),
-                                case supervisor:start_child(Pid, Spec) of
+                    case supervisor:start_child(Pid, Spec) of
                         {ok, ChildPid} ->
-                            lager:warning("Child ~p upgraded", [ChildId]),
+                            ?LLOG(debug, "child ~p upgraded", [ChildId]),
                             {upgraded, ChildPid};
                         {error, Error} ->
                             {error, Error}
@@ -93,35 +119,19 @@ update_child(Id, Spec, Opts) ->
         {error, not_found} ->
             case supervisor:start_child(Pid, Spec) of
                 {ok, ChildPid} ->
-                    lager:warning("Child ~p started", [ChildId]),
+                    ?LLOG(debug, "child ~p started", [ChildId]),
                     {ok, ChildPid};
                 {error, Error} ->
                     {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
+            end
     end.
-
-
-%% @doc
-remove_child(Id, ChildId) ->
-    Pid = get_pid(Id),
-    case supervisor:terminate_child(Pid, ChildId) of
-        ok ->
-            supervisor:delete_child(Pid, ChildId),
-            ok;
-        {error, Error} ->
-            {error, Error}
-    end.
-
 
 
 %% @doc Updates a series of childs, all or nothing
 -spec update_child_multi(term()|pid(), [supervisor:child_spec()], map()) ->
     ok | upgraded | not_updated | {error, term()}.
 
-update_child_multi(Id, SpecList, Opts) ->
-    Pid = get_pid(Id),
+update_child_multi(Pid, SpecList, Opts) when is_pid(Pid) ->
     OldIds = [ChildId || {ChildId, _, _, _} <- supervisor:which_children(Pid)],
     NewIds = [
         case is_map(Spec) of
@@ -159,30 +169,48 @@ update_child_multi(Pid, [Spec|Rest], Opts, Res) ->
 
 
 %% @doc
-get_childs(Id) ->
-    supervisor:which_children(get_pid(Id)).
+remove_child(SrvId, PackageId, ChildId) ->
+    Pid = get_pid(SrvId, PackageId),
+    remove_child(Pid, ChildId).
+
 
 %% @doc
-get_childs(Id, PluginId) ->
-    supervisor:which_children(get_pid(Id, PluginId)).
+remove_child(Pid, ChildId) when is_pid(Pid) ->
+    case supervisor:terminate_child(Pid, ChildId) of
+        ok ->
+            supervisor:delete_child(Pid, ChildId),
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
+%% @doc
+get_packages(Id) ->
+    supervisor:which_children(get_pid(Id)).
 
-%% @private
+
+%% @doc
+get_childs(Id, PackageId) ->
+    supervisor:which_children(get_pid(Id, PackageId)).
+
+
+%% @private Get pid() of master supervisor for all packages
 get_pid(Pid) when is_pid(Pid) ->
     Pid;
-get_pid(Id) ->
-    nklib_proc:whereis_name({?MODULE, Id}).
+get_pid(SrvId) ->
+    nklib_proc:whereis_name({?MODULE, SrvId}).
 
 
-%% @private
-get_pid(Id, Plugin) ->
-    nklib_proc:whereis_name({?MODULE, Id, Plugin}).
+%% @private Get pid() of supervisor for a package
+get_pid(SrvId, PackageId) ->
+    nklib_proc:whereis_name({?MODULE, SrvId, PackageId}).
 
 
-%% @private Starts the main supervisor for all plugins
+
+%% @private Starts the main supervisor for all packages
 %% It starts empty, nkservice_srv will add child supervisors calling
-%% start_plugin/2
+%% start_package/2
 -spec start_link(nkservice:id()) ->
     {ok, pid()}.
 
@@ -198,11 +226,11 @@ init(ChildsSpec) ->
     {ok, ChildsSpec}.
 
 
-%% @private Called for each configured plugin
-start_link_plugin_sup(Id, Plugin) ->
+%% @private Called for each configured package
+start_link_package_sup(Id, Package) ->
     ChildSpec = {{one_for_one, 10, 60}, []},
     {ok, Pid} = supervisor:start_link(?MODULE, ChildSpec),
-    yes = nklib_proc:register_name({?MODULE, Id, Plugin}, Pid),
+    yes = nklib_proc:register_name({?MODULE, Id, Package}, Pid),
     {ok, Pid}.
 
 

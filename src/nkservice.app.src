@@ -13,7 +13,10 @@
         luerl,
         lager,
         nkpacket,
-        nkevent
+        nkevent,
+        rfc3339,
+        jose,
+        otter
     ]},
     {env, [
     ]}

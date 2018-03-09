@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2018 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,16 +18,10 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Default callbacks
--module(nkservice_sample_plugin).
+-module(nkservice_rest).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0]).
-
 
 %% ===================================================================
-%% Plugin Callbacks
+%% Types
 %% ===================================================================
-
-plugin_deps() ->
-	[].
 

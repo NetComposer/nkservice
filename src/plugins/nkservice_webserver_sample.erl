@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2018 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -29,6 +29,9 @@
 
 -include_lib("nkservice/include/nkservice.hrl").
 
+-dialyzer({nowarn_function, start/0}).
+
+
 %% ===================================================================
 %% Public
 %% ===================================================================
@@ -37,22 +40,20 @@
 %% @doc Starts the service
 start() ->
     Spec = #{
-        plugins => [
+        packages => [
             #{
-                class => nkservice_webserver,
+                class => 'WebServer',
                 config => #{
-                    servers => [
-                        #{
-                            id => web1,
-                            url => "https://all:9010/test1, http://all:9011/testB",
-                            opts => #{debug=>false}
-                        },
-                        #{
-                            id => web2,
-                            url => "https://all:9010/test2",
-                            file_path => "/tmp"
-                        }
-                    ]
+                    url => "https://node:9010/test1, http://node:9011/testB",
+                    debug => true
+                }
+            },
+            #{
+                id => web2,
+                class => 'WebServer',
+                config => #{
+                    url => "https://node:9010/test2",
+                    file_path => "/tmp"
                 }
             }
         ]
@@ -88,12 +89,4 @@ cow_test() ->
 
 
 
-
-
-%% ===================================================================
-%% API callbacks
-%% ===================================================================
-
-plugin_deps() ->
-    [nkservice_webserver].
 

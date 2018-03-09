@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2018 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,11 +21,11 @@
 %% @doc Default callbacks
 -module(nkservice_rest_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/4]).
--export([parse_url/1]).
+-export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/5]).
 -export_type([id/0, http_method/0, http_path/0, http_req/0, http_reply/0]).
 
 -include_lib("nklib/include/nklib.hrl").
+-include("nkservice.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
 
 -define(LLOG(Type, Txt, Args),lager:Type("NkSERVICE REST "++Txt, Args)).
@@ -56,40 +56,78 @@ plugin_deps() ->
 
 
 %% @doc
-plugin_config(Id, Config, #{id:=SrvId}) ->
-    % For debug at nkpacket level, add debug=>true to opts (or in a url)
-    % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
+plugin_config(?PKG_REST, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     Syntax = #{
-       url => fun ?MODULE:parse_url/1,
-       opts => nkpacket_syntax:safe_syntax(),
-       '__mandatory' => [url]
+        url => binary,
+        opts => nkpacket_syntax:safe_syntax(),
+        debug => {list, {atom, [ws, http, nkpacket]}},
+        requestCallback => any,
+        requestGetBody => boolean,
+        requestParseBody => boolean,
+        requestMaxBodySize => {integer, 0, 10000000},
+        requestGetHeaders => {list, binary},
+        requestGetAllHeaders => boolean,
+        requestGetQs => boolean,
+        requestGetBasicAuthorization => boolean,
+        '__mandatory' => [url]
     },
     case nklib_syntax:parse(Config, Syntax) of
         {ok, Parsed, _} ->
             case make_listen(SrvId, Id, Parsed) of
-                {ok, Listeners} ->
-                    {ok, Config#{listeners=>Listeners}};
+                {ok, _Listeners} ->
+                    Spec2 = Spec#{config:=Parsed},
+                    Spec3 = lists:foldl(
+                        fun(Type, Acc) ->
+                            D0 = maps:get(debug_map, Acc, #{}),
+                            Acc#{debug_map=>D0#{{nkservice_rest, Id, Type} => true}}
+                        end,
+                        Spec2,
+                        maps:get(debug, Parsed, [])),
+                    ReqConfig1 = maps:with([
+                        requestGetBody,
+                        requestParseBody,
+                        requestMaxBodySize,
+                        requestGetHeaders,
+                        requestGetAllHeaders,
+                        requestGetQs,
+                        requestGetBasicAuthorization], Parsed),
+                    ReqConfig2 = maps:to_list(ReqConfig1),
+                    Cache1 = maps:get(cache_map, Spec, #{}),
+                    Cache2 = Cache1#{{?PKG_REST, Id, request_config} => ReqConfig2},
+                    Spec4 = Spec3#{cache_map => Cache2},
+                    {ok, Spec4};
                 {error, Error} ->
                     {error, Error}
             end;
         {error, Error} ->
             {error, Error}
-    end.
+    end;
+
+plugin_config(_Class, _Package, _Service) ->
+    continue.
 
 
 %% @doc
-plugin_start(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+plugin_start(?PKG_REST, #{id:=Id, config:=#{url:=_Url}=Config}, Pid, #{id:=SrvId}) ->
+    {ok, Listeners} =  make_listen(SrvId, Id, Config),
     insert_listeners(Id, Pid, Listeners);
 
-plugin_start(_Id, _Config, _Pid, _Service) ->
-    ok.
+plugin_start(_Id, _Spec, _Pid, _Service) ->
+    continue.
 
 
 %% @doc
-plugin_update(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
-    insert_listeners(Id, Pid, Listeners);
+%% Even if we are called only with modified config, we check if the spec is new
+plugin_update(?PKG_REST, #{id:=Id, config:=#{url:=_}=NewConfig}, OldSpec, Pid, #{id:=SrvId}) ->
+    case OldSpec of
+        #{config:=NewConfig} ->
+            ok;
+        _ ->
+            {ok, Listeners} =  make_listen(SrvId, Id, NewConfig),
+            insert_listeners(Id, Pid, Listeners)
+    end;
 
-plugin_update(_Id, _Config, _Pid, _Service) ->
+plugin_update(_Class, _NewSpec, _OldSpec, _Pid, _Service) ->
     ok.
 
 
@@ -100,28 +138,18 @@ plugin_update(_Id, _Config, _Pid, _Service) ->
 
 
 
-
 %% @private
-parse_url({nkservice_rest_conns, Multi}) ->
-    {ok, {nkservice_rest_conns, Multi}};
-
-parse_url(<<>>) ->
-    {ok, <<>>};
-
-parse_url(Url) ->
-    case nkpacket_resolve:resolve(Url, #{resolve_type=>listen, protocol=>nkservice_rest_protocol}) of
+make_listen(SrvId, Id, #{url:=Url}=Entry) ->
+    ResolveOpts = #{resolve_type=>listen, protocol=>nkservice_rest_protocol},
+    case nkpacket_resolve:resolve(Url, ResolveOpts) of
         {ok, Conns} ->
-            {ok, {nkservice_rest_conns, Conns}};
+            Opts1 = maps:get(opts, Entry, #{}),
+            Debug = maps:get(debug, Entry, []),
+            Opts2 = Opts1#{debug=>lists:member(nkpacket, Debug)},
+            make_listen_transps(SrvId, Id, Conns, Opts2, []);
         {error, Error} ->
             {error, Error}
     end.
-
-
-
-%% @private
-make_listen(SrvId, Id, #{url:={nkservice_rest_conns, Conns}}=Entry) ->
-    Opts = maps:get(opts, Entry, #{}),
-    make_listen_transps(SrvId, Id, Conns, Opts, []).
 
 
 %% @private
@@ -129,7 +157,7 @@ make_listen_transps(_SrvId, _Id, [], _Opts, Acc) ->
     {ok, Acc};
 
 make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
-    #nkconn{opts=ConnOpts, transp=_Transp} = Conn,
+    #nkconn{opts=ConnOpts} = Conn,
     Opts2 = maps:merge(ConnOpts, Opts),
     Opts3 = Opts2#{
         id => Id,
@@ -148,17 +176,17 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Acc) ->
 
 %% @private
 insert_listeners(Id, Pid, SpecList) ->
-    case nkservice_srv_plugins_sup:update_child_multi(Pid, SpecList, #{}) of
+    case nkservice_packages_sup:update_child_multi(Pid, SpecList, #{}) of
         ok ->
-            ?LLOG(info, "started ~s", [Id]),
+            ?LLOG(debug, "started ~s", [Id]),
             ok;
         not_updated ->
-            ?LLOG(info, "didn't upgrade ~s", [Id]),
+            ?LLOG(debug, "didn't upgrade ~s", [Id]),
             ok;
         upgraded ->
             ?LLOG(info, "upgraded ~s", [Id]),
             ok;
         {error, Error} ->
-            ?LLOG(warning, "start/update error ~s: ~p", [Id, Error]),
+            ?LLOG(notice, "start/update error ~s: ~p", [Id, Error]),
             {error, Error}
     end.

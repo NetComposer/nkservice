@@ -24,7 +24,6 @@
 
 -export([send/3, send/6]).
 -export([plugin_deps/0, plugin_syntax/0, plugin_start/2, plugin_stop/2]).
--export([server_api_cmd/1]).
 
 -include("nkservice.hrl").
 
@@ -114,18 +113,18 @@ plugin_stop(Config, #{id:=Id}) ->
 %% Implemented Callbacks
 %% ===================================================================
 
-
-server_api_cmd(#nkreq{cmd = <<"log.send">>}=Req) ->
-    #nkreq{srv_id=SrvId, data=Data, user_id=User, session_id=Session} = Req,
-    #{source:=Source, message:=Short, level:=Level} = Data,
-    Long = maps:get(full_message, Data, <<>>),
-    Meta1 = maps:get(meta, Data, #{}),
-    Meta2 = Meta1#{user=>User, session_id=>Session},
-    _Res = send(SrvId, Source, Short, Long, Level, Meta2),
-    {ok, #{}, Req};
-
-server_api_cmd(_Req) ->
-    continue.
+%%
+%%server_api_cmd(#nkreq{cmd = <<"log.send">>}=Req) ->
+%%    #nkreq{srv_id=SrvId, data=Data, user_id=User, session_id=Session} = Req,
+%%    #{source:=Source, message:=Short, level:=Level} = Data,
+%%    Long = maps:get(full_message, Data, <<>>),
+%%    Meta1 = maps:get(meta, Data, #{}),
+%%    Meta2 = Meta1#{user=>User, session_id=>Session},
+%%    _Res = send(SrvId, Source, Short, Long, Level, Meta2),
+%%    {ok, #{}, Req};
+%%
+%%server_api_cmd(_Req) ->
+%%    continue.
 
 
 

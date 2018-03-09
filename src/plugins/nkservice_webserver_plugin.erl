@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2018 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -21,12 +21,13 @@
 %% @doc Default callbacks
 -module(nkservice_webserver_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/4]).
--export([parse_url/1]).
+-export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/5]).
 
+-include("nkservice.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
 
--define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE Webserver "++Txt, Args)).
+
+-define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE WEBSERVER "++Txt, Args)).
 
 
 %% ===================================================================
@@ -39,39 +40,51 @@ plugin_deps() ->
 
 
 %% @doc
-plugin_config(Id, Config, #{id:=SrvId}) ->
+plugin_config(?PKG_WEBSERVER, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     Syntax = #{
-        url => fun ?MODULE:parse_url/1,     % Use <<>> to remove the id
+        url => binary,
         file_path => binary,
+        debug => boolean,
         opts => nkpacket_syntax:safe_syntax(),
         '__mandatory' => [url]
     },
     case nklib_syntax:parse(Config, Syntax) of
         {ok, Parsed, _} ->
             case make_listen(SrvId, Id, Parsed) of
-                {ok, Listeners} ->
-                    {ok, Config#{listeners=>Listeners}};
+                {ok, _Listeners} ->
+                    {ok, Spec#{config:=Parsed}};
                 {error, Error} ->
                     {error, Error}
             end;
         {error, Error} ->
             {error, Error}
-    end.
+    end;
+
+plugin_config(_Class, _Package, _Service) ->
+    continue.
 
 
 %% @doc
-plugin_start(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
+plugin_start(?PKG_WEBSERVER, #{id:=Id, config:=#{url:=_Url}=Config}, Pid, #{id:=SrvId}) ->
+    {ok, Listeners} =  make_listen(SrvId, Id, Config),
     insert_listeners(Id, Pid, Listeners);
 
-plugin_start(_Id, _Config, _Pid, _Service) ->
+plugin_start(_Class, _Spec, _Pid, _Service) ->
     ok.
 
 
 %% @doc
-plugin_update(Id, #{listeners:=Listeners}, Pid, #{id:=_SrvId}) ->
-    insert_listeners(Id, Pid, Listeners);
+%% Even if we are called only with modified config, we check if the spec is new
+plugin_update(?PKG_WEBSERVER, #{id:=Id, config:=#{url:=_Url}=NewConfig}, OldSpec, Pid, #{id:=SrvId}) ->
+    case OldSpec of
+        #{config:=NewConfig} ->
+            ok;
+        _ ->
+            {ok, Listeners} =  make_listen(SrvId, Id, NewConfig),
+            insert_listeners(Id, Pid, Listeners)
+    end;
 
-plugin_update(_Id, _Config, _Pid, _Service) ->
+plugin_update(_Class, _NewSpec, _OldSPec, _Pid, _Service) ->
     ok.
 
 
@@ -82,35 +95,25 @@ plugin_update(_Id, _Config, _Pid, _Service) ->
 %% ===================================================================
 
 
-
 %% @private
-parse_url({nkservice_webserver_conns, Conns}) ->
-    {ok, {nkservice_webserver_conns, Conns}};
-
-parse_url(<<>>) ->
-    {ok, <<>>};
-
-parse_url(Url) ->
-    Opts = #{resolve_type=>listen, protocol=>nkservice_webserver_protocol},
-    case nkpacket_resolve:resolve(Url, Opts) of
+make_listen(SrvId, Id, #{url:=Url}=Entry) ->
+    ResolveOpts = #{resolve_type=>listen, protocol=>nkservice_webserver_protocol},
+    case nkpacket_resolve:resolve(Url, ResolveOpts) of
         {ok, Conns} ->
-            {ok, {nkservice_webserver_conns, Conns}};
+            Opts1 = maps:get(opts, Entry, #{}),
+            Debug = maps:get(debug, Entry, false),
+            Opts2 = Opts1#{debug=>Debug},
+            Path = case Entry of
+                #{file_path:=FilePath} ->
+                    FilePath;
+                _ ->
+                    Priv = list_to_binary(code:priv_dir(nkservice)),
+                    <<Priv/binary, "/www">>
+            end,
+            make_listen_transps(SrvId, Id, Conns, Opts2, Path, []);
         {error, Error} ->
             {error, Error}
     end.
-
-
-%% @private
-make_listen(SrvId, Id, #{url:={nkservice_webserver_conns, Conns}}=Entry) ->
-    Opts = maps:get(opts, Entry, #{}),
-    Path = case Entry of
-        #{file_path:=FilePath} ->
-            FilePath;
-        _ ->
-            Priv = list_to_binary(code:priv_dir(nkservice)),
-            <<Priv/binary, "/www">>
-    end,
-    make_listen_transps(SrvId, Id, Conns, Opts, Path, []).
 
 
 %% @private
@@ -135,33 +138,18 @@ make_listen_transps(SrvId, Id, [Conn|Rest], Opts, Path, Acc) ->
 
 
 %% @private
-%%insert_listeners([{Id, <<>>}|Rest], Pid) ->
-%%    Childs = nkservice_srv_plugins_sup:get_childs(Pid),
-%%    lists:foreach(
-%%        fun({ChildId, _, _, _}) ->
-%%            case element(1, ChildId) of
-%%                Id ->
-%%                    ?LLOG(info, "stopping ~s", [Id]),
-%%                    nkservice_srv_plugins_sup:remove_child(Pid, ChildId);
-%%                _ ->
-%%                    ok
-%%            end
-%%        end,
-%%        Childs),
-%%    insert_listeners(Rest, Pid);
-
 insert_listeners(Id, Pid, SpecList) ->
-    case nkservice_srv_plugins_sup:update_child_multi(Pid, SpecList, #{}) of
+    case nkservice_packages_sup:update_child_multi(Pid, SpecList, #{}) of
         ok ->
-            ?LLOG(info, "started ~s", [Id]),
+            ?LLOG(debug, "started ~s", [Id]),
             ok;
         not_updated ->
-            ?LLOG(info, "didn't upgrade ~s", [Id]),
+            ?LLOG(debug, "didn't upgrade ~s", [Id]),
             ok;
         upgraded ->
             ?LLOG(info, "upgraded ~s", [Id]),
             ok;
         {error, Error} ->
-            ?LLOG(warning, "start/update error ~s: ~p", [Id, Error]),
+            ?LLOG(notice, "start/update error ~s: ~p", [Id, Error]),
             {error, Error}
     end.

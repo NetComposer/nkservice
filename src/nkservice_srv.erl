@@ -20,39 +20,41 @@
 %% -------------------------------------------------------------------
 
 
-%% Plugin management
+%% Package management
 %% -----------------
 %%
-%% When the service starts, plugins_status is empty
-%% - All defined plugins will be launched in check_plugins, low first
-%% - Plugins can return running or failed
+%% When the service starts, packages_status is empty
+%% - All defined packages will be launched in check_packages, low first
+%% - Packages can return running or failed
 %% - Periodically we re-launch start for failed ones
-%% - If the plugin supervisor fails, it is marked as failed
+%% - If the package supervisor fails, it is marked as failed
 %%
 %% When the service is updated
-%% - Plugins no longer available are removed, and called stop_plugin
-%% - Plugins that stay are marked as upgrading, called update_plugin
+%% - Packages no longer available are removed, and called stop_package
+%% - Packages that stay are marked as upgrading, called update_package
 %% - When response is received, they are marked as running or failed
 %%
 %% Service stop
 %% - Services are stopped sequentially (high to low)
 
 
-
 -module(nkservice_srv).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([get_status/1, get_events/1, send_event/2, force_check_plugins/1]).
--export([get/3, put/3, put_new/3, del/2]).
+-export([start/1, stop/1, replace/2, update/2, do_update/1, get_status/1]).
+-export([get_events/1, send_event/2, launch_check_status/1]).
+-export([get_all/0, get_all/1]).
+-export([call_module/4]).
 -export([call/2, call/3, cast/2]).
--export([start_link/1, stop_all/1]).
--export([pending_msgs/0, print_childs/1, print_childs/2]).
+-export([start_link/1, stop_all/1, do_event/2]).
+-export([print_packages/1, print_childs/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
+-export_type([event/0]).
 
 -include("nkservice.hrl").
-%%-include_lib("nkapi/include/nkapi.hrl").
+-include("nkservice_srv.hrl").
 
 -define(SRV_CHECK_TIME, 5000).
 -define(MAX_EVENT_QUEUE_SIZE, 1000).
@@ -65,15 +67,56 @@
 %% Types
 %% ===================================================================
 
+
 -type id() :: nkservice:id().
 
--type plugin_status() ::
+-type service_status() ::
     #{
-        status => starting | running | updating | failed,
+        class => nkservice:class(),
+        name => nkservice:name(),
+        hash => integer(),
+        node => node(),
+        modules => #{nkservice:module_id() => module_status()},
+        packages => #{nkservice:package_id() => package_status()}
+    }.
+
+-type status() :: starting | running | updating | failed.
+
+-type package_status() ::
+    #{
+        status => status(),
         last_status_time => nklib_util:m_timestamp(),
         error => term(),
         last_error_time => nklib_util:m_timestamp()
     }.
+
+
+-type module_status() ::
+    #{
+        status => status(),
+        last_status_time => nklib_util:m_timestamp(),
+        error => term(),
+        last_error_time => nklib_util:m_timestamp()
+    }.
+
+-type event() ::
+    service_started |
+    service_updated |
+    service_stopping |
+    {service_updated, #{
+        packages_to_stop => [nkservice:module_id()],
+        packages_to_start => [nkservice:module_id()],
+        packages_to_update => [nkservice:module_id()],
+        modules_to_stop => [nkservice:module_id()],
+        modules_to_start => [nkservice:module_id()],
+        modules_to_update => [nkservice:module_id()]
+    }} |
+    {package_supervisor_down, #{package_id=>nkservice:module_id()}} |
+    {package_supervisor_stopped, #{package_id=>nkservice:module_id()}} |
+    {module_supervisor_down, #{module_id=>nkservice:module_id()}} |
+    {module_supervisor_stopped, #{module_id=>nkservice:module_id()}} |
+    {package_status, #{package_id=>nkservice:module_id(), status=>status()}} |
+    {module_status, #{module_id=>nkservice:module_id(), status=>status()}}.
 
 
 
@@ -81,97 +124,142 @@
 %% Public
 %% ===================================================================
 
+%% @doc
+start(Service) ->
+    nkservice_srv_sup:start_service(Service).
+
+
+%% @doc Stops a service, only in local node
+-spec stop(id()) ->
+    ok | {error, not_running|term()}.
+
+stop(SrvId) ->
+    Reply = nkservice_srv_sup:stop_service(SrvId),
+    code:purge(SrvId),
+    Reply.
+
+
+%% @doc Replaces a service configuration with a new full set of parameters
+%% Should be performed only on master node, or master will overwrite it
+-spec replace(id(), nkservice:spec()) ->
+    ok | {error, term()}.
+
+replace(SrvId, Spec) ->
+    Service1 = nkservice_config_cache:get_full_service(SrvId),
+    Service2 = nkservice_config:negated_service(Service1),
+    case nkservice_config:config_service(SrvId, Spec, Service2) of
+        {ok, Service3} ->
+            do_update(Service3);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Updates a service configuration in local node
+%% Should be performed only on master node
+%% Fields class, name, global, plugins, uuid, meta, if used, overwrite previous settings
+%% Packages and modules are merged. Use remove => true to remove an old one
+%% Fields cache, debug, secret are merged. Use remove => true to remove an old one
+-spec update(id(), nkservice:spec()) ->
+    ok | {error, term()}.
+
+update(SrvId, Spec) ->
+    Service1 = nkservice_config_cache:get_full_service(SrvId),
+    case nkservice_config:config_service(SrvId, Spec, Service1) of
+        {ok, Service2} ->
+            do_update(Service2);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+do_update(#{id:=SrvId}=Service) ->
+    call(SrvId, {nkservice_update, Service}, 30000).
+
+
 
 %% @doc
 -spec get_status(id()) ->
-    #{Plugin::atom() => plugin_status()}.
+    {ok, service_status()} | {error, term()}.
 
-get_status(Id) ->
-    call(Id, {?MODULE, get_status}).
+get_status(SrvId) ->
+    call(SrvId, nkservice_get_status).
 
 
 %% @doc
 -spec get_events(id()) ->
     {ok, list()}.
 
-get_events(Id) ->
-    call(Id, {?MODULE, get_events}).
+get_events(SrvId) ->
+    call(SrvId, nkservice_get_events).
+
+%% @doc
+-spec send_event(id(), nkservice:event()) ->
+    ok.
+
+send_event(SrvId, Event) ->
+    cast(SrvId, {nkservice_send_event, Event}).
+
+
+%% @doc Call module and updates state
+call_module(SrvId, ModuleSrvId, Fun, Args) ->
+    call(SrvId, {nkservice_call_module, to_bin(ModuleSrvId), Fun, Args}).
 
 
 %% @doc
-send_event(Id, Event) ->
-    cast(Id, {?MODULE, send_event, Event}).
-
-
-%% @doc
-force_check_plugins(Id) ->
-    cast(Id, {?MODULE, force_check_plugins}).
-
-
-%% @doc Gets a value from service's store
--spec get(nkservice:id(), term(), term()) ->
-    term().
-
-get(SrvId, Key, Default) ->
-    case ets:lookup(SrvId, Key) of
-        [{_, Value}] -> Value;
-        [] -> Default
-    end.
-
-
-%% @doc Inserts a value in service's store
--spec put(nkservice:id(), term(), term()) ->
-    ok.
-
-put(SrvId, Key, Value) ->
-    ets:insert(SrvId, {Key, Value}).
-
-
-%% @doc Inserts a value in service's store
--spec put_new(nkservice:id(), term(), term()) ->
-    true | false.
-
-put_new(SrvId, Key, Value) ->
-    ets:insert_new(SrvId, {Key, Value}).
-
-
-%% @doc Deletes a value from service's store
--spec del(nkservice:id(), term()) ->
-    ok.
-
-del(SrvId, Key) ->
-    ets:delete(SrvId, Key).
+launch_check_status(SrvId) ->
+    cast(SrvId, nkservice_check_status).
 
 
 %% @doc Synchronous call to the service's gen_server process
 -spec call(nkservice:id(), term()) ->
     term().
 
-call(Id, Term) ->
-    call(Id, Term, 5000).
+call(SrvId, Term) ->
+    call(SrvId, Term, 5000).
 
 
 %% @doc Synchronous call to the service's gen_server process with a timeout
--spec call(nkservice:id(), term(), pos_integer()|infinity|default) ->
+-spec call(nkservice:id()|pid(), term(), pos_integer()|infinity|default) ->
     term().
 
-call(Id, Term, Time) ->
-    nklib_util:call(Id, Term, Time).
+call(SrvId, Term, Time) ->
+    nklib_util:call(SrvId, Term, Time).
 
 
 %% @doc Asynchronous call to the service's gen_server process
--spec cast(nkservice:id(), term()) ->
+-spec cast(nkservice:id()|pid(), term()) ->
     term().
 
-cast(Id, Term) ->
-    gen_server:cast(Id, Term).
+cast(SrvId, Term) ->
+    gen_server:cast(SrvId, Term).
 
 
-print_childs(Id) ->
-    nkservice_srv_plugins_sup:get_childs(Id).
+%% @doc Gets all started services
+-spec get_all() ->
+    [{id(), nkservice:name(), nkservice:class(), integer(), pid()}].
 
-print_childs(Id, PluginId) ->
-    nkservice_srv_plugins_sup:get_childs(Id, nklib_util:to_binary(PluginId)).
+get_all() ->
+    [{SrvId, ?CALL_SRV(SrvId, name), Class, Hash, Pid} ||
+        {{SrvId, Class, Hash}, Pid} <- nklib_proc:values(nkservice_srv)].
+
+
+%% @doc Gets all started services
+-spec get_all(nkservice:class()) ->
+    [{id(), nkservice:name(), pid()}].
+
+get_all(Class) ->
+    Class2 = nklib_util:to_binary(Class),
+    [{SrvId, Name, Pid} || {SrvId, Name, C, _H, Pid} <- get_all(), C==Class2].
+
+
+%% @private
+print_packages(SrvId) ->
+    nkservice_packages_sup:get_packages(SrvId).
+
+print_childs(SrvId, PackageId) ->
+    nkservice_packages_sup:get_childs(SrvId, nklib_util:to_binary(PackageId)).
 
 
 
@@ -197,14 +285,14 @@ stop_all(Pid) ->
     nklib_util:call(Pid, nkservice_stop_all, 30000).
 
 
-%% @private
-pending_msgs() ->
-    lists:map(
-        fun({_Id, Name, _Class, Pid}) ->
-            {_, Len} = erlang:process_info(Pid, message_queue_len),
-            {Name, Len}
-        end,
-        nkservice:get_all()).
+%%%% @private
+%%pending_msgs() ->
+%%    lists:map(
+%%        fun({_Id, Name, _Class, Pid}) ->
+%%            {_, Len} = erlang:process_info(Pid, message_queue_len),
+%%            {Name, Len}
+%%        end,
+%%        nkservice:get_all()).
 
 
 
@@ -212,54 +300,39 @@ pending_msgs() ->
 %% gen_server
 %% ===================================================================
 
--record(state, {
-        id :: nkservice:id(),
-        service :: nkservice:service(),
-        plugins_status2 :: #{nkservice:plugin_id() => plugin_status()},
-        plugins_sup :: [{nkservice:plugin_id(), pid()}],
-        sorted_plugin_ids :: [nkservice:plugin_id()],
-        events :: {Size::integer(), queue:queue()},
-        user :: map()
-    }).
-
--define(P1, #state.id).
--define(P2, #state.user).
-
 
 %% @private
-init(#{id:=Id}=Service) ->
+init(#{id:=SrvId, hash:=Hash}=Service) ->
     process_flag(trap_exit, true),          % Allow receiving terminate/2
     Class = maps:get(class, Service, <<>>),
     Name = maps:get(name, Service, <<>>),
-    nklib_proc:put(?MODULE, {Id, Class}),
-    nklib_proc:put({?MODULE, Name}, Id),
-    nkservice_config:make_cache(Service),
+    nklib_proc:put(?MODULE, {SrvId, Class, Hash}),
+    nklib_proc:put({?MODULE, Name}, {SrvId, Hash}),
+    nklib_proc:put({?MODULE, SrvId}, {Class, Name, Hash}),
+    nkservice_config_cache:make_cache(Service),
     % Someone could be listening (like events)
-    nkservice_util:notify_updated_service(Id),
-    {ok, UserState} = Id:service_init(Service, #{}),
+    nkservice_util:notify_updated_service(SrvId),
+    {ok, UserState} = SrvId:service_init(Service, #{}),
     State = #state{
-        id = Id,
+        id = SrvId,
         service = Service,
-        plugins_status2 = #{},
-        plugins_sup = [],
-        sorted_plugin_ids = get_plugin_ids(Service),
+        package_status= #{},
+        package_sup_pids = [],
+        module_status= #{},
+        module_sup_pids = [],
         events = {0, queue:new()},
         user = UserState
     },
-    self() ! {?MODULE, check_plugins},
-    event(service_started),
-    {ok, State}.
+    self() ! nkservice_timed_check_status,
+    {ok, do_event(service_started, State)}.
 
 
 
 %% @private
--spec handle_call(term(), {pid(), term()}, nkservice:service()) ->
-    term().
+handle_call(nkservice_get_status, _From, State) ->
+    {reply, {ok, do_get_status(State)}, State};
 
-handle_call({?MODULE, get_status}, _From, #state{plugins_status2=PluginsStatus}=State) ->
-    {reply, {ok, PluginsStatus}, State};
-
-handle_call({?MODULE, get_events}, _From, #state{events={_, Queue}}=State) ->
+handle_call(nkservice_get_events, _From, #state{events={_, Queue}}=State) ->
     {_, Events} = lists:foldl(
         fun({Time, Event}, {LastTime, Acc}) ->
             {Time, [{Time-LastTime, Time, Event}|Acc]}
@@ -268,47 +341,34 @@ handle_call({?MODULE, get_events}, _From, #state{events={_, Queue}}=State) ->
         queue:to_list(Queue)),
     {reply, {ok, Events}, State};
 
+handle_call({nkservice_update, NewService}, _From, State) ->
+    State2 = do_update(NewService, State),
+    State3 = do_event(update_received, State2),
+    {reply, ok, State3};
 
-handle_call({?MODULE, update, Spec}, _From, #state{service=Service}=State) ->
-    event(received_service_update),
-    case nkservice_config:config_service(Spec, Service) of
-        {ok, NewService} ->
-            State2 = do_upgrade(NewService, State),
-            {reply, ok, State2};
-        {error, Error} ->
-            {reply, {error, Error}, State}
-    end;
-
-handle_call({?MODULE, replace, Spec}, _From, #state{service=Service}=State) ->
-    event(received_service_replace),
-    RawService = maps:with([id, uuid], Service),
-    case nkservice_config:config_service(Spec, RawService) of
-        {ok, NewService} ->
-            State2 = do_upgrade(NewService, State),
-            {reply, ok, State2};
-        {error, Error} ->
-            {reply, {error, Error}, State}
-    end;
+handle_call({nkservice_call_module, _ModuleId, _Fun, _Args}, _From, State) ->
+    {reply, {error, unknown_module}, State};
 
 handle_call(nkservice_state, _From, State) ->
     {reply, State, State};
 
 handle_call(Msg, From, State) ->
-    nklib_gen_server:handle_call(service_handle_call, Msg, From, State, ?P1, ?P2).
+    handle(service_handle_call, [Msg, From], State).
 
 
 %% @private
--spec handle_cast(term(), nkservice:service()) ->
-    term().
+handle_cast({nkservice_send_event, Event}, State)->
+    {noreply, do_event(Event, State)};
 
-handle_cast({?MODULE, send_event, Event}, State)->
-    {noreply, insert_event(Event, State)};
+handle_cast(nkservice_check_status, State)->
+    {noreply, check_sup_state(State)};
 
-handle_cast({?MODULE, force_check_plugins}, State)->
-    {noreply, check_plugins(State)};
+handle_cast({nkservice_package_status, PackageId, Status}, State)->
+    State2 = nkservice_srv_packages:update_status(PackageId, Status, State),
+    {noreply, State2};
 
-handle_cast({?MODULE, plugin_status, PluginId, Status}, State)->
-    State2 = update_plugin_status(PluginId, Status, State),
+handle_cast({nkservice_module_status, ModuleId, Status}, State)->
+    State2 = nkservice_srv_modules:update_status(ModuleId, Status, State),
     {noreply, State2};
 
 handle_cast(nkservice_stop, State)->
@@ -316,60 +376,82 @@ handle_cast(nkservice_stop, State)->
     {stop, normal, State};
 
 handle_cast(Msg, State) ->
-    nklib_gen_server:handle_cast(service_handle_cast, Msg, State, ?P1, ?P2).
+    handle(service_handle_cast, [Msg], State).
+
 
 %% @private
--spec handle_info(term(), nkservice:service()) ->
-    nklib_util:gen_server_info(nkservice:service()).
-
-handle_info({?MODULE, check_plugins}, State) ->
-    State2 = check_plugins(State),
-    erlang:send_after(?SRV_CHECK_TIME, self(), {?MODULE, check_plugins}),
+handle_info(nkservice_timed_check_status, State) ->
+    State2 = check_sup_state(State),
+    erlang:send_after(?SRV_CHECK_TIME, self(), nkservice_timed_check_status),
     {noreply, State2};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
-    #state{plugins_status2=PluginsStatus, plugins_sup=Sups} = State,
-    case lists:keytake(Pid, 2, Sups) of
-        {value, {Plugin, Pid}, Sups2} ->
-            State2 = case maps:is_key(Plugin, PluginsStatus) of
+    #state{
+        package_status= PackagesStatus,
+        package_sup_pids = PackagePids,
+        module_status= ModuleStatus,
+        module_sup_pids = ModulePids
+    } = State,
+    case lists:keytake(Pid, 2, PackagePids) of
+        {value, {ignore, Pid}, PackagePids2} ->
+            State2 = State#state{package_sup_pids=PackagePids2},
+            {noreply, State2};
+        {value, {PackageId, Pid}, PackagePids2} ->
+            State2 = case maps:is_key(PackageId, PackagesStatus) of
                 true ->
-                    event({supervisor_down, Plugin}),
-                    update_plugin_status(Plugin, {error, supervisor_down}, State);
+                    nkservice_srv_packages:update_status(PackageId, {error, supervisor_down}, State);
                 false ->
-                    event({supervisor_stopped, Plugin}),
                     State
             end,
-            State3 = State2#state{plugins_sup=Sups2},
+            State3 = State2#state{package_sup_pids=PackagePids2},
             {noreply, State3};
         false ->
-            nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2)
+            case lists:keytake(Pid, 2, ModulePids) of
+                {value, {ignore, Pid}, ModulePids2} ->
+                    State2 = State#state{module_sup_pids=ModulePids2},
+                    {noreply, State2};
+                {value, {ModuleId, Pid}, ModulePids2} ->
+                    State2 = case maps:is_key(ModuleId, ModuleStatus) of
+                        true ->
+                            nkservice_srv_modules:update_status(ModuleId, {error, supervisor_down}, State);
+                        false ->
+                            State
+                    end,
+                    State3 = State2#state{module_sup_pids=ModulePids2},
+                    {noreply, State3};
+                false ->
+                    handle(service_handle_info, [Msg], State)
+            end
     end;
 
 handle_info(Msg, State) ->
-    nklib_gen_server:handle_info(service_handle_info, Msg, State, ?P1, ?P2).
+    handle(service_handle_info, [Msg], State).
 
 
 %% @private
--spec code_change(term(), nkservice:service(), term()) ->
-    {ok, nkservice:service()} | {error, term()}.
+code_change(OldVsn, #state{id=SrvId, user=UserState}=State, Extra) ->
+    case apply(SrvId, service_code_change, [OldVsn, UserState, Extra]) of
+        {ok, UserState2} ->
+            {ok, State#state{user=UserState2}};
+        {error, Error} ->
+            {error, Error}
+    end.
 
-code_change(OldVsn, State, Extra) ->
-    nklib_gen_server:code_change(service_code_change, OldVsn, State, Extra, ?P1, ?P2).
 
 
 %% @private
--spec terminate(term(), nkservice:service()) ->
-    ok.
-
-terminate(Reason, #state{id=Id}=State) ->
-    event(service_stopping),
-    ?LLOG(notice, "is stopping (~p)", [Reason], State),
+terminate(Reason, #state{id=SrvId, service=Service}=State) ->
+    State2 = do_event(service_stopping, State),
+    ?LLOG(debug, "is stopping (~p)", [Reason], State2),
     lists:foreach(
-        fun(Plugin) -> do_stop_plugin(Plugin, self(), State) end,
-        lists:reverse(?CALL_SRV(Id, plugin_modules))),
+        fun(Module) -> nkservice_srv_modules:do_stop(Module, State2) end,
+        maps:keys(?CALL_SRV(SrvId, modules))),
+    lists:foreach(
+        fun(Package) -> nkservice_srv_packages:do_stop(Package, self(), Service, State2) end,
+        maps:keys(?CALL_SRV(SrvId, packages))),
     % We could launch all in parallel and wait for the casts here
-    ?LLOG(info, "is stopped", [], State),
-    catch nklib_gen_server:terminate(nkservice_terminate, Reason, State, ?P1, ?P2).
+    ?LLOG(info, "is stopped", [], State2),
+    catch handle(nkservice_terminate, [Reason], State2).
 
 
 
@@ -377,234 +459,145 @@ terminate(Reason, #state{id=Id}=State) ->
 %% Internal
 %% ===================================================================
 
-%% @private Generated sorted list of Plugin ids
-get_plugin_ids(#{plugins:=Plugins, plugin_modules:=Modules}) ->
-    lists:flatten([
-            [Id || {Id, #{class:=Class}} <- maps:to_list(Plugins), Class==Module]
-            || Module <- Modules
-    ]).
+
+%% @private Packages will be checked from low to high
+check_sup_state(#state{id=SrvId}=State) ->
+    State2 = nkservice_srv_modules:start(maps:keys(?CALL_SRV(SrvId, modules)), State),
+    State3 = nkservice_srv_packages:start(maps:keys(?CALL_SRV(SrvId, packages)), State2),
+    nkservice_master:updated_service_status(SrvId, do_get_status(State3)),
+    State3.
+
 
 %% @private
-do_upgrade(NewService, #state{id=Id, sorted_plugin_ids=OldPluginIds}=State) ->
-    OldName = ?CALL_SRV(Id, name),
-    NewName = maps:get(name, NewService),
-    case OldName == NewName of
-        true ->
-            ok;
-        false ->
-            nklib_proc:del({?MODULE, OldName}),
-            nklib_proc:put({?MODULE, NewName}, Id)
-    end,
-    OldClass = ?CALL_SRV(Id, class),
-    NewClass = maps:get(class, NewService),
-    case OldClass == NewClass of
-        true ->
-            ok;
-        false ->
-            nklib_proc:del(?MODULE),
-            nklib_proc:put(?MODULE, {Id, NewClass})
-    end,
-    NewPlugins1 = maps:get(plugins, NewService, #{}),
-    ToStop = maps:fold(
-        fun(Id0, K, Acc) ->
-            case K of #{remove:=true} -> [Id0|Acc]; _ -> Acc end
+do_update(NewService, #state{id=SrvId, service=OldService}=State) ->
+    State2 = do_update_core(NewService, State),
+    {Event1, State3} = do_update_modules(NewService, OldService, State2),
+    {Event2, State4} = do_update_packages(NewService, OldService, State3),
+    nkservice_config_cache:make_cache(NewService),
+    nkservice_util:notify_updated_service(SrvId),
+    Event3 = {service_updated, maps:merge(Event1, Event2)},
+    State5 = State4#state{service = NewService},
+    State6 = do_event(Event3, State5),
+    check_sup_state(State6).
+
+
+%% @private
+do_update_core(#{hash:=Hash}=NewService, #state{id=SrvId}=State) ->
+    Name = maps:get(name, NewService),
+    Class = maps:get(class, NewService),
+    nklib_proc:put(?MODULE, {SrvId, Class, Hash}),
+    nklib_proc:put({?MODULE, Name}, {SrvId, Hash}),
+    nklib_proc:put({?MODULE, SrvId}, {Class, Name, Hash}),
+    State.
+
+
+%% @private
+do_update_modules(NewService, OldService, State) ->
+    NewModules = maps:get(modules, NewService, #{}),
+    NewModuleIds = maps:keys(NewModules),
+    OldModules = maps:get(modules, OldService, #{}),
+    OldModuleIds = maps:keys(OldModules),
+    ToStop = lists:sort(OldModuleIds -- NewModuleIds),
+    State2 = nkservice_srv_modules:stop(ToStop, State),
+    ToStart = lists:sort(NewModuleIds -- OldModuleIds),
+    ToUpdate1 = (OldModuleIds -- ToStart) -- ToStop,
+    ToUpdate2 = lists:sort(lists:filter(
+        fun(ModuleId) ->
+            #{hash:=Old} = maps:get(ModuleId, OldModules, #{}),
+            #{hash:=New} = NewSpec = maps:get(ModuleId, NewModules, #{}),
+            Old /= New orelse maps:get(reload, NewSpec, false)
         end,
-        [],
-        NewPlugins1),
-    State2 = do_stop_plugins(ToStop, State),
-    NewPlugins2 = maps:without(ToStop, NewPlugins1),
-    NewService2 = NewService#{plugins=>NewPlugins2},
-    NewPluginIds = get_plugin_ids(NewService2),
-    State3 = State2#state{
-        service = NewService2,
-        sorted_plugin_ids = NewPluginIds
+        ToUpdate1)),
+    Unchanged = lists:sort((OldModuleIds -- ToUpdate2) -- ToStop),
+    % To update a module, we stop it
+    % It will be restarted by check_sup_state
+    State3 = nkservice_srv_modules:stop(ToUpdate2, State2),
+    ?LLOG(notice, "updated modules (to stop: ~p, to start: ~p, to update: ~p, unchanged: ~p)",
+        [ToStop, ToStart, ToUpdate2, Unchanged], State2),
+    Event = #{
+        modules_to_stop => ToStop,
+        modules_to_start => ToStart,
+        modules_to_update => ToUpdate2,
+        modules_unchanged => Unchanged
     },
-    nkservice_config:make_cache(NewService2),
-    ToStart = NewPluginIds -- OldPluginIds,
-    ToUpdate = (OldPluginIds -- ToStart) -- ToStop,
-    % All not-new plugins will receive a restart
-    State4 = do_update_plugins(ToUpdate, State3),
-    nkservice_util:notify_updated_service(Id),
-    ?LLOG(notice, "service updated (to stop: ~p, to start: ~p, to update: ~p)",
-          [ToStop, ToStart, ToUpdate], State4),
-    event({service_update, ToStop, ToStart, ToUpdate}),
-    % New plugins will be started now
-    check_plugins(State4).
-
-
-%% @private Plugins will be checked from low to high
-check_plugins(#state{sorted_plugin_ids=PluginIds}=State) ->
-    check_plugins(PluginIds, State).
+    {Event, State3}.
 
 
 %% @private
-check_plugins([], State) ->
-    State;
-
-check_plugins([PluginId|Rest], #state{plugins_status2=PluginsStatus}=State) ->
-    Status = maps:get(PluginId, PluginsStatus, #{}),
-    State2 = case maps:get(status, Status, failed) of
-        failed ->
-            do_start_plugin(PluginId, State);
-        _ ->
-            % for 'starting', 'running', 'updating', do nothing
-            State
-    end,
-    check_plugins(Rest, State2).
+do_update_packages(NewService, OldService, State) ->
+    NewPackages = maps:get(packages, NewService, #{}),
+    NewPackageIds = maps:keys(NewPackages),
+    OldPackages = maps:get(packages, OldService, #{}),
+    OldPackageIds = maps:keys(OldPackages),
+    ToStop = lists:sort(OldPackageIds -- NewPackageIds),
+    State2 = nkservice_srv_packages:stop(ToStop, OldService, State),
+    ToStart = lists:sort(NewPackageIds -- OldPackageIds),
+    ToUpdate1 = (OldPackageIds -- ToStart) -- ToStop,
+    ToUpdate2 = lists:sort(lists:filter(
+        fun(PackageId) ->
+            #{hash:=Old} = maps:get(PackageId, OldPackages, #{}),
+            #{hash:=New} = maps:get(PackageId, NewPackages, #{}),
+            Old /= New
+        end,
+        ToUpdate1)),
+    Unchanged = lists:sort(ToUpdate1 -- ToUpdate2),
+    % Update is managed by package theirselves, we only signal them
+    State3 = nkservice_srv_packages:update(ToUpdate2, NewService, OldService, State2),
+    ?LLOG(notice, "updated packages (to stop: ~p, to start: ~p, to update: ~p, unchanged: ~p)",
+        [ToStop, ToStart, ToUpdate2, Unchanged], State2),
+    Event = #{
+        packages_to_stop => ToStop,
+        packages_to_start => ToStart,
+        packages_to_update => ToUpdate2,
+        packages_unchanged => Unchanged},
+    {Event, State3}.
 
 
 %% @private
-do_start_plugin(PluginId, #state{service=Service}=State) ->
-    Self = self(),
-    case start_plugin_sup(PluginId, State) of
-        {ok, Pid, State2} ->
-            cast_plugin_status(Self, PluginId, starting),
-            spawn_link(
-                fun() ->
-                    Res = try nkservice_config:start_plugin(PluginId, Pid, Service) of
-                        ok ->
-                            running;
-                        {error, Error} ->
-                            {error, Error}
-                    catch
-                        Class:Error ->
-                            {error, {Class, {Error, erlang:get_stacktrace()}}}
-                    end,
-                    cast_plugin_status(Self, PluginId, Res)
-                end),
-            State2;
-        error ->
-            cast_plugin_status(Self, PluginId, {error, supervisor_down}),
-            State
+do_get_status(State) ->
+    #state{
+        service = Service,
+        package_status = PackagesStatus,
+        module_status = ModuleStatus
+    } = State,
+    #{name:=Name, class:=Class, hash:=Hash} = Service,
+    #{
+        name => Name,
+        class => Class,
+        node => node(),
+        packages => PackagesStatus,
+        modules => ModuleStatus,
+        hash => Hash
+    }.
+
+
+%% @private
+%% Will call the service's functions
+handle(Fun, Args, #state{id=SrvId, service=Service, user=UserState}=State) ->
+    case apply(SrvId, Fun, Args++[Service, UserState]) of
+        {reply, Reply, UserState2} ->
+            {reply, Reply, State#state{user=UserState2}};
+        {reply, Reply, UserState2, Time} ->
+            {reply, Reply, State#state{user=UserState2}, Time};
+        {noreply, UserState2} ->
+            {noreply, State#state{user=UserState2}};
+        {noreply, UserState2, Time} ->
+            {noreply, State#state{user=UserState2}, Time};
+        {stop, Reason, Reply, UserState2} ->
+            {stop, Reason, Reply, State#state{user=UserState2}};
+        {stop, Reason, UserState2} ->
+            {stop, Reason, State#state{user=UserState2}};
+        {ok, UserState2} ->
+            {ok, State#state{user=UserState2}};
+        Other ->
+            ?LLOG(warning, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
+            error(invalid_handle_response)
     end.
 
 
 %% @private
-do_stop_plugins([], State) ->
-    State;
-
-do_stop_plugins([PluginId|Rest], #state{plugins_status2=PluginsStatus}=State) ->
-    Self = self(),
-    PluginsStatus2 = maps:remove(PluginId, PluginsStatus),
-    State2 = State#state{plugins_status2=PluginsStatus2},
-    spawn_link(fun() -> do_stop_plugin(PluginId, Self, State) end),
-    do_stop_plugins(Rest, State2).
-
-
-%% @private
-do_stop_plugin(PluginId, Self, #state{id=Id, service=Service}=State) ->
-    send_event(Self, {plugin_stopping, PluginId}),
-    case find_plugin_sup_pid(PluginId, State) of
-        {ok, Pid} ->
-            try nkservice_config:stop_plugin(PluginId, Pid, Service) of
-                ok ->
-                    ok;
-                {error, Error} ->
-                    {error, Error}
-            catch
-                Class:Error ->
-                    {error, {Class, {Error, erlang:get_stacktrace()}}}
-            end,
-            nkservice_srv_plugins_sup:stop_plugin_sup(Id, PluginId);
-        undefined ->
-            ok
-    end,
-    send_event(Self, {plugin_stopped, PluginId}).
-
-
-%% @private
-do_update_plugins([], State) ->
-    State;
-
-do_update_plugins([PluginId|Rest], #state{service=Service}=State) ->
-    Self = self(),
-    State2 = case start_plugin_sup(PluginId, State) of
-        {ok, Pid, State3} ->
-            cast_plugin_status(Self, PluginId, updating),
-            spawn_link(
-                fun() ->
-                    Res = try nkservice_config:update_plugin(PluginId, Pid, Service) of
-                        ok ->
-                            running;
-                        {error, Error} ->
-                            {error, Error}
-                    catch
-                        Class:Error ->
-                            {error, {Class, {Error, erlang:get_stacktrace()}}}
-                    end,
-                    cast_plugin_status(Self, PluginId, Res)
-                end),
-            State3;
-        error ->
-            cast_plugin_status(Self, PluginId, {error, supervisor_down}),
-            State
-    end,
-    do_update_plugins(Rest, State2).
-
-
-%% @private
-update_plugin_status(PluginId, Status, #state{plugins_status2=PluginsStatus}=State) ->
-    event({plugin_status, PluginId, Status}),
-    Now = nklib_util:m_timestamp(),
-    PluginStatus1 = maps:get(PluginId, PluginsStatus, #{}),
-    PluginStatus2 = case Status of
-        {error, Error} ->
-            ?LLOG(warning, "updated plugin '~s' error: ~p", [PluginId, Error], State),
-            PluginStatus1#{
-                status => failed,
-                last_error => Error,
-                last_error_time => Now,
-                last_status_time => Now
-            };
-        _ ->
-            case maps:get(status, PluginStatus1, undefined) of
-                Status ->
-                    ok;
-                Old ->
-                    ?LLOG(notice, "updated plugin '~s' status ~p -> ~p",
-                          [PluginId, Old, Status], State)
-            end,
-            PluginStatus1#{
-                status => Status,
-                last_status_time => Now
-            }
-    end,
-    PluginsStatus2 = PluginsStatus#{PluginId => PluginStatus2},
-    State#state{plugins_status2=PluginsStatus2}.
-
-
-%% @private
-start_plugin_sup(PluginId, #state{id=Id, plugins_sup=Sups}=State) ->
-    case find_plugin_sup_pid(PluginId, State) of
-        {ok, Pid} ->
-            {ok, Pid, State};
-        undefined ->
-            case nkservice_srv_plugins_sup:start_plugin_sup(Id, PluginId) of
-                {ok, Pid} ->
-                    monitor(process, Pid),
-                    Sups2 = lists:keystore(PluginId, 1, Sups, {PluginId, Pid}),
-                    {ok, Pid, State#state{plugins_sup=Sups2}};
-                {error, Error} ->
-                    ?LLOG(warning, "could not start plugin '~s' supervisor: ~p",
-                        [PluginId, Error], State),
-                    error
-            end
-    end.
-
-
-%% @private
-find_plugin_sup_pid(PluginId, #state{plugins_sup=Sups}) ->
-    case lists:keyfind(PluginId, 1, Sups) of
-        {PluginId, Pid} when is_pid(Pid) ->
-            {ok, Pid};
-        _ ->
-            undefined
-    end.
-
-
-%% @private
-insert_event(Event, #state{events={Size, Queue}}=State) ->
-    %?LLOG(info, "EVENT: ~p", [Event], State),
+do_event(Event, #state{events={Size, Queue}}=State) ->
+    {ok, State2} = handle(service_event, [Event], State),
     {Size2, Queue2} = case Size >= ?MAX_EVENT_QUEUE_SIZE of
         true ->
             {Size-1, queue:drop(Queue)};
@@ -613,71 +606,10 @@ insert_event(Event, #state{events={Size, Queue}}=State) ->
     end,
     Now = nklib_util:m_timestamp(),
     {Size3, Queue3} = {Size2+1, queue:in({Now, Event}, Queue2)},
-    State#state{events={Size3, Queue3}}.
+    State2#state{events={Size3, Queue3}}.
+
 
 
 %% @private
-cast_plugin_status(Pid, PluginId, Status) ->
-    gen_server:cast(Pid, {?MODULE, plugin_status, PluginId, Status}).
-
-
-%% @private
-event(Event) ->
-    send_event(self(), Event).
-
-
-
-
-
-%%handle_call({nkservice_update, UserSpec}, _From, #state{service=Service}=State) ->
-%%    #{id:=Id, name:=Name} = Service,
-%%    case nkservice_config:config_service(UserSpec, Service) of
-%%        {ok, Service2} ->
-%%            case nkservice_srv_listen_sup:start_transports(Service2) of
-%%                {ok, Service3} ->
-%%                    nkservice_config:make_cache(Service3),
-%%                    {Added, Removed} = get_diffs(Service3, Service),
-%%                    Added2 = case maps:is_key(lua_state, Added) of
-%%                        true -> Added#{lua_state:=<<"...">>};
-%%                        false -> Added
-%%                    end,
-%%                    Removed2 = case maps:is_key(lua_state, Removed) of
-%%                        true -> Removed#{lua_state:=<<"...">>};
-%%                        false -> Removed
-%%                    end,
-%%                    lager:info("Service '~s' added config: ~p", [Name, Added2]),
-%%                    lager:info("Service '~s' removed config: ~p", [Name, Removed2]),
-%%                    nkservice_util:notify_updated_service(Id),
-%%                    {reply, ok, State#state{service=Service3}};
-%%                {error, Error} ->
-%%                    {reply, {error, Error}, State}
-%%            end;
-%%        {error, Error} ->
-%%            {reply, {error, Error}, State}
-%%    end;
-
-
-
-%%%% private
-%%get_diffs(Map1, Map2) ->
-%%    Add = get_diffs(nklib_util:to_list(Map1), Map2, []),
-%%    Rem = get_diffs(nklib_util:to_list(Map2), Map1, []),
-%%    {maps:from_list(Add), maps:from_list(Rem)}.
-%%
-%%
-%%%% private
-%%get_diffs([], _, Acc) ->
-%%    Acc;
-%%
-%%get_diffs([{cache, _}|Rest], Map, Acc) ->
-%%    get_diffs(Rest, Map, Acc);
-%%
-%%get_diffs([{Key, Val}|Rest], Map, Acc) ->
-%%    Acc1 = case maps:find(Key, Map) of
-%%        {ok, Val} -> Acc;
-%%        _ -> [{Key, Val}|Acc]
-%%    end,
-%%    get_diffs(Rest, Map, Acc1).
-
-
-
+to_bin(Term) when is_binary(Term) -> Term;
+to_bin(Term) -> nklib_util:to_binary(Term).

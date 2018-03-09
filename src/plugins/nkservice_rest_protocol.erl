@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2018 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -35,7 +35,8 @@
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkSERVICE REST (~s) "++Txt, [State#state.remote|Args])).
+    lager:Type("NkSERVICE REST (~s:~s) (~s) "++Txt,
+               [State#state.srv_id, State#state.plugin_id, State#state.remote|Args])).
 
 
 
@@ -43,26 +44,27 @@
 %% Types
 %% ===================================================================
 
+-type msg() :: {text, iolist()} | {binary, iolist()} | {json, iolist()}.
 
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
+%% @doc Callbacks for protocol
 transports(_) ->
     [http, https, ws, wss].
 
 
+%% @doc Callbacks for protocol
 default_port(http) -> 80;
 default_port(https) -> 443;
 default_port(ws) -> 80;
 default_port(wss) -> 443.
 
 
-
-
 %% @doc Send a command to the client and wait a response
--spec send(pid(), binary()) ->
+-spec send(pid(), msg()) ->
     ok | {error, term()}.
 
 send(Pid, Data) ->
@@ -70,7 +72,7 @@ send(Pid, Data) ->
 
 
 %% @doc Send a command and don't wait for a response
--spec send_async(pid(), binary()) ->
+-spec send_async(pid(), msg()) ->
     ok | {error, term()}.
 
 send_async(Pid, Data) ->
@@ -88,7 +90,7 @@ stop(Pid) ->
 
 -record(state, {
     srv_id :: nkservice:id(),
-    id :: nkservice_rest:id(),
+    plugin_id :: nkservice_plugin:id(),
     remote :: binary(),
     user_state = #{} :: map()
 }).
@@ -100,8 +102,8 @@ stop(Pid) ->
 conn_init(NkPort) ->
     {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
-    State1 = #state{srv_id=SrvId, id=Id, remote=Remote},
-    set_log(SrvId),
+    State1 = #state{srv_id=SrvId, plugin_id =Id, remote=Remote},
+    set_debug(State1),
     %% nkservice_util:register_for_changes(SrvId),
     ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
     {ok, State2} = handle(nkservice_rest_init, [NkPort], State1),
@@ -116,24 +118,29 @@ conn_parse(close, _NkPort, State) ->
     {ok, State};
 
 conn_parse({text, Text}, NkPort, State) ->
-    {ok, State2} = handle(nkservice_rest_text, [Text, NkPort], State),
-    {ok, State2}.
+    call_rest_frame({text, Text}, NkPort, State);
+
+conn_parse({binary, Bin}, NkPort, State) ->
+    call_rest_frame({binary, Bin}, NkPort, State).
 
 
 -spec conn_encode(term(), nkpacket:nkport()) ->
     {ok, nkpacket:outcoming()} | continue | {error, term()}.
 
-conn_encode(Msg, _NkPort) when is_map(Msg); is_list(Msg) ->
-    case nklib_json:encode(Msg) of
+conn_encode({text, Text}, _NkPort) ->
+    {ok, {text, Text}};
+
+conn_encode({binary, Bin}, _NkPort) ->
+    {ok, {binary, Bin}};
+
+conn_encode({json, Term}, _NkPort) ->
+    case nklib_json:encode(Term) of
         error ->
-            lager:warning("invalid json in ~p: ~p", [?MODULE, Msg]),
+            lager:warning("invalid json in ~p: ~p", [?MODULE, Term]),
             {error, invalid_json};
         Json ->
             {ok, {text, Json}}
-    end;
-
-conn_encode(Msg, _NkPort) when is_binary(Msg) ->
-    {ok, {text, Msg}}.
+    end.
 
 
 -spec conn_handle_call(term(), {pid(), term()}, nkpacket:nkport(), #state{}) ->
@@ -144,7 +151,7 @@ conn_handle_call({nkservice_rest_send, Data}, From, NkPort, State) ->
         {ok, State2} ->
             gen_server:reply(From, ok),
             {ok, State2};
-        {error, Error, State2} ->
+        {stop, Error, State2} ->
             {error, Error, State2}
     end;
 
@@ -197,29 +204,38 @@ http_init(Paths, Req, Env, NkPort) ->
 %% ===================================================================
 
 %% @private
-set_log(SrvId) ->
-    Debug = case nkservice_util:get_debug_info(SrvId, nkservice_rest) of
-        {true, _} -> true;
-        _ -> false
-    end,
-    put(nkservice_rest_debug, Debug).
+call_rest_frame(Frame, NkPort, #state{plugin_id =Id, srv_id=SrvId, user_state=UserState}=State) ->
+    case apply(SrvId, nkservice_rest_frame, [Id, Frame, NkPort, UserState]) of
+        {reply, {text, Text}, UserState2} ->
+            do_send({text, Text}, NkPort, State#state{user_state=UserState2});
+        {reply, {binary, Bin}, UserState2} ->
+            do_send({binary, Bin}, NkPort, State#state{user_state=UserState2});
+        {reply, {json, Term}, UserState2} ->
+            Text = nklib_json:encode(Term),
+            do_send({text, Text}, NkPort, State#state{user_state=UserState2});
+        {ok, UserState2} ->
+            {ok, State#state{user_state=UserState2}}
+    end.
+
+
+%% @private
+set_debug(#state{srv_id=SrvId, plugin_id =Id}=State) ->
+    Debug = nkservice_util:get_debug(SrvId, {nkservice_rest, Id, ws}) == true,
+    put(nkservice_rest_debug, Debug),
+    ?DEBUG("debug system activated", [], State).
 
 
 %% @private
 do_send(Msg, NkPort, State) ->
-    case catch do_send(Msg, NkPort) of
+    case nkpacket_connection:send(NkPort, Msg) of
         ok ->
             {ok, State};
-        _ ->
+        Other ->
+            ?DEBUG("connection send error: ~p", [Other], State),
             {stop, normal, State}
     end.
 
 
 %% @private
-do_send(Msg, NkPort) ->
-    nkpacket_connection:send(NkPort, Msg).
-
-
-%% @private
-handle(Fun, Args, #state{id=Id}=State) ->
+handle(Fun, Args, #state{plugin_id =Id}=State) ->
     nklib_gen_server:handle_any(Fun, [Id|Args], State, #state.srv_id, #state.user_state).

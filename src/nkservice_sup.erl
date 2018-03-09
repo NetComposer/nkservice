@@ -38,11 +38,14 @@ start_link() ->
             id => nkservice_all_srvs_sup,
             start => {?MODULE, start_services_sup, []},
             type => supervisor
+        },
+        #{
+            id => nkservice_node,
+            start => {nkservice_node, start_link, []}
         }
     ],
     supervisor:start_link({local, ?MODULE}, ?MODULE, 
                             {{one_for_one, 10, 60}, ChildsSpec}).
-
 
 %% @private
 start_services_sup() ->

@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([parse/1]).
--export([syntax_scripts/1, syntax_callbacks/1, syntax_duplicated_ids/1]).
+-export([syntax_modules/1, syntax_packages/1, syntax_duplicated_ids/1]).
 
 
 -define(LLOG(Type, Txt, Args, Service),
@@ -35,9 +35,8 @@
 
 
 %% @doc
-
 -spec parse(nkservice:spec()) ->
-    {ok, nkservice:spec()} | {error, term()}.
+    nkservice:spec().
 
 parse(Spec) ->
     case nklib_syntax:parse(Spec, syntax()) of
@@ -46,13 +45,14 @@ parse(Spec) ->
                 [] ->
                     ok;
                 _ ->
-                    ?LLOG(warning, "Unknown keys starting service: ~p",
-                        [Unknown], Parsed)
+                    ?LLOG(warning, "Unknown keys in service: ~p",
+                          [Unknown], Parsed)
             end,
-            {ok, Parsed};
+            Parsed;
         {error, SyntaxError} ->
             throw(SyntaxError)
     end.
+
 
 
 %% @private
@@ -61,96 +61,86 @@ syntax() ->
         id => atom,
         class => binary,
         name => binary,
-        plugins => {list, #{
+        uuid => binary,
+        plugins => {list, atom},
+        packages => {list, #{
             id => binary,
-            class => atom,
+            class => binary,
             config => map,
             remove => boolean,
-            '__mandatory' => [id, class],
-            '__defaults' => #{config => #{}}
+            cache_map => map,                   % Type:term() => any()
+            debug_map => map,                   % Type:term() => any()
+            module_id => binary,
+            module_class => {atom, [luerl]},
+            '__defaults' => #{config=>#{}},
+            '__post_check' => fun ?MODULE:syntax_packages/1
         }},
-        log_level => log_level,
-        debug => {list, #{
-            key => atom,
-            spec => any,
-            '__mandatory' => [key],
-            '__defaults' => #{spec => #{}}
-        }},
-        cache => {list, #{
-            key => atom,
-            value => any,
-            remove => boolean
-        }},
-        scripts => {list, #{
+        modules => {list, #{
             id => binary,
-            class => {atom, [luerl, remove]},
+            class => {atom, [luerl]},
+            packages => {list, binary},     % Allowed packages
             file => binary,
             url => binary,
             code => binary,
+            max_instances => {integer, 1, 1000000},
+            debug => boolean,
+            cache_map => map,                   % Type:term() => any()
+            debug_map => [boolean,map],         % Type:term() => any()
             remove => boolean,
+            reload => boolean,
             '__mandatory' => [id, class],
-            '__post_check' => fun ?MODULE:syntax_scripts/1
+            '__defaults' => #{packages=>[<<"any">>], max_instances=>100},
+            '__post_check' => fun ?MODULE:syntax_modules/1
         }},
-        callbacks => {list, #{
+        secret => {list, #{
+            class => [raw_atom, binary],
             id => binary,
-            class => {atom, [luerl, http, remove]},
-            luerl_id => binary,
-            url => binary,
+            key => binary,
+            value => any,
             remove => boolean,
-            '__mandatory' => [id, class],
-            '__post_check' => fun ?MODULE:syntax_callbacks/1
+            '__mandatory' => [key, value],
+            '__defaults' => #{class=><<>>, id=><<>>}
         }},
-        % For debug at nkpacket level, add debug=>true to opts (or in a url)
-        % For debug at nkservice_rest level, add nkservice_rest to 'debug' config option in global service
-        listen => {list, #{
-            id => binary,
-            url => fun nkservice_rest_plugin:parse_url/1,
-            opts => nkpacket_syntax:safe_syntax(),
-            remove => boolean,
-            '__mandatory' => [url],
-            '__defaults' => #{id => <<"main">>}
-        }},
+        debug_actors => {list, binary},
         meta => map,
         '__post_check' => fun ?MODULE:syntax_duplicated_ids/1
     }.
 
 
 %% @private
-syntax_scripts(List) ->
-    Map = maps:from_list(List),
-    case maps:get(class, Map) of
+syntax_modules(List) ->
+    #{id:=Id, class:=Class} = Map = maps:from_list(List),
+    case Class of
         luerl ->
-            case maps:with([code, file, url], maps:from_list(List)) of
-                [] ->
-                    {error, {missing_field, url}};
+            case maps:size(maps:with([code, file, url], Map)) of
+                0 ->
+                    case maps:get(remove, Map, false) of
+                        true ->
+                            ok;
+                        false ->
+                            % We must provide one of code, file or url
+                            {error, {missing_field, nklib_util:bjoin([Id, url], <<".">>)}}
+                    end;
                 _ ->
                     ok
             end;
-        remove ->
-            ok
+        _ ->
+            {error, {invalid_class, nklib_util:bjoin([Id, class], <<".">>)}}
     end.
 
 
 %% @private
-syntax_callbacks(List) ->
-    Map = maps:from_list(List),
-    case maps:get(class, Map) of
-        luerl ->
-            case Map of
-                #{luerl_id:=_} ->
-                    ok;
-                _ ->
-                    {error, {missing_field, <<"luerl_id">>}}
-            end;
-        http ->
-            case Map of
-                #{url:=_} ->
-                    ok;
-                _ ->
-                    {error, {missing_field, <<"url">>}}
-            end;
-        remove ->
-            ok
+syntax_packages(List) ->
+    case maps:from_list(List) of
+        #{id:=_, class:=_} ->
+            ok;
+        #{class:=Class} ->
+            {ok, [{id, Class}|List]};
+        #{id:=_} ->
+            % We will extract the class later, if possible
+            ok;
+        _ ->
+            {error, {missing_field, <<"class">>}}
     end.
 
 
@@ -158,26 +148,15 @@ syntax_callbacks(List) ->
 syntax_duplicated_ids([]) ->
     ok;
 
-syntax_duplicated_ids([{Key, List}|Rest])
-        when Key==plugins; Key==scripts; Key==callbacks ->
-    case find_duplicated_ids(List) of
-        ok ->
+syntax_duplicated_ids([{Key, List}|Rest]) when Key==packages; Key==modules ->
+    case nklib_util:find_duplicated([Id || #{id:=Id} <- List]) of
+        [] ->
             syntax_duplicated_ids(Rest);
-        error ->
-            {error, {duplicated_field, nklib_util:bjoin([Key, "id"], <<".">>)}}
+        [First|_] ->
+            {error, {duplicated_id, nklib_util:bjoin([Key, "id", First], <<".">>)}}
     end;
 
 syntax_duplicated_ids([_|Rest]) ->
     syntax_duplicated_ids(Rest).
-
-%% @private
-find_duplicated_ids(List) ->
-    Ids = [Id || #{id:=Id} <- List],
-    case lists:usort(Ids) of
-        Ids ->
-            ok;
-        _ ->
-            error
-    end.
 
 

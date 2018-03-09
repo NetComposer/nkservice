@@ -21,15 +21,13 @@
 -module(nkservice_config).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([config_service/2, make_cache/1]).
--export([start_plugin/3, stop_plugin/3, update_plugin/3]).
-
--include_lib("nkpacket/include/nkpacket.hrl").
-
+-export([config_service/3, get_plugin_mod/1, get_callback_mod/1]).
+-export([negated_service/1]).
 
 -define(LLOG(Type, Txt, Args, Service),
     lager:Type("NkSERVICE '~s' "++Txt, [maps:get(id, Service) | Args])).
 
+-export([remove_modules_packages/2]).
 
 %% ===================================================================
 %% Public
@@ -37,252 +35,292 @@
 
 
 %% @doc Create or update the configuration for a service
-%% - class, name, log_level, debug are copied from Spec, if present, otherwise
+%% - class, name, plugins, meta are copied from Spec, if present, otherwise
 %%   took from Service
 %% - cache, scripts, callbacks are merged, unless remove:=true in their configs
 %% - plugins are merged, the same way
 
--spec config_service(nkservice:spec(), nkservice:service()) ->
-    {ok, nkservice:service()}.
+-spec config_service(nkservice:id(), nkservice:spec(), nkservice:service()) ->
+    {ok, nkservice:service()} | {error, term()}.
 
-config_service(Spec, #{id:=Id}=Service) ->
+config_service(Id, Spec, Service) ->
     try
-        Spec2 = case nkservice_syntax:parse(Spec#{id=>Id}) of
-            {ok, Parsed} ->
-                Parsed;
-            {error, SyntaxError} ->
-                throw(SyntaxError)
-        end,
-        Spec3 = update_listen(Spec2),
-        % nkservice_srv:put(Id, nkservice_debug, Debug),
-        %% Keys class, name, log_level, if present, are updated on service
-        Global = maps:with([class, name, log_level], Spec3),
-        Service2 = maps:merge(Service, Global),
-        Defaults = #{
-            class => <<>>,
-            name => to_bin(Id),
-            log_level => notice
-        },
-        Service3 = maps:merge(Defaults, Service2),
-        Service4 = update_cache(Spec3, Service3),
-        Service5 = update_debug(Spec3, Service4),
-        Service6 = update_plugins(Spec3, Service5),
-        Service7 = update_scripts(Spec3, Service6),
-        Service8 = update_callbacks(Spec3, Service7),
-        {ok, Service8}
+        Spec2 = nkservice_syntax:parse(Spec#{id=>Id}),
+        Service2 = config_core(Spec2, Service#{id=>Id}),
+        {ok, Service2}
     catch
         throw:Throw -> {error, Throw}
     end.
 
 
-%% @private
-update_listen(#{listen:=Listen}=Spec) ->
-    Rest = lists:map(
-        fun(#{id:=Id}=L1) ->
-            L2 = maps:with([remove], L1),
-            L2#{
-                id => <<"nkservice_listen_", Id/binary>>,
-                class => nkservice_rest,
-                config => maps:with([url, opts], L1)
-             }
+%% @doc 
+negated_service(Service) ->
+    RemFun = fun(V) -> V#{remove=>true} end,
+    maps:map(
+        fun
+            (Key, Data) when Key==packages; Key==modules; Key==callbacks;
+                             Key==cache; Key==secret; Key==debug ->
+                maps:map(fun(_Key2, _Data2) -> RemFun(#{}) end, Data);
+            (_Key, Data) ->
+                Data
         end,
-        Listen),
-    Plugins1 = maps:get(plugins, Spec, []),
-    Plugins2 = Rest ++ Plugins1,
-    Spec#{plugins=>Plugins2};
-
-update_listen(Spec) ->
-    Spec.
-
+        Service).
 
 
 %% @private
-update_plugins(#{plugins:=Plugins}, Service) ->
-    OldPlugins = maps:get(plugins, Service, #{}),
-    NewPlugins1 = maps:from_list([{Id, Spec} || #{id:=Id}=Spec <- Plugins]),
-    NewPlugins2 = maps:merge(OldPlugins, NewPlugins1),
-    ToRemove = [Id || #{id:=Id, remove:=true} <- Plugins],
-    PluginList1 = maps:to_list(maps:without(ToRemove, NewPlugins2)),
-    Modules1 = [Class || {_, #{class:=Class}} <- PluginList1],
-    Modules2 = expand_plugins(Modules1),
-    Service2 = Service#{
-        plugin_modules => Modules2,           % down to top
-        plugins => NewPlugins2                % keep removed configs to stop them
+config_core(#{id:=Id}=Spec, Service) ->
+    UUID = case Spec of
+        #{uuid:=UserUUID} ->
+            case Service of
+                #{uuid:=ServiceUUID} when ServiceUUID /= UserUUID ->
+                    throw(uuid_cannot_be_updated);
+                _ ->
+                    UserUUID
+            end;
+        _ ->
+            update_uuid(Id, Spec)
+    end,
+    General = maps:with([class, name, plugins, debug_actors, meta], Spec),
+    Service2 = maps:merge(Service, General#{uuid=>UUID}),
+    Defaults = #{
+        class => <<>>,
+        name => to_bin(Id),
+        plugins => [],
+        meta => #{}
     },
-    % We call configure only for plugins listen in new Spec and not removed
-    configure_plugins(maps:keys(NewPlugins1)--ToRemove, Service2);
-
-update_plugins(_Spec, Service) ->
-    Service.
-
+    Service3 = maps:merge(Defaults, Service2),
+    config_secrets(Spec, Service3).
 
 
 %% @private
 %% New entries are add or updated
-%% If value is 'null' are deleted
-update_cache(#{cache:=Cache}, Service) ->
-    OldCache = maps:get(cache, Service, #{}),
-    NewCache = maps:from_list([{Key, Val} || #{key:=Key, value:=Val} <- Cache]),
-    Cache1 = maps:merge(OldCache, NewCache),
-    ToRemove = [Key || #{key:=Key, remove:=true} <- Cache],
-    Cache2 = maps:without(ToRemove, Cache1),
-    Service#{cache=>Cache2};
+%% If remove:=true, it is deleted
+config_secrets(Spec, Service) ->
+    SpecSecrets1 = maps:get(secret, Spec, []),
+    SpecSecrets2 = maps:from_list([
+        {Key, Val} || #{key:=Key, value:=Val} <- SpecSecrets1
+    ]),
+    OldSecrets = maps:get(secret, Service, #{}),
+    Secrets1 = maps:merge(OldSecrets, SpecSecrets2),
+    ToRemove = [Key || {Key, #{remove:=true}} <- maps:to_list(Secrets1)],
+    Secrets2 = maps:without(ToRemove, Secrets1),
+    config_modules(Spec, Service#{secret=>Secrets2}).
 
-update_cache(_Spec, Service) ->
-    Service.
-
-
-%% @private
-update_debug(#{debug:=Debug}, Service) ->
-    Debug2 = [{Key, Spec} || #{key:=Key, spec:=Spec} <- Debug],
-    Service#{debug=>Debug2};
-
-update_debug(_Spec, Service) ->
-    maps:merge(#{debug=>[]}, Service).
 
 
 %% @private
-update_scripts(#{scripts:=Scripts}, Service) ->
-    OldScripts = maps:get(scripts, Service, #{}),
-    SpecScripts = maps:from_list([maps:take(id, Spec) || Spec <- Scripts]),
-    NewScripts1 = maps:merge(OldScripts, SpecScripts),
-    ToRemove = [Id || #{id:=Id, remove:=true} <- Scripts],
-    NewScripts2 = maps:without(ToRemove, NewScripts1),
-    Service2 = Service#{scripts=>NewScripts2},
-    load_scripts(NewScripts2, Service2);
-
-update_scripts(_Spec, Service) ->
-    Service.
-
-
-%% @private
-update_callbacks(#{callbacks:=Callbacks}, Service) ->
-    OldCallbacks = maps:get(callbacks, Service, #{}),
-    SpecCallbacks = maps:from_list([maps:take(id, Spec) || Spec <- Callbacks]),
-    NewCallbacks1 = maps:merge(OldCallbacks, SpecCallbacks),
-    ToRemove = [Id || #{id:=Id, remove:=true} <- Callbacks],
-    NewCallbacks2 = maps:without(ToRemove, NewCallbacks1),
-    Service#{callbacks=>NewCallbacks2};
-
-update_callbacks(_Spec, Service) ->
-    Service.
+%% All modules described in spec are analyzed and compiled
+%% Old ones are left, can be deleted defining them again with remove=true
+config_modules(Spec, Service) ->
+    SpecModules1 = maps:get(modules, Spec, []),
+    SpecModules2 = maps:from_list([{Id, S} || #{id:=Id}=S <- SpecModules1]),
+    SpecModuleIds = maps:keys(SpecModules2),
+    % We mark all old packages belonging to defined modules as removed
+    % temporarily, in case they are not used any more
+    Service2 = remove_modules_packages(SpecModuleIds, Service),
+    OldModules = maps:get(modules, Service2, #{}),
+    Modules1 = maps:merge(OldModules, SpecModules2),
+    ToRemove = [Id || {Id, #{remove:=true}} <- maps:to_list(Modules1)],
+    Modules2 = maps:without(ToRemove, Modules1),
+    NewModules = SpecModuleIds -- ToRemove,
+    % Adds compile info in modules (module_packages will be temporary)
+    % Stores debug and cache in service
+    Modules3 = nkservice_config_luerl:compile_modules(NewModules, Modules2, Service2),
+    config_modules_packages(Spec, Service2#{modules=>Modules3}).
 
 
 %% @private
-configure_plugins([], Service) ->
+%% Adds module packages to spec packages
+config_modules_packages(Spec, Service) ->
+    SpecPackages1 = maps:get(packages, Spec, []),
+    Modules1 = maps:get(modules, Service, #{}),
+    SpecPackages2 = maps:fold(
+        fun(_ModuleId, ModuleSpec, Acc) ->
+            case ModuleSpec of
+                #{'_module_packages':=ModPackagesSpec} ->
+                    Acc ++ maps:values(ModPackagesSpec);
+                _ ->
+                    Acc
+            end
+        end,
+        SpecPackages1,
+        Modules1),
+    Spec2 = Spec#{packages=>SpecPackages2},
+    % Find duplicated ids
+    Spec3 = nkservice_syntax:parse(Spec2),
+    % Remove temporary info
+    Modules2 = maps:map(
+        fun(_, ModuleSpec) ->
+            case ModuleSpec of
+                #{'_module_packages':=ModPackagesSpec} ->
+                    M2 = maps:remove('_module_packages', ModuleSpec),
+                    M2#{packages => maps:keys(ModPackagesSpec)};
+                _ ->
+                    ModuleSpec
+            end
+        end,
+        Modules1),
+    config_packages(Spec3, Service#{modules=>Modules2}).
+
+
+%% @private
+%% We merge the new packages with the old ones
+config_packages(Spec, Service) ->
+    SpecPackages1 = maps:get(packages, Spec, []),
+    SpecPackages2 = lists:map(
+        fun(#{class:=Class}=PSpec) ->
+            case nkservice_util:get_package_plugin(Class) of
+                undefined ->
+                    throw({unknown_package_class, Class});
+                Plugin ->
+                    PSpec#{plugin=>Plugin}
+            end
+        end,
+        SpecPackages1),
+    SpecPackages3 = maps:from_list([{Id, PSpec} || #{id:=Id}=PSpec <- SpecPackages2]),
+    OldPackages = maps:get(packages, Service, #{}),
+    Packages1 = maps:merge(OldPackages, SpecPackages3),
+    ToRemove = [Id || {Id, #{remove:=true}} <- maps:to_list(Packages1)],
+    Packages2 = maps:without(ToRemove, Packages1),
+    Plugins1 = maps:get(plugins, Service, []),
+    Plugins2 = [Plugin || #{plugin:=Plugin} <- maps:values(Packages2)],
+    Plugins3 = expand_plugins(Plugins1++Plugins2),
+    Service2 = Service#{
+        plugin_ids => Plugins3,             % down to top
+        packages => Packages2
+    },
+    % We call configure only for plugins listen in new Spec and not removed
+    NewPackages = maps:keys(Packages2)--ToRemove,
+    Service3 = package_configure(NewPackages, Service2),
+    #{modules:=Modules1} = Service2,
+    Modules2 = add_apis(NewPackages, Modules1, Service3),
+    config_hash(Service3#{modules:=Modules2}).
+
+
+%% @private
+config_hash(Service) ->
+    Service#{hash=>erlang:phash2(Service)}.
+
+
+%% Mark all packages belonging to this modules as removed
+remove_modules_packages(ModuleIds, Service) ->
+    Packages2 = maps:filter(
+        fun(_PackageId, Package) ->
+            case Package of
+                #{module_id:=ModuleId} ->
+                    not lists:member(ModuleId, ModuleIds);
+                _ ->
+                    true
+            end
+        end,
+        maps:get(packages, Service, #{})),
+    Service#{packages=>Packages2}.
+
+
+%% @private
+package_configure([], Service) ->
     Service;
 
-configure_plugins([PluginId|Rest], #{plugins:=Config}=Service) ->
-    #{class:=Class} = PluginSpec = maps:get(PluginId, Config),
-    Mod = get_plugin(Class),
-    PluginConfig = maps:get(config, PluginSpec, #{}),
-    ?LLOG(notice, "configuring plugin ~s (~s)", [PluginId, Class], Service),
-    Service2 = case
-        nklib_util:apply(Mod, plugin_config, [PluginId, PluginConfig, Service])
+package_configure([PackageId|Rest], #{packages:=Packages, plugin_ids:=PluginIds}=Service) ->
+    Package = #{class:=Class} = maps:get(PackageId, Packages),
+    ?LLOG(debug, "configuring package '~s' (~s)", [PackageId, Class], Service),
+    % High to low
+    Service3 = package_configure(lists:reverse(PluginIds), Package, Service),
+    package_configure(Rest, Service3).
+
+
+%% @private
+package_configure([], _Package, Service) ->
+    Service;
+
+package_configure([PluginId|Rest], Package, #{packages:=Packages}=Service) ->
+    Mod = get_plugin_mod(PluginId),
+    #{class:=Class, id:=PackageId} = Package,
+    {Package3, Service3} = case
+        nklib_util:apply(Mod, plugin_config, [Class, Package, Service])
     of
         ok ->
-            Service;
+            {Package, Service};
         not_exported ->
-            Service;
+            {Package, Service};
         continue ->
-            Service;
-        {ok, NewPluginConfig} ->
-            PluginSpec2 = PluginSpec#{config=>NewPluginConfig},
-            Config2 = Config#{PluginId=>PluginSpec2},
-            Service#{plugins:=Config2};
-        {ok, NewPluginConfig, NewService} ->
-            PluginSpec2 = PluginSpec#{config=>NewPluginConfig},
-            Config2 = Config#{PluginId=>PluginSpec2},
-            NewService#{plugins:=Config2};
-        {error, Error2} ->
-            throw({{PluginId, Error2}})
+            {Package, Service};
+        {ok, Package2} ->
+            {Package2, Service};
+        {ok, Package2, Service2} ->
+            {Package2, Service2};
+        {error, Error} ->
+            throw({{PackageId, Error}})
     end,
-    configure_plugins(Rest, Service2).
+    Hash = erlang:phash2(maps:with([config, class, debug], Package3)),
+    Package4 = Package3#{hash=>Hash},
+    Service4 = Service3#{packages:=Packages#{PackageId=>Package4}},
+    package_configure(Rest, Package4, Service4).
+
+
+%% @doc
+%% Add apis to module scripts
+add_apis([], Modules, _Service) ->
+    Modules;
+
+add_apis([PackageId|Rest], Modules, Service) ->
+    #{packages:=Packages, plugin_ids:=PluginIds} = Service,
+    Package = maps:get(PackageId, Packages),
+    % Low to high plugins are applied to add apis and callbacks
+    Modules2 = add_apis(PluginIds, Package, Modules, Service),
+    add_apis(Rest, Modules2, Service).
 
 
 %% @private
-start_plugin(PluginId, Pid, #{plugins:=Config}=Service) ->
-    #{class:=Class} = PluginSpec = maps:get(PluginId, Config, #{}),
-    PluginConfig = maps:get(config, PluginSpec, #{}),
-    ?LLOG(info, "starting plugin ~s (~s)", [PluginId, Class], Service),
-    Mod = get_plugin(Class),
-    case nklib_util:apply(Mod, plugin_start, [PluginId, PluginConfig, Pid, Service]) of
-        ok ->
-            ok;
-        not_exported ->
-            ok;
-        continue ->
-            ok;
-        {error, Error} ->
-            {error, Error}
-    end.
+add_apis([], _Package, Modules, _Service) ->
+    Modules;
+
+add_apis([PluginId|Rest], #{module_class:=luerl}=Package, Modules, Service) ->
+    #{module_id:=ModuleId, id:=PackageId, class:=Class} = Package,
+    Mod = get_plugin_mod(PluginId),
+    ModSpec1 = maps:get(ModuleId, Modules),
+    ModSpec2 = case nklib_util:apply(Mod, plugin_api, [Class]) of
+        #{luerl := APIs} ->
+            %% Add APIs to luerl object
+            nkservice_config_luerl:add_apis(ModuleId, ModSpec1, PackageId, APIs, Service);
+        _ ->
+            ModSpec1
+    end,
+    Modules2 = Modules#{ModuleId:=ModSpec2},
+    add_apis(Rest, Package, Modules2, Service);
+
+add_apis([_PluginId|Rest], Package, Modules, Service) ->
+    add_apis(Rest, Package, Modules, Service).
 
 
 %% @private
-stop_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
-    #{class:=Class} = PluginSpec = maps:get(Plugin, Config, #{}),
-    PluginConfig = maps:get(config, PluginSpec, #{}),
-    ?LLOG(info, "stopping plugin ~s (~s)", [Plugin, Class], Service),
-    Mod = get_plugin(Class),
-    case nklib_util:apply(Mod, plugin_stop, [Plugin, PluginConfig, Pid, Service]) of
-        ok ->
-            ok;
-        not_exported ->
-            ok;
-        continue ->
-            ok;
-        {error, Error} ->
-            ?LLOG(warning, "error stopping plugin ~p", [Plugin], Service),
-            {error, Error}
-    end.
-
-
-%% @private
-update_plugin(Plugin, Pid, #{plugins:=Config}=Service) ->
-    #{class:=Class} = PluginSpec = maps:get(Plugin, Config, #{}),
-    PluginConfig = maps:get(config, PluginSpec, #{}),
-    ?LLOG(info, "updating plugin ~s (~s)", [Plugin, Class], Service),
-    Mod = get_plugin(Class),
-    case nklib_util:apply(Mod, plugin_update, [Plugin, PluginConfig, Pid, Service]) of
-        ok ->
-            ok;
-        not_exported ->
-            ok;
-        continue ->
-            ok;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @private
-get_plugin(Class) ->
-    Mod = list_to_atom(atom_to_list(Class)++"_plugin"),
+get_plugin_mod(Plugin) ->
+    Mod = list_to_atom(atom_to_list(Plugin)++"_plugin"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
             Mod;
         {error, nofile} ->
-            case code:ensure_loaded(Class) of
+            case code:ensure_loaded(Plugin) of
                 {module, _} ->
-                    Class;
+                    Plugin;
                 {error, nofile} ->
-                    throw({unknown_plugin, Class})
+                    throw({unknown_plugin, Plugin})
             end
     end.
 
 
 %% @private
-get_callback(Class) ->
-    Mod = list_to_atom(atom_to_list(Class)++"_callbacks"),
+get_callback_mod(Plugin) ->
+    Mod = list_to_atom(atom_to_list(Plugin)++"_callbacks"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
             Mod;
         {error, nofile} ->
-            case code:ensure_loaded(Class) of
+            case code:ensure_loaded(Plugin) of
                 {module, _} ->
-                    Class;
+                    Plugin;
                 {error, nofile} ->
-                    throw({unknown_plugin, Class})
+                    undefined
             end
     end.
 
@@ -320,7 +358,7 @@ add_group_deps([Plugin|Rest], Acc, Groups) when is_atom(Plugin) ->
     add_group_deps([{Plugin, []}|Rest], Acc, Groups);
 
 add_group_deps([{Plugin, Deps}|Rest], Acc, Groups) ->
-    Mod = get_callback(Plugin),
+    Mod = get_plugin_mod(Plugin),
     Group = case nklib_util:apply(Mod, plugin_group, []) of
         not_exported -> undefined;
         continue -> undefined;
@@ -364,7 +402,7 @@ add_all_deps([Other|_], _Acc) ->
 
 %% @private
 get_plugin_deps(Plugin, BaseDeps) ->
-    Mod = get_plugin(Plugin),
+    Mod = get_plugin_mod(Plugin),
     Deps = case nklib_util:apply(Mod, plugin_deps, []) of
         List when is_list(List) ->
             List;
@@ -377,207 +415,40 @@ get_plugin_deps(Plugin, BaseDeps) ->
 
 
 %% @private
-load_scripts([], Service) ->
-    Service;
-
-load_scripts([#{id:=Id}=Spec|Rest], Service) ->
-    Service2 = case Spec of
-        #{code:=Bin} ->
-            set_luerl_start(Bin, Service);
-        #{file:=File} ->
-            case file:read_file(File) of
-                {ok, Bin} ->
-                    set_luerl_start(Bin, Service);
-                {error, Error} ->
-                    ?LLOG(warning, "could not read file ~s: ~p", [File, Error], Service),
-                    throw({script_read_error, Id})
-            end;
-        #{url:=_Url} ->
-            throw({script_read_error, Id})
-    end,
-    load_scripts(Rest, Service2).
-
-
-%%
-%%%% @private
-%%set_luerl(#{config:=Config}=Service) ->
-%%    case Config of
-%%        #{lua_script:=Script} ->
-%%            case file:read_file(Script) of
-%%                {ok, Bin} ->
-%%                    set_luerl_start(Bin, Service);
-%%                {error, _} ->
-%%                    Script2 = case Script of
-%%                        <<"/", R/binary>> -> R;
-%%                        _ -> Script
-%%                    end,
-%%                    Base = code:priv_dir(nkservice) ++ "/scripts",
-%%                    Script3 = filename:join(Base, Script2),
-%%                    case file:read_file(Script3) of
-%%                        {ok, Bin} ->
-%%                            set_luerl_start(Bin, Service);
-%%                        {error, Error} ->
-%%                            lager:warning("Could not read file ~s", [Script3]),
-%%                            throw({script_read_error, Error, Script3})
-%%                    end
-%%            end;
-%%        _ ->
-%%            Service
-%%    end.
-
-
-%% @private
-set_luerl_start(Script, #{lua_modules:=Modules}=Service) ->
-    State1 = luerl:init(),
-    State2 = lists:foldl(
-        fun({NS, Mod}, Acc) ->
-            luerl:load_module([package, loaded, '_G', NS], Mod, Acc)
-        end, 
-        State1, 
-        Modules),
-    try luerl:do(Script, State2) of
-        {_, State3} ->
-            {[Funs1], _} = luerl:do(lua_get_funs(), State3),
-            [_|Funs2] = binary:split(Funs1, <<".">>, [global]),
-            Funs3 = Funs2 -- lua_sys_funs(),
-            Funs4 = [binary_to_atom(F, latin1) || F <- Funs3],
-            BinState = term_to_binary(State3),
-            Service#{lua_funs=>Funs4, lua_state=>BinState}
-
-            % io:format("R2A: ~p\n", [State2#luerl.g]),
-            % io:format("R2: ~p\n", [luerl_emul:get_table_keys({tref, 4}, State2)]),
-            % io:format("R2: ~p\n", [luerl:get_table1([<<"package">>], State2)]),
-            % io:format("R2: ~p\n", [lager:pr(State2, ?MODULE)]),
-            % lager:warning("R3: ~p", [luerl:decode_list(R, State2)]),
-    catch 
-        error:{lua_error, Reason, _} ->
-            throw({lua_error, Reason})
+update_uuid(Id, Spec) ->
+    LogPath = nkservice_app:get(log_path),
+    Path = filename:join(LogPath, atom_to_list(Id)++".uuid"),
+    case read_uuid(Path) of
+        {ok, UUID} ->
+            UUID;
+        {error, Path} ->
+            save_uuid(Path, nklib_util:uuid_4122(), Spec)
     end.
 
 
-lua_get_funs() -> 
-    <<"
-        funs = ''
-        for k,v in pairs(package.loaded._G) do 
-            if type(v) == 'function' then funs = funs .. '.' .. k end
-        end
-        return funs
-    ">>.
-
-lua_sys_funs() ->
-    [
-        <<"assert">>, <<"collectgarbage">>, <<"dofile">>, <<"eprint">>, 
-        <<"error">>, <<"getmetatable">>, <<"ipairs">>, <<"load">>, <<"loadfile">>, 
-        <<"loadstring">>, <<"next">>, <<"pairs">>, <<"pcall">>, <<"print">>, 
-        <<"rawequal">>, <<"rawget">>, <<"rawlen">>, <<"rawset">>, <<"require">>, 
-        <<"select">>, <<"setmetatable">>, <<"tonumber">>, <<"tostring">>, <<"type">>, 
-        <<"unpack">>
-    ].
-
-
-%% @doc Generates and compiles in-memory cache module
-make_cache(#{id:=Id}=Service) ->
-    Service2 = Service#{timestamp => nklib_util:m_timestamp()},
-    BaseKeys = [
-        id, class, name, plugin_modules, plugins, uuid, log_level, timestamp,
-        debug, cache, listen, meta
-    ],
-    Spec1 = maps:with(BaseKeys, Service2),
-    Spec2 = lists:foldl(
-        fun({K, V}, Acc) ->
-            K2 = <<"service_cache_", (to_bin(K))/binary>>,
-            Acc#{binary_to_atom(K2, utf8) => V}
-        end,
-        Spec1,
-        maps:to_list(maps:get(cache, Service, #{}))),
-    Spec3 = lists:foldl(
-        fun({K, V}, Acc) ->
-            K2 = <<"service_callback_", (to_bin(K))/binary>>,
-            Acc#{binary_to_atom(K2, utf8) => V}
-        end,
-        Spec2,
-        maps:to_list(maps:get(callbacks, Service, #{}))),
-    Spec4 = lists:foldl(
-        fun({K, V}, Acc) ->
-            K2 = <<"service_script_", (to_bin(K))/binary>>,
-            Acc#{binary_to_atom(K2, utf8) => V}
-        end,
-        Spec3,
-        maps:to_list(maps:get(scripts, Service, #{}))),
-    BaseSyntax = make_base_syntax(Spec4#{spec=>Spec1}),
-    % Gather all fun specs from all callbacks modules on all plugins
-    PluginList = maps:get(plugin_modules, Service2),
-    PluginSyntax = plugin_callbacks_syntax(PluginList),
-    FullSyntax = PluginSyntax ++ BaseSyntax,
-    {ok, Tree} = nklib_code:compile(Id, FullSyntax),
-    LogPath = nkservice_app:get(log_path),
-    ok = nklib_code:write(Id, Tree, LogPath).
-
-
-%% @private Generates a ready-to-compile config getter functions
-%% with a function for each member of the map, plus defaults and configs
-make_base_syntax(Service) ->
-    maps:fold(
-        fun(Key, Value, Acc) ->
-            [nklib_code:getter(Key, Value)|Acc]
-        end,
-        [],
-        Service).
-
-
-
-%% @private Generates the ready-to-compile syntax of the generated callback module
-%% taking all plugins' callback functions
-plugin_callbacks_syntax(Plugins) ->
-    plugin_callbacks_syntax(Plugins, #{}).
-
-
 %% @private
-plugin_callbacks_syntax([Plugin|Rest], Map) ->
-    Mod = get_callback(Plugin),
-    case nklib_code:get_funs(Mod) of
-        error ->
-            plugin_callbacks_syntax(Rest, Map);
-        List ->
-            Map1 = plugin_callbacks_syntax(List, Mod, Map),
-            plugin_callbacks_syntax(Rest, Map1)
-    end;
-
-plugin_callbacks_syntax([], Map) ->
-    maps:fold(
-        fun({Fun, Arity}, {Value, Pos}, Acc) ->
-            [nklib_code:fun_expr(Fun, Arity, Pos, [Value])|Acc]
-        end,
-        [],
-        Map).
-
-
-%% @private
-plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
-    FunStr = atom_to_list(Fun),
-    case FunStr of
-        "plugin_" ++ _ ->
-            plugin_callbacks_syntax(Rest, Mod, Map);
+read_uuid(Path) ->
+    case file:read_file(Path) of
+        {ok, Binary} ->
+            case binary:split(Binary, <<$,>>) of
+                [UUID|_] when byte_size(UUID)==36 -> {ok, UUID};
+                _ -> {error, Path}
+            end;
         _ ->
-            case maps:find({Fun, Arity}, Map) of
-                error ->
-                    Pos = 1,
-                    Value = nklib_code:call_expr(Mod, Fun, Arity, Pos);
-                {ok, {Syntax, Pos0}} ->
-                    Case = case Arity==2 andalso lists:reverse(FunStr) of
-                        "tini_"++_ -> case_expr_ok;         % Fun is ".._init"
-                        "etanimret_"++_ -> case_expr_ok;    % Fun is ".._terminate"
-                        _ -> case_expr
-                    end,
-                    Pos = Pos0+1,
-                    Value = nklib_code:Case(Mod, Fun, Arity, Pos, [Syntax])
-            end,
-            Map1 = maps:put({Fun, Arity}, {Value, Pos}, Map),
-            plugin_callbacks_syntax(Rest, Mod, Map1)
-    end;
+            {error, Path}
+    end.
 
-plugin_callbacks_syntax([], _, Map) ->
-    Map.
+
+%% @private
+save_uuid(Path, UUID, Spec) ->
+    Content = io_lib:format("~p", [Spec]),
+    case file:write_file(Path, Content) of
+        ok ->
+            UUID;
+        Error ->
+            lager:warning("NkSERVICE: Could not write file ~s: ~p", [Path, Error]),
+            UUID
+    end.
 
 
 %% @private

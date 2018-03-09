@@ -42,11 +42,22 @@ start_service(#{id:=Id}=Service) ->
         type => supervisor
     },
     case supervisor:start_child(nkservice_all_srvs_sup, Child) of
-        {ok, Pid} ->
-            {ok, Pid};
-        {error, {Error, _}} ->
+        {ok, _Pid} ->
+            ok;
+        {error, {already_started, _Pid}} ->
+            {error, already_started};
+        {error, already_present} ->
+            case supervisor:delete_child(nkservice_all_srvs_sup, Id) of
+                ok ->
+                    start_service(Service);
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, {Error, _}=E} ->
+            lager:warning("SRV SUP start error: ~p", [E]),
             {error, Error};
         {error, Error} ->
+            lager:warning("SRV SUP start error: ~p", [Error]),
             {error, Error}
     end.
 
@@ -59,7 +70,8 @@ start_service(#{id:=Id}=Service) ->
 stop_service(Id) ->
     case supervisor:terminate_child(nkservice_all_srvs_sup, Id) of
         ok -> 
-            ok = supervisor:delete_child(nkservice_all_srvs_sup, Id);
+            supervisor:delete_child(nkservice_all_srvs_sup, Id),
+            ok;
         {error, not_found} ->
             {error, not_running};
         {error, Error} ->
@@ -82,18 +94,28 @@ get_pid(Id) ->
 start_link(#{id:=Id}=Spec) ->
     Childs = [
         #{
-            id => plugins,
-            start => {nkservice_srv_plugins_sup, start_link, [Id]},
+            id => packages,
+            start => {nkservice_packages_sup, start_link, [Id]},
+            type => supervisor
+        },
+        #{
+            id => modules,
+            start => {nkservice_modules_sup, start_link, [Id]},
             type => supervisor
         },
         #{
             id => server,
             start => {nkservice_srv, start_link, [Spec]},
-            shutdown => 30000       % Time for plugins to stop
+            shutdown => 30000       % Time for packages to stop
+        },
+        #{
+            id => master,
+            start => {nkservice_master, start_link, [Id]},
+            shutdown => 5000
         }
     ],
-    % If server or any supervisor fails, everything is restarted
-    ChildSpec = {Id, {{one_for_all, 10, 60}, Childs}},
+    % Was one_for_all: If server or any supervisor fails, everything is restarted
+    ChildSpec = {Id, {{one_for_one, 10, 60}, Childs}},
     supervisor:start_link(?MODULE, ChildSpec).
 
 

@@ -24,7 +24,8 @@
 -behaviour(application).
 
 -export([start/0, start/1, start/2, stop/1]).
--export([get/1, put/2, del/1]).
+-export([set_nodes/1]).
+-export([get/1, get/2, put/2, del/1]).
 
 -include("nkservice.hrl").
 
@@ -61,6 +62,8 @@ start(Type) ->
 start(_Type, _Args) ->
     Syntax = #{
         log_path => binary,
+        nodes => {list, binary},
+        ticktime => integer,
         '__defaults' => #{
             log_path => <<"log">>
         }
@@ -70,12 +73,28 @@ start(_Type, _Args) ->
             file:make_dir(get(log_path)),
             {ok, Pid} = nkservice_sup:start_link(),
             {ok, Vsn} = application:get_key(nkservice, vsn),
+            register_packages(),
             lager:info("NkSERVICE v~s has started.", [Vsn]),
+            ?MODULE:put(nkservice_start_time, nklib_util:l_timestamp()),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),
             error(Error)
     end.
+
+
+%% @doc 
+register_packages() ->
+    ok = nkservice_util:register_package(?PKG_REST, nkservice_rest),
+    ok = nkservice_util:register_package(?PKG_WEBSERVER, nkservice_webserver),
+    ok = nkservice_util:register_package(?PKG_JOSE, nkservice_jose).
+
+
+
+%% @doc
+set_nodes(Nodes) when is_list(Nodes) ->
+    ?MODULE:put(nodes, [nklib_util:to_binary(Node) || Node <- Nodes]).
+
 
 
 %% @private OTP standard stop callback
