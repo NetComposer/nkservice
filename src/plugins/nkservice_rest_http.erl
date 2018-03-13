@@ -22,7 +22,7 @@
 -module(nkservice_rest_http).
 -export([get_srv_id/1, get_body/2, get_qs/1, get_ct/1, get_basic_auth/1, get_headers/1, get_peer/1]).
 -export([get_accept/1, get_cowboy_req/1]).
--export([reply_json/2]).
+-export([reply_json/2, reply_json/3]).
 -export([init/2, terminate/3]).
 -export_type([method/0, reply/0, code/0, header/0, body/0, state/0, path/0, http_qs/0]).
 
@@ -181,16 +181,28 @@ get_cowboy_req(#req{req=Req}) ->
 
 %% @doc
 reply_json({ok, Data}, _Req) ->
-    Hds = [{<<"Content-Tytpe">>, <<"application/json">>}],
+    Hds = [{<<"Content-Type">>, <<"application/json">>}],
     Body = nklib_json:encode(Data),
     {http, 200, Hds, Body};
 
 reply_json({error, Error}, #req{srv_id=SrvId}) ->
-    Hds = [{<<"Content-Tytpe">>, <<"application/json">>}],
+    Hds = [{<<"Content-Type">>, <<"application/json">>}],
     {Code, Txt} = nkservice_util:error(SrvId, Error),
     Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
     {http, 400, Hds, Body}.
 
+
+%% @doc
+reply_json({ok, Data}, Hds, _Req) ->
+    Hds2 = [{<<"Content-Type">>, <<"application/json">>} | Hds],
+    Body = nklib_json:encode(Data),
+    {http, 200, Hds2, Body};
+
+reply_json({error, Error}, Hds, #req{srv_id=SrvId}) ->
+    Hds2 = [{<<"Content-Type">>, <<"application/json">>} | Hds],
+    {Code, Txt} = nkservice_util:error(SrvId, Error),
+    Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
+    {http, 400, Hds2, Body}.
 
 
 %% ===================================================================
