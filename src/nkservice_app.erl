@@ -85,6 +85,7 @@ start(_Type, _Args) ->
 
 %% @doc 
 register_packages() ->
+    ok = nkservice_util:register_package(?PKG_HTTPPOOL, nkservice_httppool),
     ok = nkservice_util:register_package(?PKG_REST, nkservice_rest),
     ok = nkservice_util:register_package(?PKG_WEBSERVER, nkservice_webserver),
     ok = nkservice_util:register_package(?PKG_JOSE, nkservice_jose).

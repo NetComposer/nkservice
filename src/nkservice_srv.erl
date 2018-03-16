@@ -48,7 +48,7 @@
 -export([call_module/4]).
 -export([call/2, call/3, cast/2]).
 -export([start_link/1, stop_all/1, do_event/2]).
--export([print_packages/1, print_childs/2]).
+-export([get_packages/1, get_package_childs/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
 -export_type([event/0]).
@@ -255,11 +255,12 @@ get_all(Class) ->
 
 
 %% @private
-print_packages(SrvId) ->
+get_packages(SrvId) ->
     nkservice_packages_sup:get_packages(SrvId).
 
-print_childs(SrvId, PackageId) ->
-    nkservice_packages_sup:get_childs(SrvId, nklib_util:to_binary(PackageId)).
+%% @private
+get_package_childs(SrvId, PackageId) ->
+    nkservice_packages_sup:get_package_childs(SrvId, to_bin(PackageId)).
 
 
 

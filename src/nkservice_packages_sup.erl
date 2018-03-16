@@ -26,7 +26,7 @@
 -export([start_package_sup/2, stop_package_sup/2]).
 -export([start_child/3, start_child/2, update_child/3, update_child_multi/3,
          remove_child/3, remove_child/2]).
--export([get_pid/1, get_pid/2, get_packages/1, get_childs/2]).
+-export([get_pid/1, get_pid/2, get_packages/1, get_package_childs/2]).
 -export([init/1, start_link/1, start_link_package_sup/2]).
 
 -include("nkservice.hrl").
@@ -187,12 +187,12 @@ remove_child(Pid, ChildId) when is_pid(Pid) ->
 
 %% @doc
 get_packages(Id) ->
-    supervisor:which_children(get_pid(Id)).
+    [{I, Pid} || {I, Pid, _, _} <- supervisor:which_children(get_pid(Id))].
 
 
 %% @doc
-get_childs(Id, PackageId) ->
-    supervisor:which_children(get_pid(Id, PackageId)).
+get_package_childs(Id, PackageId) ->
+    [{I, Pid} || {I, Pid, _, _} <- supervisor:which_children(get_pid(Id, PackageId))].
 
 
 %% @private Get pid() of master supervisor for all packages

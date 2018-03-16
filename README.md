@@ -2,7 +2,7 @@
 
 # Introduction
 
-NkSERVICE is an Erlang distributed application server, along with a scripting engine (based on [Luerl](https://github.com/rvirding/luerl) and a growing number of _Packages_ ready to use like RestServers, Kafka producers and consumers, Token management, et.
+NkSERVICE is an Erlang distributed application server, along with a scripting engine (based on [Luerl](https://github.com/rvirding/luerl)) and a growing number of _Packages_ ready to use like RestServers, Kafka producers and consumers, Token management, etc.
 
 ## Characteristics
 

@@ -12,6 +12,7 @@
 -define(CALL_SRV(SrvId, Fun), erlang:apply(SrvId, Fun, [])).
 
 
+-define(PKG_HTTPPOOL, <<"HttpPool">>).
 -define(PKG_REST, <<"RestServer">>).
 -define(PKG_WEBSERVER, <<"WebServer">>).
 -define(PKG_JOSE, <<"JOSE">>).
