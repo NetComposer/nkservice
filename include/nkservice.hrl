@@ -16,6 +16,7 @@
 -define(PKG_REST, <<"RestServer">>).
 -define(PKG_WEBSERVER, <<"WebServer">>).
 -define(PKG_JOSE, <<"JOSE">>).
+-define(PKG_PGSQL, <<"PgSQL">>).
 
 
 %% ===================================================================

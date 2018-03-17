@@ -16,7 +16,8 @@
         nkevent,
         rfc3339,
         jose,
-        otter
+        otter,
+        pgsql
     ]},
     {env, [
     ]}
