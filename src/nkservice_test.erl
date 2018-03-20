@@ -555,7 +555,7 @@ check_no_pending_events() ->
         Msg ->
             error({unexpected_event, Msg})
     after
-        0 ->
+        500 ->
             ok
     end.
 

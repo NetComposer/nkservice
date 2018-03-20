@@ -30,7 +30,7 @@
 -dialyzer({nowarn_function, update/0}).
 
 
--include_lib("syntax_tools/include/merl.hrl").
+%-include_lib("syntax_tools/include/merl.hrl").
 
 
 -define(SRV, sample).
