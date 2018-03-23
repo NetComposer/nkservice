@@ -16,7 +16,7 @@
 -record(state, {
     id :: nkservice:id(),
     service :: nkservice:service(),
-    package_status :: #{nkservice:module_id() => nkservice_srv:package_status()},
+    package_status :: #{nkservice:package_id() => nkservice_srv:package_status()},
     package_sup_pids :: [{nkservice:module_id(), pid()}],
     module_status :: #{nkservice:module_id() => nkservice_srv:module_status()},
     module_sup_pids :: [{nkservice:module_id(), pid()}],

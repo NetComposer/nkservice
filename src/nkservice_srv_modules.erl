@@ -40,7 +40,7 @@
 start([], State) ->
     State;
 
-start([ModuleId|Rest], #state{module_status=AllStatus}=State) ->
+start([ModuleId|Rest], #state{id=SrvId, module_status=AllStatus}=State) ->
     Status = maps:get(ModuleId, AllStatus, #{}),
     State3 = case maps:get(status, Status, failed) of
         failed ->
@@ -59,6 +59,13 @@ start([ModuleId|Rest], #state{module_status=AllStatus}=State) ->
             end;
         _ ->
             % for 'starting', 'running', 'updating', do nothing
+            case find_sup_pid(ModuleId, State) of
+                {ok, _} ->
+                    ok;
+                undefined ->
+                    ?LLOG(warning, SrvId, "module '~s' in status '~s' has no sup!",
+                          [ModuleId, Status])
+            end,
             State
     end,
     start(Rest, State3).
@@ -168,7 +175,7 @@ update_status(ModuleId, Status, State) ->
     ModuleStatus1 = maps:get(ModuleId, AllStatus, #{}),
     ModuleStatus2 = case Status of
         {error, Error} ->
-            ?LLOG(notice, SrvId, "module '~s' error: ~p", [ModuleId, Error]),
+            ?LLOG(notice, SrvId, "module '~s' staus 'failed': ~p", [ModuleId, Error]),
             ModuleStatus1#{
                 status => failed,
                 last_error => Error,
@@ -176,17 +183,30 @@ update_status(ModuleId, Status, State) ->
                 last_status_time => Now
             };
         _ ->
-            case maps:get(status, ModuleStatus1, undefined) of
-                Status ->
-                    ok;
-                Old ->
-                    ?LLOG(info, SrvId, "module '~s' status ~p -> ~p",
-                          [ModuleId, Old, Status])
-            end,
-            ModuleStatus1#{
-                status => Status,
-                last_status_time => Now
-            }
+            case find_sup_pid(ModuleId, State) of
+                {ok, _} ->
+                    case maps:get(status, ModuleStatus1, undefined) of
+                        Status ->
+                            ok;
+                        Old ->
+                            ?LLOG(info, SrvId, "module '~s' status ~p -> ~p",
+                                  [ModuleId, Old, Status])
+                    end,
+                    ModuleStatus1#{
+                        status => Status,
+                        last_status_time => Now
+                    };
+                undefined ->
+                    % The supervisor has failed before completing the status
+                    ?LLOG(notice, SrvId, "module '~s' status 'failed': ~p",
+                          [ModuleId, supervisor_down]),
+                    ModuleStatus1#{
+                        status => failed,
+                        last_error => supervisor_down,
+                        last_error_time => Now,
+                        last_status_time => Now
+                    }
+            end
     end,
     AllStatus2 = AllStatus#{ModuleId => ModuleStatus2},
     State2 = State#state{module_status=AllStatus2},
