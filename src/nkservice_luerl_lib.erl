@@ -138,7 +138,7 @@ init(SrvId, ModuleId) ->
         <<"json">> => [
             {<<"decode">>, {function, fun ?MODULE:decode/2}},
             {<<"encode">>, {function, fun ?MODULE:encode/2}},
-            {<<"encode_pretty">>, {function, fun ?MODULE:encode/2}}
+            {<<"encodePretty">>, {function, fun ?MODULE:encode/2}}
         ]
     },
     load_packages(maps:to_list(Packages), St1).

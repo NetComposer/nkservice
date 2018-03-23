@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_link/4, get_pid/3, get_instances/2, get_num_instances/2, get_all/0]).
+-export([start_link/4, start/4, get_pid/3, get_instances/2, get_num_instances/2, get_all/0]).
 -export([spawn_callback_spec/2, call_callback/3, spawn_clean_spec/3]).
 -export([call/3, call_syntax/4, get_table/2, set_table/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -97,6 +97,14 @@
 
 start_link(SrvId, ModuleId, Instance, Opts) ->
     gen_server:start_link(?MODULE, [SrvId, ModuleId, Instance, Opts], []).
+
+
+%% @doc Starts a LUERL server is we find any matching functions
+-spec start(nkservice:id(), nkservice:module_id(), instance(), start_opts()) ->
+    {ok, pid()}.
+
+start(SrvId, ModuleId, Instance, Opts) ->
+    gen_server:start(?MODULE, [SrvId, ModuleId, Instance, Opts], []).
 
 
 %% @doc Calls a LUA function inside the state

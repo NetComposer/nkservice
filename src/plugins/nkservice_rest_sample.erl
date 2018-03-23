@@ -75,14 +75,14 @@ stop() ->
 
 s1() -> <<"
     request = function(a)
-        log.notice(json.encode_pretty(a))
+        log.notice(json.encodePretty(a))
         if a.method == 'POST' then
             local body = {
                 qs = a.qs,
                 ct = a.contentType,
                 body = a.body
             }
-            body = json.encode_pretty(body)
+            body = json.encodePretty(body)
             return {code=200, headers={header1=1}, body=body}
         else
             return {code=501}
