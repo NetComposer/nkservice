@@ -83,6 +83,15 @@ start_child(Pid, Spec) when is_pid(Pid) ->
     case supervisor:start_child(Pid, Spec) of
         {ok, ChildPid} ->
             {ok, ChildPid};
+        {error, {already_started, ChildPid}} ->
+            {ok, ChildPid};
+        {error, already_present} ->
+            case supervisor:delete_child(?MODULE, maps:get(id, Spec)) of
+                ok ->
+                    start_child(Pid, Spec);
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
