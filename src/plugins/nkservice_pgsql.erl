@@ -86,8 +86,7 @@ luerl_query(SrvId, PackageId, [Query]) ->
         {error, {pgsql_error, Error}} ->
             [nil, pgsql_error, Error];
         {error, Error} ->
-            {Code, Txt} = nkservice_error:error(SrvId, Error),
-            [nil, Code, Txt]
+            {error, Error}
     end.
 
 
