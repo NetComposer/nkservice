@@ -24,7 +24,7 @@
 
 -export([start_link/4, start/4, get_pid/3, get_instances/2, get_num_instances/2, get_all/0]).
 -export([spawn_callback_spec/2, call_callback/3, spawn_clean_spec/3]).
--export([call/3, call_syntax/4, get_table/2, set_table/3]).
+-export([call/3, call/4, call_syntax/4, get_table/2, set_table/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -108,13 +108,19 @@ start(SrvId, ModuleId, Instance, Opts) ->
 
 
 %% @doc Calls a LUA function inside the state
-%%
-
 -spec call(call_id(), [atom()|binary()], [erl_type()]) ->
     {ok, [lua_type()]} | {error, term()}.
 
 call(Id, Fun, Args) ->
-    nklib_util:call(get_pid(Id), {call, Fun, Args}).
+    call(Id, Fun, Args, 5000).
+
+
+%% @doc Calls a LUA function inside the state
+-spec call(call_id(), [atom()|binary()], [erl_type()], timeout()) ->
+    {ok, [lua_type()]} | {error, term()}.
+
+call(Id, Fun, Args, Timeout) ->
+    nklib_util:call(get_pid(Id), {call, Fun, Args}, Timeout).
 
 
 %% @doc Calls a LUA function inside the state with a syntax
