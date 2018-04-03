@@ -86,9 +86,9 @@ plugin_deps() ->
 nkservice_rest_http(<<"listen1">>, post, [<<"test-a">>], Req) ->
     Qs = maps:from_list(nkservice_rest_http:get_qs(Req)),
     CT = nkservice_rest_http:get_ct(Req),
-    {ok, Body} = nkservice_rest_http:get_body(Req, #{parse=>true}),
+    {ok, Body, Req2} = nkservice_rest_http:get_body(Req, #{parse=>true}),
     Reply = nklib_json:encode(#{qs=>Qs, ct=>CT, body=>Body}),
-    {http, 200, [{<<"header1">>, 1}], Reply};
+    {http, 200, [{<<"header1">>, 1}], Reply, Req2};
 
 nkservice_rest_http(_Id, _Method, _Path, _Req) ->
     continue.

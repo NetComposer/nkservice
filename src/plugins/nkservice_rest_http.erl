@@ -97,7 +97,7 @@ get_body(#req{req=Req}=State, Opts) ->
     case cowboy_req:body_length(Req) of
         BL when is_integer(BL), BL =< MaxBody ->
             %% https://ninenines.eu/docs/en/cowboy/1.0/guide/req_body/
-            {ok, Body, _} = cowboy_req:body(Req, [{length, infinity}]),
+            {ok, Body, Req2} = cowboy_req:body(Req, [{length, infinity}]),
             case maps:get(parse, Opts, false) of
                 true ->
                     case CT of
@@ -106,13 +106,13 @@ get_body(#req{req=Req}=State, Opts) ->
                                 error ->
                                     {error, invalid_json};
                                 Json ->
-                                    {ok, Json}
+                                    {ok, Json, State#req{req=Req2}}
                             end;
                         _ ->
-                            {ok, Body}
+                            {ok, Body, State#req{req=Req2}}
                     end;
                 _ ->
-                    {ok, Body}
+                    {ok, Body, State#req{req=Req2}}
             end;
         BL ->
             {error, {body_too_large, BL, MaxBody}}
@@ -180,29 +180,29 @@ get_cowboy_req(#req{req=Req}) ->
 
 
 %% @doc
-reply_json({ok, Data}, _Req) ->
+reply_json({ok, Data}, Req) ->
     Hds = [{<<"Content-Type">>, <<"application/json">>}],
     Body = nklib_json:encode(Data),
-    {http, 200, Hds, Body};
+    {http, 200, Hds, Body, Req};
 
-reply_json({error, Error}, #req{srv_id=SrvId}) ->
+reply_json({error, Error}, #req{srv_id=SrvId}=Req) ->
     Hds = [{<<"Content-Type">>, <<"application/json">>}],
     {Code, Txt} = nkservice_util:error(SrvId, Error),
     Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
-    {http, 400, Hds, Body}.
+    {http, 400, Hds, Body, Req}.
 
 
 %% @doc
-reply_json({ok, Data}, Hds, _Req) ->
+reply_json({ok, Data}, Hds, Req) ->
     Hds2 = [{<<"Content-Type">>, <<"application/json">>} | Hds],
     Body = nklib_json:encode(Data),
-    {http, 200, Hds2, Body};
+    {http, 200, Hds2, Body, Req};
 
-reply_json({error, Error}, Hds, #req{srv_id=SrvId}) ->
+reply_json({error, Error}, Hds, #req{srv_id=SrvId}=Req) ->
     Hds2 = [{<<"Content-Type">>, <<"application/json">>} | Hds],
     {Code, Txt} = nkservice_util:error(SrvId, Error),
     Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
-    {http, 400, Hds2, Body}.
+    {http, 400, Hds2, Body, Req}.
 
 
 %% ===================================================================
@@ -241,8 +241,8 @@ init(HttpReq, [{srv_id, SrvId}, {id, Id}]) ->
     set_log(SrvId),
     ?DEBUG("received ~p (~p) from ~s", [Method, Path, Remote], Req),
     case ?CALL_SRV(SrvId, nkservice_rest_http, [Id, Method, Path, Req]) of
-        {http, Code, Hds, Body} ->
-            {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []};
+        {http, Code, Hds, Body, #req{req=HttpReq2}} ->
+            {ok, cowboy_req:reply(Code, Hds, Body, HttpReq2), []};
         {redirect, Path2} ->
             Url = <<(cowboy_req:url(HttpReq))/binary, (to_bin(Path2))/binary>>,
             HttpReq2 = cowboy_req:set_resp_header(<<"location">>, Url, HttpReq),
