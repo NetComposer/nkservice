@@ -72,7 +72,7 @@
 -type req() :: #req{}.
 
 -type reply() ::
-    {http, code(), [header()], body(), state()}.
+    {http, code(), [header()], body(), state(), req()}.
 
 
 %% ===================================================================
@@ -243,6 +243,9 @@ init(HttpReq, [{srv_id, SrvId}, {id, Id}]) ->
     case ?CALL_SRV(SrvId, nkservice_rest_http, [Id, Method, Path, Req]) of
         {http, Code, Hds, Body, #req{req=HttpReq2}} ->
             {ok, cowboy_req:reply(Code, Hds, Body, HttpReq2), []};
+        {http, Code, Hds, Body} ->
+            ?LLOG(warning,"unupdated nkservice_rest_http callback: ~p ~p ~p ~p", [SrvId, Id, Method, Path], Req),
+            {ok, cowboy_req:reply(Code, Hds, Body, HttpReq), []};
         {redirect, Path2} ->
             Url = <<(cowboy_req:url(HttpReq))/binary, (to_bin(Path2))/binary>>,
             HttpReq2 = cowboy_req:set_resp_header(<<"location">>, Url, HttpReq),
