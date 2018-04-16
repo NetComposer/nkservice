@@ -22,7 +22,7 @@
 -module(nkservice_pgsql_sample).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--define(SRV, pool_test).
+-define(SRV, pgsql).
 
 -compile(export_all).
 -compile(nowarn_export_all).
@@ -52,7 +52,8 @@ start() ->
                             pool => 3
                         }
                     ],
-                    %database => <<"test2">>,
+                    actorPersistence => true,
+                    database => <<"system">>,
                     debug => true
                 }
             }

@@ -39,7 +39,7 @@
 
 -define(LLOG(Type, Txt, Args, Req),
     lager:Type("NkSERVICE LUERL (~s:~s) (~p) "++Txt,
-        [State#state.srv_id, State#state.module_id, State#state.instance|Args])).
+        [State#state.srv, State#state.module_id, State#state.instance|Args])).
 
 
 
@@ -235,7 +235,7 @@ get_all() ->
 %% ===================================================================
 
 -record(state, {
-    srv_id :: nkservice:id(),
+    srv :: nkservice:id(),
     module_id :: nkservice:module_id(),
     instance :: instance(),
     monitor :: reference(),
@@ -257,7 +257,7 @@ init([SrvId, ModuleId, Instance, Opts]) ->
             erlang:binary_to_term(BinState)
     end,
 
-    put(srv_id, SrvId),
+    put(srv, SrvId),
     nklib_counters:incr({?MODULE, SrvId, ModuleId}),
     case is_reference(Instance) of
         false ->
@@ -274,7 +274,7 @@ init([SrvId, ModuleId, Instance, Opts]) ->
             undefined
     end,
     State = #state{
-        srv_id = SrvId,
+        srv = SrvId,
         module_id = ModuleId,
         instance = Instance,
         monitor = Mon,
@@ -378,7 +378,7 @@ terminate(_Reason, _State) ->
 %% ===================================================================
 
 %% @private
-set_debug(#state{srv_id=SrvId, module_id=Id}=State) ->
+set_debug(#state{srv=SrvId, module_id=Id}=State) ->
     Debug = nkservice_util:get_debug(SrvId, {nkservice_luerl, Id}) == true,
     put(nkservice_luerl_debug, Debug),
     ?DEBUG("debug mode activated", [], State).

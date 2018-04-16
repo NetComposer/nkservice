@@ -41,7 +41,6 @@
 %% @doc Starts the service
 start() ->
     Spec = #{
-        plugins => [?MODULE],
         packages => [
             #{
                 id => myrest,
@@ -55,6 +54,7 @@ start() ->
                 }
             }
         ],
+        plugins => [?MODULE],
         modules => [
             #{
                 id => s1,
@@ -74,6 +74,7 @@ stop() ->
 
 
 s1() -> <<"
+
     request = function(a)
         log.notice(json.encode_pretty(a))
         if a.method == 'POST' then

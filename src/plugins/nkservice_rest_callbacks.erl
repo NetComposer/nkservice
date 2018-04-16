@@ -61,7 +61,7 @@
     {cowboy_static, cowboy_static:opts()} |
     {cowboy_rest, Callback::module(), State::term()}.
 
-nkservice_rest_http(Id, Method, Path, #{srv_id:=SrvId}=Req) ->
+nkservice_rest_http(Id, Method, Path, #{srv:=SrvId}=Req) ->
     case nkservice_util:get_callback(SrvId, ?PKG_REST, Id, requestCallback) of
         #{class:=luerl, luerl_fun:=_}=CB ->
             case nkservice_luerl_instance:spawn_callback_spec(SrvId, CB) of

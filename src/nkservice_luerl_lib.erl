@@ -147,7 +147,7 @@ init(SrvId, ModuleId) ->
 %% @doc
 add_core_funs(SrvId, ModuleId, St) ->
     ServiceTable = [
-        {<<"srv_id">>, SrvId},
+        {<<"srv">>, SrvId},
         {<<"module_id">>, ModuleId},
         {<<"callbacks">>, []},
         {<<"packages">>, []}
@@ -212,7 +212,7 @@ error([Bin], State) when is_binary(Bin) ->
 
 %% @private
 log_prefix(State) ->
-    {SrvId, State2} = luerl:get_table(service_table([srv_id]), State),
+    {SrvId, State2} = luerl:get_table(service_table([srv]), State),
     {ModuleId, State3} = luerl:get_table(service_table([module_id]), State2),
     Prefix = list_to_binary([
         "NkSERVICE LUERL '", to_bin(SrvId), "' module '", to_bin(ModuleId), "' "

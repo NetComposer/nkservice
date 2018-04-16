@@ -11,24 +11,23 @@
 %% ===================================================================
 
 -record(actor_id, {
-    srv_id :: nkservice:id(),
+    srv :: nkservice:id(),
     uid :: nkservice_actor:uid(),
-    api :: binary(),
-    kind :: nkservice_actor:kind(),
+    class :: nkservice_actor:class(),
     name :: nkservice_actor:name(),
     pid :: pid() | undefined
 }).
 
 
 -record(actor_st, {
-    srv_id :: nkservice:id(),
-    id :: #actor_id{},
-    config :: nkservice_actor:config(),
+    actor_id :: #actor_id{},
+    % srv_id :: nkservice:id(),
+    config :: nkservice_actor_srv:config(),
     spec :: nkservice_actor:spec(),
     meta :: nkservice_actor:metadata(),
     status :: map(),
-    master_pid :: pid() | undefined,
-    is_master_enabled :: boolean(),
+    leader_pid :: pid() | undefined,
+    is_leader_enabled :: boolean(),
     is_dirty :: boolean(),
     saved_time :: nklib_util:m_timestamp(),
     is_enabled :: boolean(),

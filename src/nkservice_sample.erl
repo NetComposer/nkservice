@@ -38,32 +38,30 @@
 
 
 start() ->
-    List = [
-        #{
-            id => my_jose,
-            class => 'JOSE'
-        },
-        #{
-            class => 'WebServer',
-            config => #{
-                url => "https://node:9012/test1",
-                file_path => "/tmp",
-                opts => #{debug=>false}
-            }
-        },
-        #{
-            id => listen,
-            class => 'RestServer',
-            config => #{
-                url => "https://node:9010/test2"
-            },
-            remove => false
-        }
-    ],
     Spec = #{
         name => my_name,
-        plugins => [?MODULE],
-        packages => List,
+        packages => [
+            #{
+                class => 'JOSE',
+                id => my_jose
+            },
+            #{
+                class => 'WebServer',
+                config => #{
+                    url => "https://node:9012/test1",
+                    file_path => "/tmp",
+                    opts => #{debug=>false}
+                }
+            },
+            #{
+                class => 'RestServer',
+                id => listen,
+                config => #{
+                    url => "https://node:9010/test2"
+                },
+                remove => false
+            }
+        ],
         modules => [
             #{
                 id => module_s1,
@@ -90,19 +88,6 @@ stop() ->
 
 
 s1() -> <<"
-    function dumpTable(o)
-        if type(o) == 'table' then
-            local s = '{ '
-            for k,v in pairs(o) do
-                if type(k) ~= 'number' then k = '\"'..k..'\"' end
-                s = s .. '['..k..'] = ' .. dumpTable(v) .. ','
-            end
-            return s .. '} '
-        else
-            return tostring(o)
-        end
-    end
-
 
     print 'Hola'
     log.info 'Hello'
@@ -117,7 +102,7 @@ s1() -> <<"
 
     listenOpts = {
         id = 'my_listen2',
-        url='https://node:9010/test3',
+        url = 'https://node:9010/test3',
         requestCallback = function(a)
             return 1
         end
@@ -126,7 +111,6 @@ s1() -> <<"
     listen = startPackage('RestServer', listenOpts)
 
     jose = startPackage('JOSE')
-
 
     function sign1(a, b)
         print('Signing ' .. json.encode(a, {pretty=true}))
@@ -137,6 +121,19 @@ s1() -> <<"
         print('Verifying ' .. token)
 
         return jose.verify(token)
+    end
+
+    function dumpTable(o)
+        if type(o) == 'table' then
+            local s = '{ '
+            for k,v in pairs(o) do
+                if type(k) ~= 'number' then k = '\"'..k..'\"' end
+                s = s .. '['..k..'] = ' .. dumpTable(v) .. ','
+            end
+            return s .. '} '
+        else
+            return tostring(o)
+        end
     end
 
 
@@ -194,7 +191,7 @@ update() ->
         modules => [
             #{
                 id => module_s1,
-                remove => false,
+                remove => true,
                 class => luerl,
                 code => s1()
             }

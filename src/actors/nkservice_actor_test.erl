@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([start/0, stop/0]).
 -export([s1/0, s2/0]).
--export([actor_save/1, actor_delete/1, actor_link_event/4]).
+-export([actor_delete/1, actor_link_event/4]).
 
 -define(SRV, test).
 -compile(nowarn_unused_function).
@@ -47,15 +47,12 @@ stop() ->
 
 
 s1() ->
-    nkservice_actor:start(?SRV, #{kind=><<"k1">>}, #{}).
+    nkservice_actor_srv:start(#{srv=>?SRV, class=><<"k1">>}, #{}).
 
 s2() ->
-    nkservice_actor:start(?SRV, #{kind=><<"k1">>}, #{config=>#{permanent=>true}}).
+    nkservice_actor_srv:start(#{srv=>?SRV, class=><<"k1">>}, #{config=>#{permanent=>true}}).
 
 
-
-actor_save(State) ->
-    {ok, State, #{}}.
 
 
 actor_delete(State) ->

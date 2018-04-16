@@ -76,7 +76,7 @@ compile_module(ModuleId, ModSpec, Bin, #{id:=SrvId}=Service) ->
             ModSpec2
     end,
     LuaState1 = nkservice_luerl_lib:init(SrvId, ModuleId),
-    Db1 = #{srv_id=>SrvId, module_id=>ModuleId, packages=>#{}, callbacks=>#{}},
+    Db1 = #{srv=>SrvId, module_id=>ModuleId, packages=>#{}, callbacks=>#{}},
     put(nkservice_config_luerl, Db1),
     try luerl:do(Bin, LuaState1) of
         {_Res, LuaState2} ->
@@ -116,7 +116,7 @@ start_package([Class, TableId], St) ->
                 throw("Call to startPackage not allowed")
         end,
         #{
-            srv_id := SrvId,
+            srv := SrvId,
             module_id := ModuleId,
             packages := Packages1,
             callbacks := CBs1

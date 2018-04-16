@@ -31,9 +31,14 @@
          service_leader_terminate/2]).
 -export([actor_init/1, actor_terminate/2, actor_stop/2,
          actor_event/2, actor_link_event/4, actor_sync_op/3, actor_async_op/2,
-         actor_save/1, actor_delete/1, actor_link_down/2, actor_enabled/2, actor_next_status_timer/1,
+         actor_save/2, actor_delete/1, actor_link_down/2, actor_enabled/2, actor_next_status_timer/1,
          actor_alarms/1, actor_heartbeat/1,
          actor_handle_call/3, actor_handle_cast/2, actor_handle_info/2, actor_conflict_detected/3]).
+-export([actor_do_active/1, actor_do_expired/1]).
+-export([actor_db_find/2, actor_db_create/2, actor_db_read/2,
+         actor_db_update/2, actor_db_delete/3, actor_db_search/3, actor_db_aggregation/3,
+         actor_db_get_query/3]).
+
 -export_type([continue/0]).
 
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -325,7 +330,7 @@ actor_event(_Event, State) ->
 
 %% @doc Called when an event is sent, for each registered process to the session
 %% The events are 'erlang' events (tuples usually)
--spec actor_link_event(nklib:link(), nkservice_actor:link_opts(), nkservice_actor:event(), actor_st()) ->
+-spec actor_link_event(nklib:link(), nkservice_actor_srv:link_opts(), nkservice_actor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().
 
 actor_link_event(_Link, _LinkOpts, _Event, State) ->
@@ -355,11 +360,23 @@ actor_async_op(_Op, _State) ->
 
 
 %% @doc Called to save the object to disk
--spec actor_save(actor_st()) ->
-    {ok, actor_st(), Meta::map()} | {error, term(), actor_st()} | continue().
+-spec actor_save(nkservice_actor_srv:save_reason(), actor_st()) ->
+    {ok, Meta::map(), actor_st()} | {error, term(), actor_st()} | continue().
 
-actor_save(State) ->
-    {error, not_implemented, State}.
+actor_save(Reason, #actor_st{actor_id=#actor_id{srv=SrvId}}=ActorSt) ->
+    Actor = nkservice_actor_util:make_actor(ActorSt),
+    Fun = case Reason of
+        creation ->
+            actor_db_create;
+        _ ->
+            actor_db_update
+    end,
+    case ?CALL_SRV(SrvId, Fun, [SrvId, Actor]) of
+        {ok, Meta} ->
+            {ok, Meta, ActorSt};
+        {error, Error} ->
+            {error, Error, ActorSt}
+    end.
 
 
 %% @doc Called to save the remove the object from disk
@@ -445,6 +462,99 @@ actor_handle_info(Msg, State) ->
 actor_conflict_detected(_ActorId, _Pid, _State) ->
     erlang:error(conflict_detected).
 
+
+%% ===================================================================
+%% Actor
+%% ===================================================================
+
+%% @doc Called when an 'isActivated' actor is read
+%% If 'removed' is returned the actor will not load
+-spec actor_do_active(nkservice_actor_srv:actor()) ->
+    ok | removed.
+
+actor_do_active(_Actor) ->
+    ok.
+
+
+%% @doc Called when an expired actor is read
+-spec actor_do_expired(nkservice_actor:actor()) ->
+    ok.
+
+actor_do_expired(_Actor) ->
+    ok.
+
+
+%% ===================================================================
+%% Actor DB
+%% ===================================================================
+
+
+%% @doc Called to find an actor on disk
+-spec actor_db_find(nkservice:id(), nkservice_actor_srv:id()) ->
+    {ok, #actor_id{}, Meta::map()} | {error, term()} | continue().
+
+actor_db_find(_SrvId, _Id) ->
+    {error, not_implemented}.
+
+
+%% @doc Called to save the actor to disk
+-spec actor_db_read(nkservice:id(), nkservice_actor:uid()) ->
+    {ok, nkservice_actor:actor(), Meta::map()} | {error, term()} | continue().
+
+actor_db_read(_SrvId, _UID) ->
+    {error, not_implemented}.
+
+
+%% @doc Called to save the actor to disk
+-spec actor_db_create(nkservice:id(), nkservice:actor()) ->
+    {ok, Meta::map()} | {error, term()} | continue().
+
+actor_db_create(_SrvId, _Actor) ->
+    {error, not_implemented}.
+
+
+%% @doc Called to save the actor to disk
+-spec actor_db_update(nkservice:id(), nkservice:actor()) ->
+    {ok, Meta::map()} | {error, term()} | continue().
+
+actor_db_update(_SrvId, _Actor) ->
+    {error, not_implemented}.
+
+
+%% @doc Called to delete the actor to disk
+-spec actor_db_delete(nkservice:id(), nkservice_actor:uid(), nkservice_actor_db:delete_opts()) ->
+    {ok, Meta::map()} | {error, term()} | continue().
+
+actor_db_delete(_SrvId, _UID, _Opts) ->
+    {error, not_implemented}.
+
+
+%% @doc
+-spec actor_db_search(nkservice:id(), nkservice_actor_db:search_type(),
+                      nkservice_actor_db:opts()) ->
+    ok.
+
+actor_db_search(_SrvId, _SearchType, _Opts) ->
+    {error, not_implemented}.
+
+
+%% @doc
+-spec actor_db_aggregation(nkservice:id(), nkservice_actor_db:agg_type(),
+    nkservice_actor_db:opts()) ->
+    ok.
+
+actor_db_aggregation(_SrvId, _SearchType, _Opts) ->
+    {error, not_implemented}.
+
+
+
+%% @doc
+-spec actor_db_get_query(term(), nkservice_actor_db:search_type() | nkservice_actor_db:agg_type(),
+                            nkservice_actor_db:opts()) ->
+    {ok, term()} | {error, term()}.
+
+actor_db_get_query(Backend, SearchType, Opts) ->
+    nkservice_actor_queries:get_query(Backend, SearchType, Opts).
 
 
 %% ===================================================================

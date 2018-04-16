@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2017 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2018 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -28,30 +28,120 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
-
--export([load/1]).
+-export([is_path/1, path_to_actor_id/1, actor_id_to_path/1]).
+-export([make_path/1, make_actor/1, get_srv/1, sample/0]).
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
-
-load(#actor_id{srv_id=SrvId}=ActorId) ->
-    case ?CALL_SRV(SrvId, actor_find, [ActorId]) of
-        {ok, Actor, StartOpts} ->
-            nkservice_actor:start(SrvId, Actor, StartOpts);
+%% @doc
+is_path(Id) ->
+    case path_to_actor_id(Id) of
+        {ok, ActorId, _} ->
+            {true, ActorId};
+        {error, {is_not_path, UID}} ->
+            {false, UID};
         {error, Error} ->
             {error, Error}
     end.
 
 
+%% @doc
+path_to_actor_id(Id) ->
+    case to_bin(Id) of
+        <<"/srv/", Path2/binary>> ->
+            case binary:split(Path2, <<$/>>, [global]) of
+                [Srv, Class|Rest1] ->
+                    {Name, Resource} = case Rest1 of
+                        [Name0|Rest2] ->
+                            {Name0, Rest2};
+                        [] ->
+                            {<<>>, []}
+                    end,
+                    ActorId = #actor_id{
+                        srv = get_srv(Srv),
+                        class = Class,
+                        name = Name
+                    },
+                    {ok, ActorId, Resource};
+                _ ->
+                    {error, path_invalid}
+            end;
+        UID ->
+            {error, {is_not_path, UID}}
+    end.
+
+
+%% @doc
+actor_id_to_path(#actor_id{srv=SrvId, class=Class, name=Name}) ->
+    list_to_binary([<<"/srv/">>, to_bin(SrvId), $/, Class, $/, Name]).
+
+
+%% @private
+get_srv(ActorSrvId) ->
+    case catch binary_to_existing_atom(ActorSrvId, utf8) of
+        {'EXIT', _} ->
+            lager:warning("Module ~s creating atom '~s'", [?MODULE, ActorSrvId]),
+            binary_to_atom(ActorSrvId, utf8);
+        ExistingAtom ->
+            ExistingAtom
+    end.
+
+
+%% @private
+make_path(SrvId) ->
+    Parts = lists:reverse(binary:split(to_bin(SrvId), <<$.>>, [global])),
+    nklib_util:bjoin(Parts, $.).
+
+
+%% @doc
+make_actor(#actor_st{actor_id=ActorId, spec=Spec, meta=Meta}) ->
+    #actor_id{srv=SrvId, uid=UID, class=Class, name=Name} = ActorId,
+    #{
+        uid => UID,
+        srv => SrvId,
+        class => Class,
+        name => Name,
+        spec => Spec,
+        metadata => Meta
+    }.
+
+
+
+sample() ->
+    %% Root domain
+    {ok, ActorId1, []} = path_to_actor_id("/srv/root/class/name"),
+    #actor_id{srv = root} = ActorId1,
+    <<"/srv/root/class/name">> = actor_id_to_path(ActorId1),
+
+    %% Simple srv
+    {ok, ActorId2, []} = path_to_actor_id("/srv/a.root/class/name"),
+    #actor_id{srv = 'a.root'} = ActorId2,
+    <<"/srv/a.root/class/name">> = actor_id_to_path(ActorId2),
+
+    %% Complex srv
+    {ok, ActorId3, [<<"b">>,<<"1">>]} = path_to_actor_id("/srv/c.b.a.root/class/name/b/1"),
+    #actor_id{
+        srv = 'c.b.a.root',
+        uid = undefined,
+        class = <<"class">>,
+        name = <<"name">>,
+        pid = undefined
+    } = ActorId3,
+    <<"/srv/c.b.a.root/class/name">> = actor_id_to_path(ActorId3),
+    ok.
+
+
+
+
 %%%% @doc
-%%obj_apply(Fun, Args, #obj_state{effective_srv_id=SrvId}) ->
+%%obj_apply(Fun, Args, #obj_state{effective_srv=SrvId}) ->
 %%    apply(SrvId, Fun, Args).
 %%
 %%
 %%%% @private
-%%obj_error(Error, #obj_state{effective_srv_id=SrvId}) ->
+%%obj_error(Error, #obj_state{effective_srv=SrvId}) ->
 %%    nkservice_util:error(SrvId, Error).
 %%
 %%
@@ -98,7 +188,7 @@ load(#actor_id{srv_id=SrvId}=ActorId) ->
 %%%% @private
 %%send_event(EvType, ObjId, ObjPath, Body, #obj_state{id=#obj_id_ext{type=Type}}=State) ->
 %%    Event = #nkevent{
-%%        srv_id = ?NKROOT,
+%%        srv = ?NKROOT,
 %%        class = ?DOMAIN_EVENT_CLASS,
 %%        subclass = Type,
 %%        type = nklib_util:to_binary(EvType),
@@ -274,3 +364,8 @@ load(#actor_id{srv_id=SrvId}=ActorId) ->
 
 
 
+
+
+%% @private
+to_bin(T) when is_binary(T)-> T;
+to_bin(T) -> nklib_util:to_binary(T).

@@ -36,7 +36,7 @@
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkSERVICE REST (~s:~s) (~s) "++Txt,
-               [State#state.srv_id, State#state.plugin_id, State#state.remote|Args])).
+               [State#state.srv, State#state.plugin_id, State#state.remote|Args])).
 
 
 
@@ -89,7 +89,7 @@ stop(Pid) ->
 %% ===================================================================
 
 -record(state, {
-    srv_id :: nkservice:id(),
+    srv :: nkservice:id(),
     plugin_id :: nkservice_plugin:id(),
     remote :: binary(),
     user_state = #{} :: map()
@@ -102,7 +102,7 @@ stop(Pid) ->
 conn_init(NkPort) ->
     {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
-    State1 = #state{srv_id=SrvId, plugin_id =Id, remote=Remote},
+    State1 = #state{srv=SrvId, plugin_id =Id, remote=Remote},
     set_debug(State1),
     %% nkservice_util:register_for_changes(SrvId),
     ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
@@ -204,7 +204,7 @@ http_init(Paths, Req, Env, NkPort) ->
 %% ===================================================================
 
 %% @private
-call_rest_frame(Frame, NkPort, #state{plugin_id =Id, srv_id=SrvId, user_state=UserState}=State) ->
+call_rest_frame(Frame, NkPort, #state{plugin_id =Id, srv=SrvId, user_state=UserState}=State) ->
     case apply(SrvId, nkservice_rest_frame, [Id, Frame, NkPort, UserState]) of
         {reply, {text, Text}, UserState2} ->
             do_send({text, Text}, NkPort, State#state{user_state=UserState2});
@@ -219,7 +219,7 @@ call_rest_frame(Frame, NkPort, #state{plugin_id =Id, srv_id=SrvId, user_state=Us
 
 
 %% @private
-set_debug(#state{srv_id=SrvId, plugin_id =Id}=State) ->
+set_debug(#state{srv=SrvId, plugin_id =Id}=State) ->
     Debug = nkservice_util:get_debug(SrvId, {nkservice_rest, Id, ws}) == true,
     put(nkservice_rest_debug, Debug),
     ?DEBUG("debug system activated", [], State).
@@ -238,4 +238,4 @@ do_send(Msg, NkPort, State) ->
 
 %% @private
 handle(Fun, Args, #state{plugin_id =Id}=State) ->
-    nklib_gen_server:handle_any(Fun, [Id|Args], State, #state.srv_id, #state.user_state).
+    nklib_gen_server:handle_any(Fun, [Id|Args], State, #state.srv, #state.user_state).

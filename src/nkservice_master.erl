@@ -35,13 +35,13 @@
 
 -export([get_info/1, stop/1, update/2, replace/2]).
 -export([get_leader_pid/1]).
--export([find_actor_id/1, find_actor_uid/2, register_actor/1]).
+-export([find_actor/2, find_cached_actor/1, register_actor/1]).
 -export([updated_nodes_info/2, updated_service_status/2]).
 -export([call_leader/2, cast_leader/2]).
 -export([start_link/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
--export([resolve/3]).
+-export([resolve/3, get_uid_cached/0]).
 
 -include("nkservice.hrl").
 -include("nkservice_actor.hrl").
@@ -117,41 +117,68 @@ update(SrvId, Spec) ->
 
 
 %% @doc
--spec find_actor_uid(nkservice:id(), nkservice:actor_id()) ->
-    {ok, #actor_id{}} | {error, actor_not_found|term()}.
+%% If we use an #actor_id{}, we will contact the domain
+%% If we use a uid(), we will try to find it in cache (but only on this node)
+-spec find_actor(nkservice:id(), #actor_id{}|binary()|string()) ->
+    {ok, #actor_id{}} | {error, actor_not_found | term()}.
 
-find_actor_uid(SrvId, ActorUID) ->
-    ActorUID2 = to_bin(ActorUID),
-    % First find in local node's cache
-    case nklib_proc:values({nkservice_actor_uid, ActorUID2}) of
-        [{ActorId, _Pid}|_] ->
-            {cache, ActorId};
-        [] ->
-            case call_leader(SrvId, {nkservice_find_actor_uid, ActorUID2}) of
-                {ok, #actor_id{uid=ActorUID2, pid=Pid}=ActorId} ->
-                    nklib_proc:put({nkservice_actor_uid, ActorUID2}, ActorId, Pid),
-                    {ok, ActorId};
+find_actor(SrvId, #actor_id{uid=UID}=ActorId) when is_binary(UID), UID /= <<>> ->
+    % Do an uid-based search
+    % First, look in cache in this node. If not cached, but we have a srv id,
+    % call the master.
+    UID2 = to_bin(UID),
+    case find_cached_actor(UID2) of
+        {ok, ActorId2} ->
+            % We may add the pid()
+            {ok, ActorId2};
+        {error, actor_not_found} ->
+            case call_leader_retry(SrvId, {nkservice_find_actor_uid, ActorId}) of
+                {ok, ActorId2} ->
+                    insert_uid_cache(ActorId2),
+                    {ok, ActorId2};
                 {error, Error} ->
                     {error, Error}
             end
+    end;
+
+find_actor(SrvId, #actor_id{}=ActorId) ->
+    % Do a name-based search, on a service
+    case call_leader_retry(SrvId, {nkservice_find_actor_id, ActorId}) of
+        {ok, #actor_id{uid=UID}=ActorId2} ->
+            case find_cached_actor(UID) of
+                {ok, _} ->
+                    ok;
+                {error, actor_not_found} ->
+                    insert_uid_cache(ActorId2)
+            end,
+            {ok, ActorId2};
+        {error, Error} ->
+            {error, Error}
     end.
 
-
 %% @doc
--spec find_actor_id(#actor_id{}) ->
-    {ok, UID::binary(), pid()} | {ok, not_found} | {error, term()}.
-
-find_actor_id(#actor_id{srv_id=SrvId}=ActorId) ->
-    % We cannot cache it, since name can change
-    call_leader(SrvId, {nkservice_find_actor_id, ActorId}).
+find_cached_actor(UID) ->
+    % Do a direct-uuid search, only in local node's cache
+    case is_uid_cached(to_bin(UID)) of
+        {true, ActorId} ->
+            {ok, ActorId};
+        false ->
+            {error, actor_not_found}
+    end.
 
 
 %% @doc
 -spec register_actor(#actor_id{}) ->
     {ok, Master::pid()} | {error, term()}.
 
-register_actor(#actor_id{srv_id=SrvId}=ActorId) ->
-    call_leader(SrvId, {nkservice_register_actor, ActorId}).
+register_actor(#actor_id{srv=SrvId}=ActorId) ->
+    case call_leader_retry(SrvId, {nkservice_register_actor, ActorId}) of
+        {ok, MasterPid} ->
+            insert_uid_cache(ActorId),
+            {ok, MasterPid};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Gets the pid of current leader for this service
@@ -160,6 +187,26 @@ register_actor(#actor_id{srv_id=SrvId}=ActorId) ->
 
 get_leader_pid(SrvId) ->
     global:whereis_name(global_name(SrvId)).
+
+
+%% @private
+call_leader_retry(SrvId, Msg) ->
+    call_leader_retry(SrvId, Msg, 10).
+
+
+%% @private
+call_leader_retry(SrvId, Msg, Try) when Try > 0 ->
+    case call_leader(SrvId, Msg, 5000) of
+        {error, leader_not_found} ->
+            lager:notice("Leader for ~p not found, retrying (~p)", [SrvId, Msg]),
+            timer:sleep(1000),
+            call_leader_retry(SrvId, Msg, Try-1);
+        Other ->
+            Other
+    end;
+
+call_leader_retry(_SrvId, _Msg, _Try) ->
+    {error, leader_not_found}.
 
 
 %% @doc
@@ -285,8 +332,8 @@ handle_call(nkservice_stop, _From, #state{id=SrvId}=State) ->
 
 handle_call({nkservice_find_actor_id, ActorId}, _From, State) ->
     case do_find_actor_id(ActorId, State) of
-        {UID, Pid} ->
-            {reply, {ok, UID, Pid}, State};
+        {ok, UID, Pid} ->
+            {reply, {ok, ActorId#actor_id{uid=UID, pid=Pid}}, State};
         actor_not_found ->
             {reply, {error, actor_not_found}, State}
     end;
@@ -307,6 +354,7 @@ handle_call({nkservice_find_actor_uid, UID}, _From, State) ->
 handle_call({nkservice_register_actor, ActorId}, _From, State) ->
     case do_register_actor(ActorId, State) of
         ok ->
+            ?LLOG(notice, "Actor ~p registered", [ActorId], State),
             {reply, {ok, self()}, State};
         {error, Error} ->
             {reply, {error, Error}, State}
@@ -640,41 +688,58 @@ resolve({nkservice_leader, SrvId}, Pid1, Pid2) ->
 %% ===================================================================
 
 %% @private
-do_register_actor(Actor, #state{actor_ets=Ets}) ->
-    #actor_id{api=Api, kind=Kind, name=Name, uid=UID, pid=Pid} = Actor,
-    case ets:lookup(Ets, {name, Api, Kind, Name}) of
-        [] ->
+do_register_actor(Actor, #state{actor_ets=Ets}=State) ->
+    #actor_id{class=Class, name=Name, uid=UID, pid=Pid} = Actor,
+    case do_find_actor_id(Actor, State) of
+        actor_not_found ->
+            Ref = monitor(process, Pid),
             Objs = [
-                {{name, Api, Kind, Name}, UID, Pid},
-                {{uid, UID}, Api, Kind, Name, Pid},
-                {{pid, Pid}, UID}
+                {{uid, UID}, Class, Name, Pid},
+                {{name, Class, Name}, UID, Pid},
+                {{pid, Pid}, UID, Ref}
             ],
             ets:insert(Ets, Objs),
-            monitor(process, Pid),
             ok;
-        [{_, UID, Pid}] ->
-            case ets:lookup(Ets, {uid, UID}) of
-                [{_, Api, Kind, Name, Pid}] ->
-                    ok;
-                [{_, _OldApi, _OldKind, _OldName, Pid}] ->
-                    ets:delete(Ets, {uid, UID}),
-                    ets:insert(Ets, {{uid, UID}, Api, Kind, Name, Pid}),
-                    ok
-            end;
+        {UID, Pid} ->
+            %% We can change name
+            true = do_remove_actor(Pid, State),
+            do_register_actor(Actor, State);
         _ ->
             {error, already_registered}
     end.
 
 
 %% @private
-do_find_actor_uid(ActorUID, #state{id=SrvId, actor_ets=Ets}) ->
-    case ets:lookup(Ets, {uid, ActorUID}) of
-        [{_, Api, Kind, Name, Pid}] ->
+do_find_actor_id(ActorId, #state{id=SrvId, actor_ets=Ets}=State) ->
+    case ActorId of
+        #actor_id{srv=SrvId, class=Class, name=Name} ->
+            case ets:lookup(Ets, {name, Class, Name}) of
+                [{_, UID, Pid}] ->
+                    case do_find_actor_uid(UID, State) of
+                        #actor_id{srv=SrvId, class=Class, name=Name} ->
+                            {ok, UID, Pid};
+                        actor_not_found ->
+                            % TODO: remove after checks
+                            ?LLOG(warning, "Inconsistency in search for ~s", [UID], State),
+                            actor_not_found
+                    end;
+                [] ->
+                    actor_not_found
+            end;
+        #actor_id{srv=OtherSrvId} ->
+            ?LLOG(warning, "Invalid service ~s in search", [OtherSrvId], State),
+            actor_not_found
+    end.
+
+
+%% @private
+do_find_actor_uid(UID, #state{id=SrvId, actor_ets=Ets}) ->
+    case ets:lookup(Ets, {uid, UID}) of
+        [{{uid, UID}, Class, Name, Pid}] ->
             #actor_id{
-                srv_id = SrvId,
-                uid = ActorUID,
-                api = Api,
-                kind = Kind,
+                srv = SrvId,
+                uid = UID,
+                class = Class,
                 name = Name,
                 pid = Pid
             };
@@ -684,24 +749,19 @@ do_find_actor_uid(ActorUID, #state{id=SrvId, actor_ets=Ets}) ->
 
 
 %% @private
-do_find_actor_id(ActorId, #state{id=SrvId, actor_ets=Ets}) ->
-    #actor_id{srv_id=SrvId, api=Api, kind=Kind, name=Name} = ActorId,
-    case ets:lookup(Ets, {name, Api, Kind, Name}) of
-        [{_, UID, Pid}] ->
-            {UID, Pid};
-        [] ->
-            actor_not_found
-    end.
-
-
-%% @private
-do_remove_actor(Pid, #state{actor_ets=Ets}) ->
+do_remove_actor(Pid, #state{actor_ets=Ets}=State) ->
     case ets:lookup(Ets, {pid, Pid}) of
-        [{_, UID}] ->
-            [{_, Api, Kind, Name, Pid}] = ets:lookup(Ets, {uid, UID}),
+        [{{pid, Pid}, UID, Ref}] ->
+            nklib_util:demonitor(Ref),
             ets:delete(Ets, {pid, Pid}),
+            case do_find_actor_uid(UID, State) of
+                #actor_id{class=Class, name=Name} ->
+                    ets:delete(Ets, {name, Class, Name});
+                actor_not_found ->
+                    % TODO: remove after checks: AGGG
+                    ?LLOG(warning, "Inconsistency in deleting ~s: not_found", [UID], State)
+            end,
             ets:delete(Ets, {uid, UID}),
-            ets:delete(Ets, {name, Api, Kind, Name}),
             true;
         _ ->
             false
@@ -711,6 +771,31 @@ do_remove_actor(Pid, #state{actor_ets=Ets}) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+
+%% @private
+insert_uid_cache(#actor_id{uid=UID, pid=Pid}=ActorId) ->
+    nklib_proc:put({nkservice_actor_uid, UID}, ActorId, Pid),
+    nklib_proc:put(nkservice_actor_uid, UID, Pid).
+
+
+%% @private
+is_uid_cached(UID) ->
+    % Do a direct-uuid search, only in local node's cache
+    case nklib_proc:values({nkservice_actor_uid, to_bin(UID)}) of
+        [{ActorId, _Pid}|_] ->
+            {true, ActorId};
+        [] ->
+            false
+    end.
+
+
+%% @private
+get_uid_cached() ->
+    nklib_proc:values(nkservice_actor_uid).
+
+
+
 
 
 %% @private

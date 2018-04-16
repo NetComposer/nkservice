@@ -58,7 +58,7 @@ plugin_api(_Class) ->
 
 
 %% @doc
-plugin_config(?PKG_PGSQL, #{config:=Config}=Spec, _Service) ->
+plugin_config(?PKG_PGSQL, #{id:=Id, config:=Config}=Spec, _Service) ->
     Syntax = #{
         targets => {list, #{
             url => binary,
@@ -67,13 +67,32 @@ plugin_config(?PKG_PGSQL, #{config:=Config}=Spec, _Service) ->
             '__mandatory' => [url]
         }},
         database => binary,
+        actorPersistence => boolean,
         debug => boolean,
         resolveInterval => {integer, 0, none},
         '__mandatory' => [targets]
     },
     case nklib_syntax:parse(Config, Syntax) of
         {ok, Parsed, _} ->
-            {ok, Spec#{config:=Parsed}};
+            ActorPersistence = case maps:get(actorPersistence, Parsed, false) of
+                true ->
+                    {true, Id};
+                false ->
+                    false
+            end,
+            CacheMap1 = maps:get(cache_map, Spec, #{}),
+            CacheMap2 = CacheMap1#{
+                {nkservice_pgsql, any, actor_persistence} => ActorPersistence
+            },
+            Debug = maps:get(debug, Parsed, false),
+            DebugMap1 = maps:get(debug_map, Spec, #{}),
+            DebugMap2 = DebugMap1#{{nkservice_pgsql, Id, debug} => Debug},
+            Spec2 = Spec#{
+                config := Parsed,
+                cache_map => CacheMap2,
+                debug_map => DebugMap2
+            },
+            {ok, Spec2};
         {error, Error} ->
             {error, Error}
     end;
@@ -154,7 +173,7 @@ conn_resolve(#{url:=Url}, Config, _Pid) ->
 
 %% @private
 do_conn_resolve([], _UserOpts, Acc) ->
-    {ok, lists:reverse(Acc)};
+    {ok, lists:reverse(Acc), #{}};
 
 do_conn_resolve([Conn|Rest], UserOpts, Acc) ->
     case Conn of
@@ -196,6 +215,7 @@ conn_start(#nkconn{transp=_Transp, ip=Ip, port=Port, opts=Opts}) ->
         {ok, Pid} ->
             {ok, Pid};
         {error, Error} ->
+            lager:warning("NKLOG PGSQL POOL CONN ERR: ~p", [Error]),
             {error, Error}
     end.
 

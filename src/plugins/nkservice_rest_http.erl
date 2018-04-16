@@ -37,7 +37,7 @@
 
 -define(LLOG(Type, Txt, Args, Req),
     lager:Type("NkSERVICE REST HTTP (~s:~s ~s) "++Txt,
-               [maps:get(srv_id, Req), maps:get(plugin_id, Req), maps:get(peer, Req)|Args])).
+               [maps:get(srv, Req), maps:get(plugin_id, Req), maps:get(peer, Req)|Args])).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -63,7 +63,7 @@
 
 -type req() ::
     #{
-        srv_id => nkservice:id(),
+        srv => nkservice:id(),
         plugin_id => nkservice:module_id(),
         method => method(),
         path => [binary()],
@@ -151,9 +151,9 @@ get_basic_auth(#{cowboy_req:=CowReq}) ->
 
 
 %% @private
-make_req_ext(PackageId, #{srv_id:=SrvId, content_type:=CT}=Req) ->
+make_req_ext(PackageId, #{srv:=SrvId, content_type:=CT}=Req) ->
     Config = nkservice_util:get_cache(SrvId, {?PKG_REST, PackageId, request_config}),
-    Map1 = maps:with([srv_id, plugin_id, method, path, peer], Req),
+    Map1 = maps:with([srv, plugin_id, method, path, peer], Req),
     Map2 = Map1#{contentType => CT},
     make_req_ext(Config, Config, Map2, Req).
 
@@ -236,7 +236,7 @@ reply_json({ok, Data}, _Req) ->
     Body = nklib_json:encode(Data),
     {http, 200, Hds, Body};
 
-reply_json({error, Error}, #{srv_id:=SrvId}) ->
+reply_json({error, Error}, #{srv:=SrvId}) ->
     Hds = #{<<"Content-Tytpe">> => <<"application/json">>},
     {Code, Txt} = nkservice_error:error(SrvId, Error),
     Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
@@ -259,7 +259,7 @@ init(Paths, CowReq, Env, NkPort) ->
     {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
     Method = cowboy_req:method(CowReq),
     Req = #{
-        srv_id => SrvId,
+        srv => SrvId,
         plugin_id => Id,
         method => Method,
         path => Paths,
@@ -300,7 +300,7 @@ terminate(_Reason, _Req, _Opts) ->
 %% ===================================================================
 
 %% @private
-set_debug(#{srv_id:=SrvId, plugin_id:=Id}=Req) ->
+set_debug(#{srv:=SrvId, plugin_id:=Id}=Req) ->
     Debug = nkservice_util:get_debug(SrvId, {nkservice_rest, Id, http}) == true,
     put(nkservice_rest_debug, Debug),
     ?DEBUG("debug mode activated", [], Req).

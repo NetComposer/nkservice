@@ -69,7 +69,7 @@ error(SrvId, Error) ->
                     {to_bin(ErrCode), to_bin(ErrCode)};
                 Other ->
                     Ref = erlang:phash2(make_ref()) rem 10000,
-                    lager:notice("NkSERVICE internal error (~p): ~p", [Ref, Other]),
+                    lager:notice("NkSERVICE unknown internal error (~p): ~p", [Ref, Other]),
                     {<<"internal_error">>, get_error_fmt("Internal error (~p)", [Ref])}
             end
     end.
