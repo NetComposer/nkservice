@@ -75,7 +75,6 @@ luerl_request(SrvId, PackageId, [Method, Path, _Hds, Body]) ->
         {ok, Status, RepHds, RepBody} ->
             [Status, RepHds, RepBody];
         {error, Error} ->
-            {Code, Txt} = nkservice_error:error(SrvId, Error),
-            [nil, Code, Txt]
+            {error, Error}
     end.
 

@@ -258,6 +258,7 @@ get_all(Class) ->
 get_packages(SrvId) ->
     nkservice_packages_sup:get_packages(SrvId).
 
+
 %% @private
 get_package_childs(SrvId, PackageId) ->
     nkservice_packages_sup:get_package_childs(SrvId, to_bin(PackageId)).
@@ -317,9 +318,9 @@ init(#{id:=SrvId, hash:=Hash}=Service) ->
     State = #state{
         id = SrvId,
         service = Service,
-        package_status= #{},
+        package_status = #{},
         package_sup_pids = [],
-        module_status= #{},
+        module_status = #{},
         module_sup_pids = [],
         events = {0, queue:new()},
         user = UserState
@@ -388,9 +389,9 @@ handle_info(nkservice_timed_check_status, State) ->
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
     #state{
-        package_status= PackagesStatus,
+        package_status = PackagesStatus,
         package_sup_pids = PackagePids,
-        module_status= ModuleStatus,
+        module_status = ModuleStatus,
         module_sup_pids = ModulePids
     } = State,
     case lists:keytake(Pid, 2, PackagePids) of
@@ -437,7 +438,6 @@ code_change(OldVsn, #state{id=SrvId, user=UserState}=State, Extra) ->
         {error, Error} ->
             {error, Error}
     end.
-
 
 
 %% @private

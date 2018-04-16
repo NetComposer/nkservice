@@ -137,7 +137,7 @@ luerl_verify(SrvId, PluginId, [Bin, Opts]) when is_binary(Bin), is_list(Opts) ->
     end;
 
 luerl_verify(_SrvId, _PluginId, _Args) ->
-    [error, invalid_parameters].
+    [nil, invalid_parameters].
 
 
 

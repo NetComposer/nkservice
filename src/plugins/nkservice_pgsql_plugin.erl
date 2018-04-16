@@ -18,7 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc HTTP Pool plugin
+%% @doc PGSQL Pool plugin
 -module(nkservice_pgsql_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([plugin_deps/0, plugin_api/1, plugin_config/3, plugin_start/4, plugin_update/5]).

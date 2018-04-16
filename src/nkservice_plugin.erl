@@ -21,7 +21,7 @@
 %% @doc Default callbacks for plugin definitions
 -module(nkservice_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([plugin_deps/0, plugin_group/0, plugin_api/1, plugin_callbacks/1,
+-export([plugin_deps/0, plugin_group/0, plugin_api/1,
          plugin_config/3, plugin_start/4, plugin_update/5, plugin_stop/4]).
 -export_type([continue/0]).
 
@@ -58,32 +58,18 @@ plugin_group() ->
 
 
 %% @doc Return the available user callbacks
+%% Callbacks are automatically extracted from lua scripts and available
+%% in SrvId:callbacks()
+
 -spec plugin_api(package_class()) ->
     #{
         luerl => #{
-            Name::atom() => {module(), Fun::atom()},
             Name::atom() => {module(), Fun::atom()}
         }
     }.
 
 plugin_api(_Class) ->
     #{}.
-
-
-%% @doc
--spec plugin_callbacks(package_class()) ->
-    #{
-        luerl => #{
-            atom() => #{
-                config_synax => nklib_syntax:syntax(),
-                reply_syntax => nklib_syntax:syntax()
-            }
-        }
-    }.
-
-plugin_callbacks(_Class) ->
-    #{}.
-
 
 
 %% @doc This function must parse any configuration for this plugin,

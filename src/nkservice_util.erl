@@ -133,13 +133,19 @@ set_srv_secret(Id, Value, Service) ->
 %% @doc
 luerl_api(SrvId, PackageId, Mod, Fun, Args, St) ->
     try
-        Res = apply(Mod, Fun, [SrvId, PackageId, Args]),
+        Res = case apply(Mod, Fun, [SrvId, PackageId, Args]) of
+            {error, Error} ->
+                {Code, Txt} = nkservice_error:error(SrvId, Error),
+                [nil, Code, Txt];
+            Other when is_list(Other) ->
+                Other
+        end,
         {Res, St}
     catch
-        Class:Error  ->
+        Class:CError  ->
             Trace = erlang:get_stacktrace(),
             lager:notice("NkSERVICE LUERL ~s (~s, ~s:~s(~p)) API Error ~p:~p ~p",
-                         [SrvId, PackageId, Mod, Fun, Args, Class, Error, Trace]),
+                         [SrvId, PackageId, Mod, Fun, Args, Class, CError, Trace]),
             {[nil], St}
     end.
 
@@ -159,82 +165,3 @@ to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).
 
 
-
-
-%%%% @doc Adds a configuration object to a key in config that is a list
-%%-spec add_config_obj(atom(), map(), map()) ->
-%%    map().
-%%
-%%add_config_obj(Key, Data, Config) ->
-%%    List1 = maps:get(Key, Config, []),
-%%    List2 = [Data|List1],
-%%    Config#{Key => List2}.
-%%
-%%
-%%%% @doc
-%%-spec get_config_ids([map()]) ->
-%%    {ok, map()} | {error, {duplicated_id, binary()}}.
-%%
-%%get_config_ids(List) ->
-%%    get_config_ids(List, #{}).
-%%
-%%
-%%%% @private
-%%get_config_ids([], MapAcc) ->
-%%    {ok, MapAcc};
-%%
-%%get_config_ids([#{id:=Id}=Map|Rest], MapAcc) ->
-%%    Id2 = nklib_util:to_binary(Id),
-%%    case maps:is_key(Id2, MapAcc) of
-%%        false ->
-%%            get_config_ids(Rest, MapAcc#{Id2 => Map#{id:=Id2}});
-%%        true ->
-%%            {error, {duplicated_id, Id}}
-%%    end.
-
-
-%%%% @doc
-%%apply(SrvId, Fun, Args) ->
-%%    case erlang:function_exported(SrvId, Fun, length(Args)) of
-%%        true ->
-%%            ?CALL_SRV(SrvId, Fun, Args);
-%%        false ->
-%%            unknown_service
-%%    end.
-
-
-
-
-
-%%%% @private
-%%parse_transports([#nkconn{}|_]=Transps) ->
-%%    {ok, Transps};
-%%
-%%parse_transports(Spec) ->
-%%    case nkpacket_resolve:resolve(Spec, #{resolve_type=>listen}) of
-%%        {ok, Conns} ->
-%%            {ok, Conns};
-%%        Other ->
-%%            lager:notice("Error in parse_transports (~p): ~p", [Spec, Other]),
-%%            error
-%%    end.
-
-
-
-
-%%%% @doc Generates the service id from any name
-%%-spec make_id(nkservice:name()) ->
-%%    nkservice:id().
-%%
-%%make_id(Id) when is_atom(Id) ->
-%%    Bin = nklib_parse:normalize(Id, #{space=>$_, allowed=>[$-, $., $_]}),
-%%    binary_to_atom(Bin, latin1);
-%%
-%%%% For non-atoms, we keep the 'old' behaviour
-%%make_id(Name) ->
-%%    list_to_atom(
-%%        string:to_lower(
-%%            case binary_to_list(nklib_util:hash36(Name)) of
-%%                [F|Rest] when F>=$0, F=<$9 -> [$A+F-$0|Rest];
-%%                Other -> Other
-%%            end)).

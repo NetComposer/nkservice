@@ -41,13 +41,29 @@
 start([], State) ->
     State;
 
-start([PackageId|Rest], #state{package_status=PackagesStatus}=State) ->
+start([PackageId|Rest], #state{id=SrvId, package_status=PackagesStatus}=State) ->
     Status = maps:get(PackageId, PackagesStatus, #{}),
     State2 = case maps:get(status, Status, failed) of
         failed ->
             do_start(PackageId, State);
-        _ ->
-            % for 'starting', 'running', 'updating', do nothing
+        running ->
+            case find_sup_pid(PackageId, State) of
+                {ok, _} ->
+                    State;
+                undefined ->
+                    ?LLOG(warning, SrvId, "running package '~s' has no sup!",
+                          [PackageId]),
+                    do_start(PackageId, State)
+            end;
+        Status ->
+            % for 'starting', 'updating', 'runnig' do nothing
+            case find_sup_pid(PackageId, State) of
+                {ok, _} ->
+                    ok;
+                undefined ->
+                    ?LLOG(warning, SrvId, "package '~s' in status '~s' has no sup!",
+                        [PackageId, Status])
+            end,
             State
     end,
     start(Rest, State2).
@@ -153,17 +169,30 @@ update_status(PackageId, Status, State) ->
                 last_status_time => Now
             };
         _ ->
-            case maps:get(status, PackageStatus1, none) of
-                Status ->
-                    ok;
-                Old ->
-                    ?LLOG(info, SrvId, "package '~s' status '~p' -> '~p'",
-                          [PackageId, Old, Status])
-            end,
-            PackageStatus1#{
-                status => Status,
-                last_status_time => Now
-            }
+            case find_sup_pid(PackageId, State) of
+                {ok, _} ->
+                    case maps:get(status, PackageStatus1, none) of
+                        Status ->
+                            ok;
+                        Old ->
+                            ?LLOG(info, SrvId, "package '~s' status '~p' -> '~p'",
+                                  [PackageId, Old, Status])
+                    end,
+                    PackageStatus1#{
+                        status => Status,
+                        last_status_time => Now
+                    };
+                undefined ->
+                    % The supervisor has failed before completing the status
+                    ?LLOG(notice, SrvId, "package '~s' status 'failed': ~p",
+                          [PackageId, supervisor_down]),
+                    PackageStatus1#{
+                        status => failed,
+                        last_error => supervisor_down,
+                        last_error_time => Now,
+                        last_status_time => Now
+                    }
+            end
     end,
     AllStatus2 = AllStatus#{PackageId => PackageStatus2},
     State2 = State#state{package_status=AllStatus2},
@@ -264,7 +293,7 @@ start_sup(PackageId, #state{id=SrvId, package_sup_pids=Sups}=State) ->
                 {ok, Pid} ->
                     monitor(process, Pid),
                     Sups2 = lists:keystore(PackageId, 1, Sups, {PackageId, Pid}),
-                    {ok, Pid, State#state{package_sup_pids =Sups2}};
+                    {ok, Pid, State#state{package_sup_pids=Sups2}};
                 {error, Error} ->
                     ?LLOG(notice, SrvId, "could not start package '~s' supervisor: ~p",
                         [PackageId, Error]),
