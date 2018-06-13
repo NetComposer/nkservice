@@ -75,14 +75,6 @@ plugin_config(?PKG_REST, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
         {ok, Parsed, _} ->
             case make_listen(SrvId, Id, Parsed) of
                 {ok, _Listeners} ->
-                    Spec2 = Spec#{config:=Parsed},
-                    Spec3 = lists:foldl(
-                        fun(Type, Acc) ->
-                            D0 = maps:get(debug_map, Acc, #{}),
-                            Acc#{debug_map=>D0#{{nkservice_rest, Id, Type} => true}}
-                        end,
-                        Spec2,
-                        maps:get(debug, Parsed, [])),
                     ReqConfig1 = maps:with([
                         requestGetBody,
                         requestParseBody,
@@ -92,10 +84,18 @@ plugin_config(?PKG_REST, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
                         requestGetQs,
                         requestGetBasicAuthorization], Parsed),
                     ReqConfig2 = maps:to_list(ReqConfig1),
-                    Cache1 = maps:get(cache_map, Spec, #{}),
-                    Cache2 = Cache1#{{?PKG_REST, Id, request_config} => ReqConfig2},
-                    Spec4 = Spec3#{cache_map => Cache2},
-                    {ok, Spec4};
+                    CacheMap1 = nkservice_config_util:get_cache_map(Spec),
+                    CacheMap2 = nkservice_config_util:set_cache_key(?PKG_REST, Id, request_config, ReqConfig2, CacheMap1),
+                    Spec2 = nkservice_config_util:set_cache_map(CacheMap2, Spec),
+                    Debug1 = nkservice_config_util:get_debug_map(Spec),
+                    Debug2 = lists:foldl(
+                        fun(Type, Acc) ->
+                            nkservice_config_util:set_debug_key(nkservice_rest, Id, Type, true, Acc)
+                        end,
+                        Debug1,
+                        maps:get(debug, Parsed, [])),
+                    Spec3 = nkservice_config_util:set_debug_map(Debug2, Spec2),
+                    {ok, Spec3#{config:=Parsed}};
                 {error, Error} ->
                     {error, Error}
             end;

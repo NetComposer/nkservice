@@ -46,7 +46,7 @@ start() ->
                 id => myrest,
                 class => 'RestServer',
                 config => #{
-                    url => "https://node:9010/test1, wss:node:9010/test1/ws;idle_timeout=5000",
+                    url => "https://node:9010/test2, wss:node:9010/test1/ws;idle_timeout=5000",
                     opts => #{
                         cowboy_opts => #{max_headers=>100}  % To test in nkpacket
                     },

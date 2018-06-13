@@ -97,7 +97,11 @@ start_child(Pid, Spec) when is_pid(Pid) ->
     end.
 
 
-%% @doc Updates (if Spec is different) or starts a new child
+%% @doc Starts or updates a child
+%% - If ChildId is not present, starts a new child.
+%% - If it is present and has the same Spec, nothing is done
+%% - If it is present but has a different Spec, it is restarted (see restart_delay)
+%%
 -spec update_child(pid(), supervisor:child_spec(), update_opts()) ->
     {ok, pid()} | {upgraded, pid()} | not_updated | {error, term()}.
 
@@ -108,7 +112,7 @@ update_child(Pid, Spec, Opts) when is_pid(Pid) ->
     end,
     case supervisor:get_childspec(Pid, ChildId) of
         {ok, Spec} ->
-            ?LLOG(warning, "child ~p not updated", [ChildId]),
+            ?LLOG(debug, "child ~p not updated (same spec)", [ChildId]),
             not_updated;
         {ok, _OldSpec} ->
             case remove_child(Pid, ChildId) of
@@ -136,25 +140,50 @@ update_child(Pid, Spec, Opts) when is_pid(Pid) ->
     end.
 
 
-%% @doc Updates a series of childs, all or nothing
+
+
+
+%% @doc Starts or updates a series of childs with the same key, all or nothing
+%% ChildIds must be a tuple, first element is the ChildKey
+%% (and must be the same in all Specs)
+%% - First be remove all childs with the same ChildKey no longer present in Spec
+%% - Then we start or update all new (using update_child/3)
+%%
 -spec update_child_multi(term()|pid(), [supervisor:child_spec()], map()) ->
     ok | upgraded | not_updated | {error, term()}.
 
+update_child_multi(_Pid, [], _Opts) ->
+    not_updated;
+
 update_child_multi(Pid, SpecList, Opts) when is_pid(Pid) ->
-    OldIds = [ChildId || {ChildId, _, _, _} <- supervisor:which_children(Pid)],
-    NewIds = [
+    NewChildIds = [
         case is_map(Spec) of
             true -> maps:get(id, Spec);
             false -> element(1, Spec)
         end
         || Spec <- SpecList
     ],
-    ToStop = OldIds -- NewIds,
-    lists:foreach(fun(ChildId) -> remove_child(Pid, ChildId) end, ToStop),
+    NewChildKeys = [element(1, ChildId) || ChildId <- NewChildIds],
+    [ChildKey] = lists:usort(NewChildKeys),
+    OldChildIds = [
+        ChildId
+        || {ChildId, _, _, _} <- supervisor:which_children(Pid),
+           element(1, ChildId) == ChildKey
+    ],
+    ToStop = OldChildIds -- NewChildIds,
+    lists:foreach(
+        fun(ChildId) ->
+            remove_child(Pid, ChildId),
+            ?LLOG(debug, "child ~p (key ~p) stopped", [ChildId, ChildKey])
+        end,
+        ToStop),
     case update_child_multi(Pid, SpecList, Opts, not_updated) of
         {error, Error} ->
-            lists:foreach(fun(ChildId) -> remove_child(Pid, ChildId) end, OldIds++NewIds),
-            {error, Error};
+            ?LLOG(info, "removing all childs for ~p", [ChildKey]),
+            lists:foreach(
+                fun(ChildId) -> remove_child(Pid, ChildId) end,
+                OldChildIds++NewChildIds),
+                {error, Error};
         Other ->
             Other
     end.

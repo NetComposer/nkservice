@@ -56,7 +56,7 @@ make_cache(#{id:=Id}=Service) ->
         fun(_, _V) -> <<>> end,
         maps:get(secret, Service, #{})),
     Service2 = Service#{
-        timestamp =>  nklib_util:m_timestamp(),
+        timestamp =>  nklib_date:epoch(msecs),
         modules => SafeModules,
         secret => SafeSecrets
     },
@@ -98,7 +98,7 @@ make_cache(#{id:=Id}=Service) ->
     % Expansion functions are also removed from saved version in log
     % See nkservice:spec_with_secrets/1
     Tree2 = lists:filtermap(fun(T) -> filter_for_disk(T) end, Tree),
-    LogPath = nkservice_app:get(log_path),
+    LogPath = nkservice_app:get(logPath),
     ok = nklib_code:write(Id, Tree2, LogPath).
 
 
@@ -151,7 +151,7 @@ get_debug(Service) ->
         Debug1,
         maps:get(modules, Service, #{})),
     Debug3 = lists:foldl(
-        fun(Kind, Acc) -> Acc ++ [{{nkservice_actor, Kind}, true}] end,
+        fun(Kind, Acc) -> Acc ++ [{{nkservice_actor, Kind, debug}, true}] end,
         Debug2,
         maps:get(debug_actors, Service, [])),
     ServiceDebug = [{[Type], Val} || {Type, Val} <- Debug3],

@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 
-%% @doc Basic Obj utilities
+%% @doc Basic Actor utilities
 -module(nkservice_actor_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
@@ -28,342 +28,236 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
--export([is_path/1, path_to_actor_id/1, actor_id_to_path/1]).
--export([make_path/1, make_actor/1, get_srv/1, sample/0]).
+-export([make/2, update/2, update_meta/4, check_links/1]).
+-export([is_path/1, actor_id_to_path/1, actor_to_actor_id/1]).
+-export([make_reversed_srv_id/1, gen_srv_id/1]).
+-export([make_plural/1, normalized_name/1]).
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
-%% @doc
-is_path(Id) ->
-    case path_to_actor_id(Id) of
-        {ok, ActorId, _} ->
-            {true, ActorId};
-        {error, {is_not_path, UID}} ->
-            {false, UID};
+%% @doc Creates a new actor
+make(Actor, _Opts) ->
+    Syntax1 = nkservice_actor_syntax:syntax(),
+    Syntax2 = Syntax1#{
+        '__mandatory' := [srv, class, type, vsn]
+    },
+    case nklib_syntax:parse(Actor, Syntax2, #{}) of
+        {ok, Actor2, []} ->
+            #{type:=Type, spec:=Spec, metadata:=Meta1} = Actor2,
+            %% Add UID if not present
+            UID = case maps:find(uid, Actor2) of
+                {ok, UID0} ->
+                    UID0;
+                error ->
+                    make_uid(Type)
+            end,
+            %% Add Name if not present
+            Name = case maps:find(name, Actor2) of
+                {ok, Name0} ->
+                    normalized_name(Name0);
+                error ->
+                    make_name(UID)
+            end,
+            {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
+            Meta2 = Meta1#{<<"creationTime">> => Time},
+            Meta3 = update_meta(Name, Spec, Meta2, Time),
+            case check_links(Meta3) of
+                {ok, Meta4} ->
+                    Actor3 = Actor2#{
+                        uid => UID,
+                        name => Name,
+                        metadata := Meta4
+                    },
+                    {ok, Actor3};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {ok, _, [Field|_]} ->
+            {error, {field_unknown, Field}};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc
-path_to_actor_id(Id) ->
-    case to_bin(Id) of
-        <<"/srv/", Path2/binary>> ->
-            case binary:split(Path2, <<$/>>, [global]) of
-                [Srv, Class|Rest1] ->
-                    {Name, Resource} = case Rest1 of
-                        [Name0|Rest2] ->
-                            {Name0, Rest2};
-                        [] ->
-                            {<<>>, []}
-                    end,
-                    ActorId = #actor_id{
-                        srv = get_srv(Srv),
-                        class = Class,
-                        name = Name
-                    },
-                    {ok, ActorId, Resource};
+update(Actor, _Opts) ->
+    Syntax = nkservice_actor_syntax:syntax(),
+    case nklib_syntax:parse(Actor, Syntax, #{}) of
+        {ok, Actor2, []} ->
+            Id = case Actor2 of
+                #{uid:=UID} ->
+                    UID;
                 _ ->
-                    {error, path_invalid}
+                    nkservice_actor_util:actor_to_actor_id(Actor2)
+            end,
+            % nkservice_actor_srv will call update_meta/4
+            case nkservice_actor:update(Id, Actor2) of
+                ok ->
+                    {ok, Id};
+                {error, Error} ->
+                    {error, Error}
             end;
-        UID ->
-            {error, {is_not_path, UID}}
+        {ok, _, [Field|_]} ->
+            {error, {field_unknown, Field}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+update_meta(Name, Spec, Meta, Time3339) ->
+    Gen = maps:get(<<"generation">>, Meta, -1),
+    Vsn = erlang:phash2({Name, Spec, Meta}),
+    Meta#{
+        <<"updateTime">> => Time3339,
+        <<"generation">> => Gen+1,
+        <<"resourceVersion">> => to_bin(Vsn)
+    }.
+
+
+%% @private
+check_links(#{<<"links">>:=Links}=Meta) ->
+    case do_check_links(maps:to_list(Links), []) of
+        {ok, Links2} ->
+            {ok, Meta#{<<"links">>:=Links2}};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+check_links(Meta) ->
+    {ok, Meta}.
+
+
+%% @private
+do_check_links([], Acc) ->
+    {ok, maps:from_list(Acc)};
+
+do_check_links([{Type, Id}|Rest], Acc) ->
+    case nkservice_actor_db:find(Id) of
+        {ok, #actor_id{uid=UID}, _} ->
+            true = is_binary(UID),
+            do_check_links(Rest, [{Type, UID}|Acc]);
+        {error, actor_not_found} ->
+            {error, linked_actor_unknown};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Checks if ID is a path or #actor_id{}
+is_path(Path) ->
+    case to_bin(Path) of
+        <<$/, Path2/binary>> ->
+            case binary:split(Path2, <<$/>>, [global]) of
+                [SrvId, Class, Type, Name] ->
+                    ActorId = #actor_id{
+                        srv = gen_srv_id(SrvId),
+                        class = Class,
+                        type = Type,
+                        name = Name,
+                        uid = undefined,
+                        pid = undefined
+                    },
+                    {true, ActorId};
+                _ ->
+                    false
+            end;
+        _ ->
+            false
     end.
 
 
 %% @doc
-actor_id_to_path(#actor_id{srv=SrvId, class=Class, name=Name}) ->
-    list_to_binary([<<"/srv/">>, to_bin(SrvId), $/, Class, $/, Name]).
+actor_id_to_path(#actor_id{srv=SrvId, class=Class, type=Type, name=Name}) ->
+    list_to_binary([$/, to_bin(SrvId), $/, Class, $/, Type, $/, Name]).
+
+
+%% @doc
+actor_to_actor_id(Actor) ->
+    #{
+        srv := SrvId,
+        class := Class,
+        type := Type,
+        name := Name,
+        uid := UID
+    } = Actor,
+    #actor_id{
+        srv=SrvId,
+        class=Class,
+        type=Type,
+        name=Name,
+        uid=UID
+    }.
 
 
 %% @private
-get_srv(ActorSrvId) ->
-    case catch binary_to_existing_atom(ActorSrvId, utf8) of
+%% Will make an atom from a binary defining a service
+%% If the atom does not exist yet, and a default db service is defined,
+%% it is called to allow the generation of the atom
+gen_srv_id(BinSrvId) when is_binary(BinSrvId) ->
+    case catch binary_to_existing_atom(BinSrvId, utf8) of
         {'EXIT', _} ->
-            lager:warning("Module ~s creating atom '~s'", [?MODULE, ActorSrvId]),
-            binary_to_atom(ActorSrvId, utf8);
+            case nkservice_app:get_db_default_service() of
+                undefined ->
+                    lager:warning("Module ~s creating atom '~s'", [?MODULE, BinSrvId]),
+                    binary_to_atom(BinSrvId, utf8);
+                DefSrvId ->
+                    case ?CALL_SRV(DefSrvId, nkservice_make_srv_id, [DefSrvId, BinSrvId]) of
+                        {ok, SrvId} ->
+                            SrvId;
+                        {error, Error} ->
+                            error(Error)
+
+                    end
+            end;
         ExistingAtom ->
             ExistingAtom
     end.
 
 
 %% @private
-make_path(SrvId) ->
+make_reversed_srv_id(SrvId) ->
     Parts = lists:reverse(binary:split(to_bin(SrvId), <<$.>>, [global])),
     nklib_util:bjoin(Parts, $.).
 
 
-%% @doc
-make_actor(#actor_st{actor_id=ActorId, spec=Spec, meta=Meta}) ->
-    #actor_id{srv=SrvId, uid=UID, class=Class, name=Name} = ActorId,
-    #{
-        uid => UID,
-        srv => SrvId,
-        class => Class,
-        name => Name,
-        spec => Spec,
-        metadata => Meta
-    }.
+%% @private
+make_uid(Kind) ->
+    UUID = nklib_util:luid(),<<(to_bin(Kind))/binary, $-, UUID/binary>>.
 
 
-
-sample() ->
-    %% Root domain
-    {ok, ActorId1, []} = path_to_actor_id("/srv/root/class/name"),
-    #actor_id{srv = root} = ActorId1,
-    <<"/srv/root/class/name">> = actor_id_to_path(ActorId1),
-
-    %% Simple srv
-    {ok, ActorId2, []} = path_to_actor_id("/srv/a.root/class/name"),
-    #actor_id{srv = 'a.root'} = ActorId2,
-    <<"/srv/a.root/class/name">> = actor_id_to_path(ActorId2),
-
-    %% Complex srv
-    {ok, ActorId3, [<<"b">>,<<"1">>]} = path_to_actor_id("/srv/c.b.a.root/class/name/b/1"),
-    #actor_id{
-        srv = 'c.b.a.root',
-        uid = undefined,
-        class = <<"class">>,
-        name = <<"name">>,
-        pid = undefined
-    } = ActorId3,
-    <<"/srv/c.b.a.root/class/name">> = actor_id_to_path(ActorId3),
-    ok.
+%% @private
+make_name(Id) ->
+    UUID = case binary:split(Id, <<"-">>) of
+        [_, Rest] when byte_size(Rest) >= 7 ->
+            Rest;
+        [Rest] when byte_size(Rest) >= 7 ->
+            Rest;
+        _ ->
+            nklib_util:luid()
+    end,
+    normalized_name(binary:part(UUID, 0, 7)).
 
 
+%% @private
+normalized_name(Name) ->
+    nklib_parse:normalize(Name, #{space=>$_, allowed=>[$+, $-, $., $_]}).
 
 
-%%%% @doc
-%%obj_apply(Fun, Args, #obj_state{effective_srv=SrvId}) ->
-%%    apply(SrvId, Fun, Args).
-%%
-%%
-%%%% @private
-%%obj_error(Error, #obj_state{effective_srv=SrvId}) ->
-%%    nkservice_util:error(SrvId, Error).
-%%
-%%
-%%
-%%
-%%%% @doc Event sending using specs
-%%send_event({event, Type, State}) when is_atom(Type) ->
-%%    send_event(Type, #{}, State);
-%%
-%%send_event({event, {Type, Body}, State}) ->
-%%    send_event(Type, Body, State);
-%%
-%%send_event({event, {Type, ObjId, Body}, State}) ->
-%%    send_event(Type, ObjId, Body, State);
-%%
-%%send_event({event, {Type, ObjId, Path, Body}, State}) ->
-%%    send_event(Type, ObjId, Path, Body, State);
-%%
-%%send_event({event, [], State}) ->
-%%    {ok, State};
-%%
-%%send_event({event, [Ev|Rest], State}) ->
-%%    {ok, State2} = send_event({event, Ev, State}),
-%%    send_event({event, Rest, State2});
-%%
-%%send_event({ok, State3}) ->
-%%    {ok, State3};
-%%
-%%send_event({ignore, State3}) ->
-%%    {ok, State3}.
-%%
-%%
-%%%% @doc Sends events inside an object process directly to the event server
-%%%% If the obj has session_events, they are sent directly to the session also
-%%send_event(EvType, Body, #obj_state{id=#obj_id_ext{obj_id=ObjId, path=Path}}=State) ->
-%%    send_event(EvType, ObjId, Path, Body, State).
-%%
-%%
-%%%% @private
-%%send_event(EvType, ObjId, Body, #obj_state{id=#obj_id_ext{path=Path}}=State) ->
-%%    send_event(EvType, ObjId, Path, Body, State).
-%%
-%%
-%%%% @private
-%%send_event(EvType, ObjId, ObjPath, Body, #obj_state{id=#obj_id_ext{type=Type}}=State) ->
-%%    Event = #nkevent{
-%%        srv = ?NKROOT,
-%%        class = ?DOMAIN_EVENT_CLASS,
-%%        subclass = Type,
-%%        type = nklib_util:to_binary(EvType),
-%%        obj_id = ObjId,
-%%        domain = ObjPath,
-%%        body = Body
-%%    },
-%%    ?DEBUG("event sent to listeners: ~p", [lager:pr(Event, ?MODULE)], State),
-%%    send_session_event(Event, State),
-%%    ?CALL_NKROOT(object_db_event_send, [Event]),
-%%    nkevent:send(Event),
-%%    {ok, State}.
-%%
-%%
-%%%% @private
-%%send_session_event(#nkevent{type=Type}=Event, State) ->
-%%    #obj_state{session_events=Events, session_link=Link} = State,
-%%    case lists:member(Type, Events) of
-%%        true ->
-%%            case Link of
-%%                {Mod, Pid} ->
-%%                    Mod:send_event(Pid, Event);
-%%                _ ->
-%%                    ok
-%%            end;
-%%        false ->
-%%            ok
-%%    end.
-%%
-%%
-%%%% @doc
-%%search_syntax(Base) ->
-%%    Base#{
-%%        from => {integer, 0, none},
-%%        size => {integer, 0, none},
-%%        sort => {list, binary},
-%%        fields => {list, binary},
-%%        filters => map,
-%%        simple_query => binary,
-%%        simple_query_opts =>
-%%        #{
-%%            fields => {list, binary},
-%%            default_operator => {atom, ['OR', 'AND']}
-%%        }
-%%    }.
-%%
-%%
-%%%% @doc
-%%get_obj_info(#obj_state{id=#obj_id_ext{obj_id=ObjId, path=Path}, obj=Obj}) ->
-%%    #{
-%%        domain_id := DomainId,
-%%        parent_id := ParentId,
-%%        obj_name := ObjName,
-%%        created_by := CreatedBy,
-%%        created_time := CreatedTime,
-%%        updated_by := UpdatedBy,
-%%        updated_time := UpdatedTime
-%%    } = Obj,
-%%    List = [
-%%        {obj_id, ObjId},
-%%        {obj_name, ObjName},
-%%        {path, Path},
-%%        {domain_id, DomainId},
-%%        {parent_id, ParentId},
-%%        {name, maps:get(name, Obj, ObjName)},
-%%        {created_by, CreatedBy},
-%%        {created_time, CreatedTime},
-%%        {updated_by, UpdatedBy},
-%%        {updated_time, UpdatedTime},
-%%        case maps:get(description, Obj, <<>>) of
-%%            <<>> -> [];
-%%            Desc -> {description, Desc}
-%%        end,
-%%        case maps:get(tags, Obj, []) of
-%%            [] -> [];
-%%            Tags -> {tags, Tags}
-%%        end,
-%%        case maps:get(aliases, Obj, []) of
-%%            [] -> [];
-%%            Tags -> {tags, Tags}
-%%        end,
-%%        case maps:get(icon_id, Obj, <<>>) of
-%%            <<>> -> [];
-%%            IconId-> {icon_id, IconId}
-%%        end
-%%    ],
-%%    maps:from_list(lists:flatten(List)).
-%%
-%%
-%%%% @doc
-%%get_obj_name(#obj_state{id=#obj_id_ext{obj_id=ObjId, path=Path}, obj=Obj}) ->
-%%    #{
-%%        obj_name := ObjName
-%%    } = Obj,
-%%    List = [
-%%        {obj_id, ObjId},
-%%        {obj_name, ObjName},
-%%        {path, Path},
-%%        {name, maps:get(name, Obj, ObjName)},
-%%        case maps:get(description, Obj, <<>>) of
-%%            <<>> -> [];
-%%            Desc -> {description, Desc}
-%%        end,
-%%        case maps:get(icon_id, Obj, <<>>) of
-%%            <<>> -> [];
-%%            IconId-> {icon_id, IconId}
-%%        end
-%%    ],
-%%    maps:from_list(lists:flatten(List)).
-%%
-%%
-%%%% @doc
-%%link_to_session_server(Module, #obj_state{session_link={Mod, Pid}} = State) when is_atom(Mod), is_pid(Pid) ->
-%%    % Stop the API Server if we fail abruptly
-%%    ok = Mod:register(Pid, {nkdomain_stop, Module, self()}),
-%%    % Monitor the API server, reduce usage count if it fails
-%%    nkdomain_obj:links_add(usage, {nkdomain_api_server, Pid}, State);
-%%
-%%link_to_session_server(_Module, State) ->
-%%    State.
-%%
-%%
-%%
-%%
-%%%% @doc
-%%unlink_from_session_server(Module, #obj_state{session_link={Mod, _Pid}} = State) when is_atom(Mod) ->
-%%    nkdomain_obj:links_iter(
-%%        usage,
-%%        fun
-%%            ({nkdomain_api_server, Pid}, _Acc) ->
-%%                Mod:unregister(Pid, {nkdomain_stop, Module, self()});
-%%            (_, _Acc) ->
-%%                ok
-%%        end,
-%%        ok,
-%%        State),
-%%    State.
-%%
-%%
-%%%% @doc
-%%get_obj_session(#obj_state{session=Session}) ->
-%%    Session.
-%%
-%%
-%%%% @doc
-%%set_obj_session(Session, State) ->
-%%    State#obj_state{session=Session}.
-%%
-%%
-%%%% @doc
-%%set_active(true, #obj_state{obj=Obj}=State) ->
-%%    Obj2 = ?ADD_TO_OBJ(active, true, Obj),
-%%    State#obj_state{obj=Obj2, is_dirty=true};
-%%
-%%set_active(false, #obj_state{obj=Obj}=State) ->
-%%    Obj2 = ?REMOVE_FROM_OBJ(active, Obj),
-%%    State#obj_state{obj=Obj2, is_dirty=true}.
-%%
-%%
-%%%% @doc
-%%set_next_status_timer(Time, #obj_state{obj=Obj, next_status_timer=Timer}=State) ->
-%%    nklib_util:cancel_timer(Timer),
-%%    case Time of
-%%        0 ->
-%%            Obj2 = ?REMOVE_FROM_OBJ(next_status_time, Obj),
-%%            State#obj_state{obj=Obj2, is_dirty=true, next_status_timer=undefined};
-%%        _ ->
-%%            Now = nkdomain_util:timestamp(),
-%%            Obj2 = ?ADD_TO_OBJ(next_status_time, Now+Time, Obj),
-%%            Timer2 = erlang:send_after(Time, self(), nkdomain_obj_next_status_timer),
-%%            State#obj_state{obj=Obj2, is_dirty=true, next_status_timer=Timer2}
-%%    end.
-
-
-
+%% @private
+make_plural(Type) ->
+    Type2 = to_bin(Type),
+    Size = byte_size(Type2),
+    case binary:at(Type2, Size-1) of
+        $s ->
+            <<Type2/binary, "es">>;
+        $y ->
+            <<Type2:(Size-1)/binary, "ies">>;
+        _ ->
+            <<Type2/binary, "s">>
+    end.
 
 
 %% @private

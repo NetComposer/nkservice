@@ -12,9 +12,10 @@
 
 -record(actor_id, {
     srv :: nkservice:id(),
-    uid :: nkservice_actor:uid(),
     class :: nkservice_actor:class(),
+    type :: nkservice_actor:type(),
     name :: nkservice_actor:name(),
+    uid :: nkservice_actor:uid() | undefined,
     pid :: pid() | undefined
 }).
 
@@ -25,6 +26,7 @@
     config :: nkservice_actor_srv:config(),
     spec :: nkservice_actor:spec(),
     meta :: nkservice_actor:metadata(),
+    vsn :: nkservice_actor:vsn(),
     status :: map(),
     leader_pid :: pid() | undefined,
     is_leader_enabled :: boolean(),

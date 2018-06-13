@@ -55,14 +55,14 @@ start([PackageId|Rest], #state{id=SrvId, package_status=PackagesStatus}=State) -
                           [PackageId]),
                     do_start(PackageId, State)
             end;
-        Status ->
+        NewStatus ->
             % for 'starting', 'updating', 'runnig' do nothing
             case find_sup_pid(PackageId, State) of
                 {ok, _} ->
                     ok;
                 undefined ->
                     ?LLOG(warning, SrvId, "package '~s' in status '~s' has no sup!",
-                        [PackageId, Status])
+                        [PackageId, NewStatus])
             end,
             State
     end,
@@ -157,7 +157,7 @@ update_status(PackageId, stopped, State) ->
 
 update_status(PackageId, Status, State) ->
     #state{id=SrvId, package_status=AllStatus} = State,
-    Now = nklib_util:m_timestamp(),
+    Now = nklib_date:epoch(msecs),
     PackageStatus1 = maps:get(PackageId, AllStatus, #{}),
     PackageStatus2 = case Status of
         {error, Error} ->

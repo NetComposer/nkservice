@@ -20,13 +20,14 @@
 %% -------------------------------------------------------------------
 
 %% @doc Started after nkservice_srv on each node, one of them is elected 'leader'
-%% We register with our node process to get updated status of all available nodes,
-%% each time an update is received we check the nodes where we must start or
-%% stop the service
-%% Each instance sends us periodically full status, each time we check if
-%% it is running the our same version, or update it if not
-%% We also perform registrations for actors.
-%% If we die, a new leader is elected, actors will register again
+%% - We register with our node process to get updated status of all available nodes,
+%%   each time an update is received we check the nodes where we must start or
+%%   stop the service
+%% - Each service instance sends us periodically full status, each time we check if
+%%   it is running the our same version, or update it if not
+%%   We also perform registrations for actors.
+%% - A master is elected, and re-checked periodically
+%% - If we die, a new leader is elected, actors will register again
 
 -module(nkservice_master).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -35,7 +36,8 @@
 
 -export([get_info/1, stop/1, update/2, replace/2]).
 -export([get_leader_pid/1]).
--export([find_actor/2, find_cached_actor/1, register_actor/1]).
+-export([get_all_actors/1]).
+-export([find_actor/1, find_cached_actor/1, register_actor/1]).
 -export([updated_nodes_info/2, updated_service_status/2]).
 -export([call_leader/2, cast_leader/2]).
 -export([start_link/1]).
@@ -117,32 +119,13 @@ update(SrvId, Spec) ->
 
 
 %% @doc
-%% If we use an #actor_id{}, we will contact the domain
-%% If we use a uid(), we will try to find it in cache (but only on this node)
--spec find_actor(nkservice:id(), #actor_id{}|binary()|string()) ->
+%% If we don't have an ui, we will contact the service
+%% If we have a uid(), we will try to find it in cache (but only on this node)
+-spec find_actor(#actor_id{}) ->
     {ok, #actor_id{}} | {error, actor_not_found | term()}.
 
-find_actor(SrvId, #actor_id{uid=UID}=ActorId) when is_binary(UID), UID /= <<>> ->
-    % Do an uid-based search
-    % First, look in cache in this node. If not cached, but we have a srv id,
-    % call the master.
-    UID2 = to_bin(UID),
-    case find_cached_actor(UID2) of
-        {ok, ActorId2} ->
-            % We may add the pid()
-            {ok, ActorId2};
-        {error, actor_not_found} ->
-            case call_leader_retry(SrvId, {nkservice_find_actor_uid, ActorId}) of
-                {ok, ActorId2} ->
-                    insert_uid_cache(ActorId2),
-                    {ok, ActorId2};
-                {error, Error} ->
-                    {error, Error}
-            end
-    end;
-
-find_actor(SrvId, #actor_id{}=ActorId) ->
-    % Do a name-based search, on a service
+find_actor(#actor_id{srv=SrvId, uid=undefined}=ActorId) ->
+    % We don't have a valid UID, use the path fields (class, type, name)
     case call_leader_retry(SrvId, {nkservice_find_actor_id, ActorId}) of
         {ok, #actor_id{uid=UID}=ActorId2} ->
             case find_cached_actor(UID) of
@@ -154,7 +137,25 @@ find_actor(SrvId, #actor_id{}=ActorId) ->
             {ok, ActorId2};
         {error, Error} ->
             {error, Error}
+    end;
+
+find_actor(#actor_id{srv=SrvId, uid=UID}) ->
+    % We have a valid UID
+    % First, look in cache in this node. If not cached, call the master.
+    case find_cached_actor(UID) of
+        {ok, ActorId2} ->
+            % We may have added the pid()
+            {ok, ActorId2};
+        {error, actor_not_found} ->
+            case call_leader_retry(SrvId, {nkservice_find_actor_uid, UID}) of
+                {ok, ActorId2} ->
+                    insert_uid_cache(ActorId2),
+                    {ok, ActorId2};
+                {error, Error} ->
+                    {error, Error}
+            end
     end.
+
 
 %% @doc
 find_cached_actor(UID) ->
@@ -181,6 +182,11 @@ register_actor(#actor_id{srv=SrvId}=ActorId) ->
     end.
 
 
+%% @private
+get_all_actors(SrvId) ->
+    call_leader(SrvId, nkservice_get_actors).
+
+
 %% @doc Gets the pid of current leader for this service
 -spec get_leader_pid(nkservice:id()) ->
     pid() | undefined.
@@ -195,7 +201,7 @@ call_leader_retry(SrvId, Msg) ->
 
 
 %% @private
-call_leader_retry(SrvId, Msg, Try) when Try > 0 ->
+call_leader_retry(SrvId, Msg, Try) when is_atom(SrvId), Try > 0 ->
     case call_leader(SrvId, Msg, 5000) of
         {error, leader_not_found} ->
             lager:notice("Leader for ~p not found, retrying (~p)", [SrvId, Msg]),
@@ -251,6 +257,11 @@ updated_service_status(SrvId, Status) ->
     cast_leader(SrvId, {nkservice_update_status, Status}).
 
 
+
+
+
+
+
 %% ===================================================================
 %% Private
 %% ===================================================================
@@ -286,10 +297,10 @@ start_link(SrvId) ->
 init([SrvId]) ->
     true = nklib_proc:reg({?MODULE, SrvId}),
     nklib_proc:put(?MODULE, SrvId),
-    nkservice:put(SrvId, nkservice_leader_start, nklib_util:l_timestamp()),
+    % nkservice:put(SrvId, nkservice_leader_start, nklib_util:l_timestamp()),
     {ok, NodePid, Nodes} = nkservice_node:register_service_master(SrvId),
     monitor(process, NodePid),
-    {ok, UserState} = SrvId:service_leader_init(SrvId, #{}),
+    {ok, UserState} = ?CALL_SRV(SrvId, service_master_init, [SrvId, #{}]),
     State = #state{
         id = SrvId,
         is_leader = false,
@@ -343,8 +354,8 @@ handle_call({nkservice_find_actor_uid, UID}, _From, State) ->
         #actor_id{}=ActorId ->
             {reply, {ok, ActorId}, State};
         actor_not_found ->
-            case handle(service_leader_find_uid, [UID], State) of
-                {reply, ActorId, State2} ->
+            case handle(service_master_find_uid, [UID], State) of
+                {reply, #actor_id{}=ActorId, State2} ->
                     {reply, {ok, ActorId}, State2};
                 {stop, Error, State2} ->
                     {reply, {error, Error}, State2}
@@ -354,14 +365,22 @@ handle_call({nkservice_find_actor_uid, UID}, _From, State) ->
 handle_call({nkservice_register_actor, ActorId}, _From, State) ->
     case do_register_actor(ActorId, State) of
         ok ->
-            ?LLOG(notice, "Actor ~p registered", [ActorId], State),
+            ?LLOG(debug, "Actor ~p registered", [ActorId], State),
             {reply, {ok, self()}, State};
         {error, Error} ->
             {reply, {error, Error}, State}
     end;
 
+handle_call(nkservice_get_actors, _From, State) ->
+    #state{actor_ets = Ets} = State,
+    List = [
+        {Class, Type, Name, UID, Pid} ||
+        {{uid, UID}, Class, Type, Name, Pid} <-  ets:tab2list(Ets)
+    ],
+    {reply, List, State};
+
 handle_call(Msg, From, State) ->
-    handle(service_leader_handle_call, [Msg, From], State).
+    handle(service_master_handle_call, [Msg, From], State).
 
 
 %% @private
@@ -385,9 +404,13 @@ handle_cast({nkservice_update_status, _Status}, #state{is_leader=false}=State) -
     ?LLOG(warning, "received status at not-leader ~p", [self()], State),
     {noreply, State};
 
-
 handle_cast(nkservice_check_leader, State) ->
-    {noreply, find_leader(State)};
+    case find_leader(State) of
+        {ok, State2} ->
+            {noreply, State2};
+        {error, Error} ->
+            {stop, Error, State}
+    end;
 
 handle_cast({nkservice_register_slave, Slave}, #state{is_leader=true, slaves=Slaves}=State) ->
     Slaves2 = Slaves#{node(Slave) => Slave},
@@ -395,20 +418,11 @@ handle_cast({nkservice_register_slave, Slave}, #state{is_leader=true, slaves=Sla
 
 handle_cast({nkservice_register_slave, Slave}, #state{is_leader=false}=State) ->
     ?LLOG(warning, "not-leader received register_slave from ~p (~p)",
-        [Slave, self()], State),
-    {noreply, State};
-
-handle_cast({nkservice_register_slave, Slave}, State) ->
-    ?LLOG(warning, "not-leader received register_slave from ~p (~p)",
           [Slave, self()], State),
     {noreply, State};
 
-handle_cast(nkservice_other_is_leader, State) ->
-    ?LLOG(warning, "other is leader, stopping", [], State),
-    {stop, normal, State};
-
 handle_cast(Msg, State) ->
-    handle(service_leader_handle_cast, [Msg], State).
+    handle(service_master_handle_cast, [Msg], State).
 
 
 %% @private
@@ -416,13 +430,21 @@ handle_cast(Msg, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_info(nkservice_timed_check_leader, State) ->
-    State2 = find_leader(State),
     erlang:send_after(?CHECK_TIME, self(), nkservice_timed_check_leader),
-    {noreply, State2};
+    case find_leader(State) of
+        {ok, #state{id=SrvId, is_leader=IsLeader, leader_pid=Pid}=State2} ->
+            {ok, State3} = handle(service_master_leader, [SrvId, IsLeader, Pid], State2),
+            {noreply, State3};
+        {error, Error} ->
+            {stop, Error, State}
+    end;
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{leader_pid=Pid}=State) ->
-    ?LLOG(warning, "leader has failed", [], State),
-    {noreply, find_leader(State#state{leader_pid=undefined})};
+    #state{id=SrvId, is_leader=false} = State,
+    ?LLOG(warning, "leader has failed (~p)", [Pid], State),
+    gen_server:cast(self(), nkservice_check_leader),
+    {ok, State2} = handle(service_master_leader, [SrvId, false, undefined], State),
+    {noreply, State2};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{node_pid=Pid}=State) ->
     ?LLOG(error, "node server has failed!", [], State),
@@ -433,11 +455,11 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
         true ->
             {noreply, State};
         false ->
-            handle(service_leader_handle_info, [Msg], State)
+            handle(service_master_handle_info, [Msg], State)
     end;
 
 handle_info(Msg, State) ->
-    handle(service_leader_handle_info, [Msg], State).
+    handle(service_master_handle_info, [Msg], State).
 
 
 %% @private
@@ -458,7 +480,7 @@ code_change(OldVsn, #state{id=Id, user=UserState}=State, Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    catch handle(nkservice_leader_terminate, [Reason], State).
+    catch handle(service_master_terminate, [Reason], State).
 
 
 
@@ -601,7 +623,18 @@ find_leader(#state{id=SrvId, leader_pid=undefined}=State) ->
             monitor(process, Pid),
             find_leader(State#state{leader_pid=Pid});
         undefined ->
-            try_be_leader(State)
+            case global:register_name(global_name(SrvId), self(), fun ?MODULE:resolve/3) of
+                yes ->
+                    ?LLOG(notice, "WE are the new leader (~p)", [self()], State),
+                    nklib_proc:put(?MODULE, {SrvId, leader}),
+                    nklib_proc:put({?MODULE, SrvId}, leader),
+                    rpc:abcast(?MODULE, nkservice_check_leader),
+                    {ok, State#state{is_leader=true, leader_pid=self()}};
+                no ->
+                    ?LLOG(notice, "could not register as leader, waiting (me:~p)", [self()], State),
+                    % Wait for next iteration
+                    {ok, State}
+            end
     end;
 
 % We already have a registered leader, and we are that leader
@@ -609,15 +642,12 @@ find_leader(#state{id=SrvId, leader_pid=undefined}=State) ->
 find_leader(#state{id=SrvId, is_leader=true}=State) ->
     case get_leader_pid(SrvId) of
         Pid when Pid==self() ->
-            % ?LLOG(info, "check leader: we are leader (me:~p)", [self()], State),
-            ok;
+            {ok, State};
         Other ->
             ?LLOG(warning, "we were leader but is NOT the registered leader: ~p (me:~p)",
                   [Other, self()], State),
-            % Stop with an error
-            gen_server:cast(self(), nkservice_other_is_leader)
-    end,
-    State;
+            {error, other_is_leader}
+    end;
 
 % We already have a registered leader
 % We recheck the current leader is the one we have registered, and we re-register with it
@@ -634,26 +664,7 @@ find_leader(#state{id=SrvId, leader_pid=Pid}=State) ->
                   " (me:~p), waiting",
                   [Other, Pid, self()], State)
     end,
-    State.
-
-
-%% @private
-try_be_leader(#state{id=SrvId}=State) ->
-    case global:register_name(global_name(SrvId), self(), fun ?MODULE:resolve/3) of
-        yes ->
-            ?LLOG(notice, "WE are new leader (~p)", [self()], State),
-            nklib_proc:put(?MODULE, {SrvId, leader}),
-            nklib_proc:put({?MODULE, SrvId}, leader),
-            rpc:abcast(?MODULE, nkservice_check_leader),
-            State#state{
-                is_leader = true,
-                leader_pid = self()
-            };
-        no ->
-            ?LLOG(notice, "could not register as leader, waiting (me:~p)", [self()], State),
-            % Wait for next iteration
-            State
-    end.
+    {ok, State}.
 
 
 %% @private
@@ -689,13 +700,13 @@ resolve({nkservice_leader, SrvId}, Pid1, Pid2) ->
 
 %% @private
 do_register_actor(Actor, #state{actor_ets=Ets}=State) ->
-    #actor_id{class=Class, name=Name, uid=UID, pid=Pid} = Actor,
+    #actor_id{class=Class, type=Type, name=Name, uid=UID, pid=Pid} = Actor,
     case do_find_actor_id(Actor, State) of
         actor_not_found ->
             Ref = monitor(process, Pid),
             Objs = [
-                {{uid, UID}, Class, Name, Pid},
-                {{name, Class, Name}, UID, Pid},
+                {{uid, UID}, Class, Type, Name, Pid},
+                {{name, Class, Type, Name}, UID, Pid},
                 {{pid, Pid}, UID, Ref}
             ],
             ets:insert(Ets, Objs),
@@ -712,11 +723,11 @@ do_register_actor(Actor, #state{actor_ets=Ets}=State) ->
 %% @private
 do_find_actor_id(ActorId, #state{id=SrvId, actor_ets=Ets}=State) ->
     case ActorId of
-        #actor_id{srv=SrvId, class=Class, name=Name} ->
-            case ets:lookup(Ets, {name, Class, Name}) of
+        #actor_id{srv=SrvId, class=Class, type=Type, name=Name} ->
+            case ets:lookup(Ets, {name, Class, Type, Name}) of
                 [{_, UID, Pid}] ->
                     case do_find_actor_uid(UID, State) of
-                        #actor_id{srv=SrvId, class=Class, name=Name} ->
+                        #actor_id{srv=SrvId, class=Class, type=Type, name=Name} ->
                             {ok, UID, Pid};
                         actor_not_found ->
                             % TODO: remove after checks
@@ -735,11 +746,12 @@ do_find_actor_id(ActorId, #state{id=SrvId, actor_ets=Ets}=State) ->
 %% @private
 do_find_actor_uid(UID, #state{id=SrvId, actor_ets=Ets}) ->
     case ets:lookup(Ets, {uid, UID}) of
-        [{{uid, UID}, Class, Name, Pid}] ->
+        [{{uid, UID}, Class, Type, Name, Pid}] ->
             #actor_id{
                 srv = SrvId,
                 uid = UID,
                 class = Class,
+                type = Type,
                 name = Name,
                 pid = Pid
             };
@@ -755,10 +767,10 @@ do_remove_actor(Pid, #state{actor_ets=Ets}=State) ->
             nklib_util:demonitor(Ref),
             ets:delete(Ets, {pid, Pid}),
             case do_find_actor_uid(UID, State) of
-                #actor_id{class=Class, name=Name} ->
-                    ets:delete(Ets, {name, Class, Name});
+                #actor_id{class=Class, type=Type, name=Name} ->
+                    ets:delete(Ets, {name, Class, Type, Name});
                 actor_not_found ->
-                    % TODO: remove after checks: AGGG
+                    % TODO: remove after checks
                     ?LLOG(warning, "Inconsistency in deleting ~s: not_found", [UID], State)
             end,
             ets:delete(Ets, {uid, UID}),
@@ -771,7 +783,6 @@ do_remove_actor(Pid, #state{actor_ets=Ets}=State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
-
 
 %% @private
 insert_uid_cache(#actor_id{uid=UID, pid=Pid}=ActorId) ->
@@ -793,9 +804,6 @@ is_uid_cached(UID) ->
 %% @private
 get_uid_cached() ->
     nklib_proc:values(nkservice_actor_uid).
-
-
-
 
 
 %% @private

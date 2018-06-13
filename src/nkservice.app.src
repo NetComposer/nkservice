@@ -15,6 +15,7 @@
         nkpacket,
         nkevent,
         rfc3339,
+        yamerl,
         jose,
         otter,
         pgsql

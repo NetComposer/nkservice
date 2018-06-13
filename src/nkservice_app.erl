@@ -24,7 +24,7 @@
 -behaviour(application).
 
 -export([start/0, start/1, start/2, stop/1]).
--export([set_nodes/1]).
+-export([set_nodes/1, get_db_default_service/0]).
 -export([get/1, get/2, put/2, del/1]).
 
 -include("nkservice.hrl").
@@ -59,18 +59,24 @@ start(Type) ->
 
 
 %% @private OTP standard start callback
+%% dbDefaultService will be used when finding UUIDs on disk
+%% - nkservice_find_uid
+%%
+
+
 start(_Type, _Args) ->
     Syntax = #{
-        log_path => binary,
+        logPath => binary,
         nodes => {list, binary},
         ticktime => integer,
+        dbDefaultService => new_atom,
         '__defaults' => #{
-            log_path => <<"log">>
+            logPath => <<"log">>
         }
     },
     case nklib_config:load_env(?APP, Syntax) of
         {ok, _} ->
-            file:make_dir(get(log_path)),
+            file:make_dir(get(logPath)),
             {ok, Pid} = nkservice_sup:start_link(),
             {ok, Vsn} = application:get_key(nkservice, vsn),
             register_packages(),
@@ -102,6 +108,12 @@ set_nodes(Nodes) when is_list(Nodes) ->
 %% @private OTP standard stop callback
 stop(_) ->
     ok.
+
+
+%% @doc Gets default service for db, if defined
+%% See nkservice_callbacks:nkservice_find_uid and nkservice_make_srv_id
+get_db_default_service() ->
+    ?MODULE:get(dbDefaultService).
 
 
 %% @doc gets a configuration value

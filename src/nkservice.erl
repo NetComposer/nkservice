@@ -103,9 +103,7 @@
         class => package_class(),
         config => map(),
         hash => integer(),
-        plugin => atom(),
-        cache => map(),
-        debug => map()
+        plugin => atom()
     }.
 
 -type service_module() ::
@@ -117,9 +115,7 @@
         max_instances => integer(),
         hash => integer(),
         lua_state => binary(),          % Accessible only in direct functions
-        packages => [package_id()],     % Used packages
-        cache => map(),
-        debug => map()
+        packages => [package_id()]      % Used packages
     }.
 
 
@@ -139,7 +135,7 @@
         plugin_ids => [atom()],         % Expanded,bottom to top
         packages => #{package_id() => service_package()},
         modules => #{module_id() => service_module()},
-        timestamp => nklib_util:m_timestamp(),
+        timestamp => nklib_date:epoch(msecs),
         secret => #{{term(), binary(), binary()} => service_secret()},
         hash => integer(),
         meta => map()

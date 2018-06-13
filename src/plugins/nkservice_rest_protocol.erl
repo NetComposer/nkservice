@@ -220,7 +220,7 @@ call_rest_frame(Frame, NkPort, #state{plugin_id =Id, srv=SrvId, user_state=UserS
 
 %% @private
 set_debug(#state{srv=SrvId, plugin_id =Id}=State) ->
-    Debug = nkservice_util:get_debug(SrvId, {nkservice_rest, Id, ws}) == true,
+    Debug = nkservice_util:get_debug(SrvId, nkservice_rest, Id, ws) == true,
     put(nkservice_rest_debug, Debug),
     ?DEBUG("debug system activated", [], State).
 

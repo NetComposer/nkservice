@@ -166,7 +166,7 @@ set_table(Id, Name, Val) when is_list(Name) ->
 %% checks max instances and spawns a new instance
 spawn_callback_spec(SrvId, CB) ->
     #{class:=luerl, module_id:=ModuleId, luerl_fun:=_} = CB,
-    Max = nkservice_util:get_cache(SrvId, {nkservice_luerl, max_instances, ModuleId}),
+    Max = nkservice_util:get_cache(SrvId, nkservice_luerl, ModuleId, max_instances),
     case get_num_instances(SrvId, ModuleId) >= Max of
         true ->
             {error, too_many_instances};
@@ -393,7 +393,7 @@ terminate(_Reason, _State) ->
 
 %% @private
 set_debug(#state{srv=SrvId, module_id=Id}=State) ->
-    Debug = nkservice_util:get_debug(SrvId, {nkservice_luerl, Id}) == true,
+    Debug = nkservice_util:get_debug(SrvId, nkservice_luerl, Id, debug) == true,
     put(nkservice_luerl_debug, Debug),
     ?DEBUG("debug mode activated", [], State).
 

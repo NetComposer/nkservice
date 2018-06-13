@@ -68,8 +68,8 @@ syntax() ->
             class => binary,
             config => map,
             remove => boolean,
-            cache_map => map,                   % Type:term() => any()
-            debug_map => map,                   % Type:term() => any()
+            cache_map => map,                   % Not for users
+            debug_map => map,                   % Not for users
             module_id => binary,
             module_class => {atom, [luerl]},
             '__defaults' => #{config=>#{}},
@@ -84,8 +84,8 @@ syntax() ->
             code => binary,
             max_instances => {integer, 1, 1000000},
             debug => boolean,
-            cache_map => map,                   % Type:term() => any()
-            debug_map => [boolean,map],         % Type:term() => any()
+            cache_map => map,                  % Not for users
+            debug_map => map,                  % Not for users
             remove => boolean,
             reload => boolean,
             '__mandatory' => [id, class],
@@ -119,7 +119,7 @@ syntax_modules(List) ->
                             ok;
                         false ->
                             % We must provide one of code, file or url
-                            {error, {missing_field, nklib_util:bjoin([Id, url], <<".">>)}}
+                            {error, {field_missing, nklib_util:bjoin([Id, url], <<".">>)}}
                     end;
                 _ ->
                     ok
@@ -140,7 +140,7 @@ syntax_packages(List) ->
             % We will extract the class later, if possible
             ok;
         _ ->
-            {error, {missing_field, <<"class">>}}
+            {error, {field_missing, <<"class">>}}
     end.
 
 

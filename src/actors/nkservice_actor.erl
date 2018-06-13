@@ -19,13 +19,19 @@
 %% -------------------------------------------------------------------
 
 %% @doc Basic Actor behaviour
-%%
+%% Actors are identified by its 'uid' or its 'path'
+%% - When using uid, it will located only on local node or if is has been cached
+%%   at local node. Otherwise a database backend must be used.
+%% - Path is always '/srv/class/type/name'. The service will we asked if not cached
+
 
 -module(nkservice_actor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([get_actor/2, get_path/2, enable/3, update/3, delete/2, unload/2, unload/3]).
--export([search_classes/2, search_paths/2, search_paths_class/3, search_labels/3]).
--export([search_linked/3, search_core_fts/3]).
+-export([create/1]).
+-export([get_actor/1, get_path/1, enable/2, update/2, delete/1,
+         unload/1, unload/2]).
+-export([search_classes/2, search_types/3]).
+-export([search_linked_to/4, search_fts/4, search/2, search_ids/2]).
 -export_type([actor/0, id/0]).
 
 
@@ -42,57 +48,80 @@
 -type actor() ::
     #{
         srv => nkservice:id(),              %% Service where it is loaded
-        uid => uid(),                       %% Generated if not included
         class => class(),                   %% Mandatory
+        type => type(),                     %% Mandatory
         name => name(),                     %% Generated if not included
-        vsn => binary(),                    %% Version of the class, spec
+        uid => uid(),                       %% Always generated
+        vsn => vsn(),                       %% DB version
         spec => spec(),
-        metadata => metadata()
+        metadata => metadata(),
+        status => status()
     }.
 
--type id() :: uid() | path().
+-type id() :: path() | uid() | #actor_id{}.
 
 -type uid() :: binary().
 
 -type class() :: binary().
 
--type path() :: binary().   %% /srv/a.b.c/class/name (or 'root' for domain)
+-type type() :: binary().
+
+-type path() :: binary().   %% /srv/class/type/name
 
 -type name() :: binary().
+
+-type vsn() :: binary().
 
 -type spec() ::
     #{
         binary() => binary() | integer() | float() | boolean()
     }.
 
+-type status() :: map().
+
+
+-type filter_op() ::
+    eq | ne | lt | lte | gt | gte | values | prefix | exists.
+
+
+-type search_opts() ::
+    #{
+        from => pos_integer(),
+        size => pos_integer(),
+        totals => boolean(),
+        deep => boolean(),
+        filters => #{
+            'and' | 'or' | 'not' => [{Field::binary(), Op::filter_op(), term()}]
+        },
+        sort => [{asc|desc, Field::binary()}]
+    }.
+
 
 %% Recognized metadata
 %% -------------------
 %%
-%% - resourceVersion (integer)
+%% - resourceVersion (binary)
 %%   hash of the Name, Spec and Meta, generated automatically
 %%
 %% - generation (integer)
 %%   incremented at each change
 %%
-%% - creationTimestamp (binary rfc3339)
+%% - creationTime (rfc3339)
 %%   updated on creation
 %%
-%% - isDeleted (boolean)
-%%   updated on creation
-%%
-%% - deletionTimestamp (binary, rfc3339)
+%% - updateTime (rfc3339))
+%%   updated on update
 %%
 %% - isActivated (boolean)
 %%   must be loaded at all times
 %%
-%% - expiresUnixTime (integer, msecs)
+%% - expiresTime (rfc3339)
 %%
-%% - labels( binary => binary | integer | boolean)
+%% - labels (binary() => binary | integer | boolean)
+%%
+%% - fts (binary() => [binary()]
 %%
 %% - links (binary => binary)
-%%
-%% - linkedActors (binary => binary)    % Generated automatically
 %%
 %% - annotations (binary => binary | integer | boolean)
 %%
@@ -103,16 +132,20 @@
 %%
 %% - alarms ([binary])
 %%
-%% - nextStatusUnixTime (integer, msecs)
+%% - nextStatusTime (rfc3339)
 %%
+%% - description (binary)
+%%
+%% - createdBy (binary)
+%%
+%% - updatedBy (binary)
+%%
+
 
 -type metadata() ::
     #{
         binary() => binary() | integer() | float() | boolean()
     }.
-
-
-
 
 
 %% ===================================================================
@@ -121,19 +154,24 @@
 
 
 %% @doc
--spec get_actor(nkservice:id(), id()|pid()) ->
-    {ok, actor()} | {error, term()}.
-
-get_actor(SrvId, Id) ->
-    nkservice_actor_srv:sync_op(SrvId, Id, get_actor).
+create(Actor) ->
+    nkservice_actor_db:create(Actor, #{}).
 
 
 %% @doc
--spec get_path(nkservice:id(), id()|pid()) ->
-    {ok, map()} | {error, term()}.
+-spec get_actor(id()|pid()) ->
+    {ok, actor()} | {error, term()}.
 
-get_path(SrvId, Id) ->
-    case nkservice_actor_srv:sync_op(SrvId, Id, get_actor_id) of
+get_actor(Id) ->
+    nkservice_actor_srv:sync_op(Id, get_actor).
+
+
+%% @doc
+-spec get_path(id()|pid()) ->
+    {ok, path()} | {error, term()}.
+
+get_path(Id) ->
+    case nkservice_actor_srv:sync_op(Id, get_actor_id) of
         {ok, ActorId} ->
             {ok, nkservice_actor_util:actor_id_to_path(ActorId)};
         {error, Error} ->
@@ -142,99 +180,98 @@ get_path(SrvId, Id) ->
 
 
 %% @doc Enables/disabled an object
--spec enable(nkservice:id(), id()|pid(), boolean()) ->
+-spec enable(id()|pid(), boolean()) ->
     ok | {error, term()}.
 
-enable(SrvId, Id, Enable) ->
-    nkservice_actor_srv:sync_op(SrvId, Id, {enable, Enable}).
+enable(Id, Enable) ->
+    nkservice_actor_srv:sync_op(Id, {enable, Enable}).
+
 
 
 %% @doc Updates an object
--spec update(nkservice:id(), id()|pid(), map()) ->
+-spec update(id()|pid(), map()) ->
     {ok, UnknownFields::[binary()]} | {error, term()}.
 
-update(SrvId, Id, Update) ->
-    nkservice_actor_srv:sync_op(SrvId, Id, {update, Update}).
-
-
-%%%% @doc Updates an object's obj_name
-%%-spec update_name(id()|pid(), binary()) ->
-%%    ok | {error, term()}.
-%%
-%%update_name(Id, ObjName) ->
-%%    nkservice_actor_srv:sync_op(Id, {update_name, ObjName}).
+update(Id, Update) ->
+    nkservice_actor_srv:sync_op(Id, {update, Update}).
 
 
 %% @doc Remove an object
--spec delete(nkservice:id(), id()|pid()) ->
+-spec delete(id()|pid()) ->
     ok | {error, term()}.
 
-delete(SrvId, Id) ->
-    nkservice_actor_srv:sync_op(SrvId, Id, delete).
+delete(Id) ->
+    nkservice_actor_srv:sync_op(Id, delete).
 
 
 %% @doc Unloads the object
--spec unload(nkservice:id(), id()|pid()) ->
+-spec unload(id()|pid()) ->
     ok | {error, term()}.
 
-unload(SrvId, Id) ->
-    unload(SrvId, Id, normal).
+unload(Id) ->
+    unload(Id, normal).
 
 
 %% @doc Unloads the object
--spec unload(nkservice:id(), id()|pid(), Reason::nkservice:error()) ->
+-spec unload(id()|pid(), Reason::nkservice:error()) ->
     ok | {error, term()}.
 
-unload(SrvId, Id, Reason) ->
-    nkservice_actor_srv:async_op(SrvId, Id, {unload, Reason}).
+unload(Id, Reason) ->
+    nkservice_actor_srv:async_op(Id, {unload, Reason}).
 
 
 %% @doc
--spec search_classes(nkservice:id(), nkservice:id()) ->
+-spec search_classes(nkservice:id(), #{deep=>boolean()}) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
-search_classes(SrvId, Srv) ->
-    nkservice_actor_db:aggregation(SrvId, {aggregation_core_classes, Srv}).
+search_classes(SrvId, Opts) ->
+    Deep = maps:get(deep, Opts, true),
+    nkservice_actor_db:aggregation(SrvId, {aggregation_service_classes, SrvId, #{deep=>Deep}}).
+
+
+%% @doc
+-spec search_types(nkservice:id(), class(), #{deep=>boolean()}) ->
+    {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
+
+search_types(SrvId, Class, Opts) ->
+    Deep = maps:get(deep, Opts, true),
+    nkservice_actor_db:aggregation(SrvId, {aggregation_service_types, SrvId, Class, #{deep=>Deep}}).
+
+
+%% @doc Gets objects pointing to another
+-spec search_linked_to(nkservice:id(), nkservice_actor:id(), nkservice_actor:class(),
+                       #{from=>pos_integer(), size=>pos_integer()}) ->
+    {ok, #{UID::binary() => LinkType::binary()}} | {error, term()}.
+
+search_linked_to(SrvId, Id, LinkType, Params) ->
+    case nkservice_actor_db:find(Id) of
+        {ok, #actor_id{srv=ActorSrvId, uid=UID}} ->
+            nkservice_actor_db:search(ActorSrvId, {search_service_linked, SrvId, UID, LinkType, Params});
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Gets objects under a path, sorted by path
--spec search_paths(nkservce:id(), nkservice:id()) ->
-    {ok, [#actor_id{}]} | {error, term()}.
+-spec search_fts(nkservce:id(), binary(), binary(),
+    #{from=>pos_integer(), size=>pos_integer()}) ->
+    {ok, [UID::binary()], Meta::map()} | {error, term()}.
 
-search_paths(SrvId, Srv) ->
-    nkservice_actor_db:search(SrvId, {search_core_paths, Srv}).
-
-
-%% @doc Gets objects under a path, sorted by path
--spec search_paths_class(nkservce:id(), nkservice:id(), nkservice_actor:class()) ->
-    {ok, [#actor_id{}]} | {error, term()}.
-
-search_paths_class(SrvId, Srv, Class) ->
-    nkservice_actor_db:search(SrvId, {search_core_paths_class, Srv, Class}).
+search_fts(SrvId, Field, Word, Opts) ->
+    nkservice_actor_db:search(SrvId, {search_service_fts, SrvId, Field, Word, Opts}).
 
 
-%% @doc Gets objects under a path, sorted by path
--spec search_labels(nkservce:id(), nkservice:id(), nkservice_actor:class()) ->
-    {ok, [#actor_id{}]} | {error, term()}.
+%% @doc Generic search returning actors
+-spec search(nkservice:id(), search_opts()) ->
+    {ok, [actor()], Meta::map()} | {error, term()}.
 
-search_labels(SrvId, Srv, Labels) ->
-    nkservice_actor_db:search(SrvId, {search_core_labels, Srv, Labels}).
-
-
-%% @doc Gets objects under a path, sorted by path
--spec search_linked(nkservce:id(), nkservice:id(), nkservice_actor:class()) ->
-    {ok, [nkservice_actor:uid()]} | {error, term()}.
-
-search_linked(SrvId, UID, Class) ->
-    nkservice_actor_db:search(SrvId, {search_core_linked, UID, Class}).
+search(SrvId, Opts) ->
+    nkservice_actor_db:search(SrvId, {search_service_actors, SrvId, Opts}).
 
 
-%% @doc Gets objects under a path, sorted by path
--spec search_core_fts(nkservce:id(), nkservice:id(), binary()) ->
-    {ok, [#actor_id{}]} | {error, term()}.
+%% @doc Generic search returning actors
+-spec search_ids(nkservice:id(), search_opts()) ->
+    {ok, [#actor_id{}], Meta::map()} | {error, term()}.
 
-search_core_fts(SrvId, Srv, Word) ->
-    nkservice_actor_db:search(SrvId, {search_core_fts, Srv, Word}).
-
-
-
+search_ids(SrvId, Opts) ->
+    nkservice_actor_db:search(SrvId, {search_service_actors_id, SrvId, Opts}).

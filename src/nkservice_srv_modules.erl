@@ -171,7 +171,7 @@ update_status(ModuleId, stopped, State) ->
 
 update_status(ModuleId, Status, State) ->
     #state{id=SrvId, module_status=AllStatus} = State,
-    Now = nklib_util:m_timestamp(),
+    Now = nklib_date:epoch(msecs),
     ModuleStatus1 = maps:get(ModuleId, AllStatus, #{}),
     ModuleStatus2 = case Status of
         {error, Error} ->

@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([register_package/2, get_package_plugin/1]).
--export([get_cache/2, get_debug/2, get_secret/2, get_callback/4]).
+-export([get_cache/4, get_debug/4, get_secret/2, get_callback/4]).
 -export([name/1]).
 -export([get_srv_secret/2, set_srv_secret/3]).
 -export([luerl_api/6]).
@@ -81,19 +81,19 @@ name(Name) ->
 
 
 %% @doc Gets a cache entry
--spec get_cache(nkservice:id(), term()) ->
+-spec get_cache(nkservice:id(), term(), term(), term()) ->
     term() | undefined.
 
-get_cache(SrvId, Id) when is_atom(SrvId) ->
-    ?CALL_SRV(SrvId, service_cache, [Id]).
+get_cache(SrvId, Group, Id, Key) when is_atom(SrvId) ->
+    ?CALL_SRV(SrvId, service_cache, [{Group, Id, Key}]).
 
 
 %% @doc Gets a debug entry
--spec get_debug(nkservice:id(), term()) ->
+-spec get_debug(nkservice:id(), term(), term(), term()) ->
     term() | undefined.
 
-get_debug(SrvId, Id) when is_atom(SrvId) ->
-    ?CALL_SRV(SrvId, service_debug, [Id]).
+get_debug(SrvId, Group, Id, Class) when is_atom(SrvId) ->
+    ?CALL_SRV(SrvId, service_debug, [{Group, Id, Class}]).
 
 
 %% @doc Gets a secret entry

@@ -20,8 +20,8 @@
 
 -module(nkservice_pgsql_actors).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([init/2]).
--export([find/3, load/3, save/4, delete/4, search/4, aggregation/4]).
+-export([init/2, drop/2]).
+-export([find/3, read/3, save/4, delete/4, search/4, aggregation/4]).
 -export([get_links/4, get_linked/4]).
 -export([query/3, query/4]).
 -export_type([result_fun/0]).
@@ -30,10 +30,7 @@
 -include("nkservice_actor.hrl").
 
 
-
 -define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE PGSQL Actors "++Txt, Args)).
-
-
 
 %% ===================================================================
 %% Types
@@ -47,19 +44,73 @@
 %% API
 %% ===================================================================
 
-
+%% @private
 init(SrvId, PackageId) ->
-    query(SrvId, PackageId, create_database(), #{}).
+    init(SrvId, PackageId, 10).
+
+
+%% @private
+init(SrvId, PackageId, Tries) when Tries > 0 ->
+    case query(SrvId, PackageId, <<"SELECT id,version FROM versions">>) of
+        {ok, [Rows], _} ->
+            case maps:from_list(Rows) of
+                #{
+                    <<"actors">> := ActorsVsn,
+                    <<"links">> := LinksVsn,
+                    <<"fts">> := FtsVsn
+                } ->
+                    case {ActorsVsn, LinksVsn, FtsVsn} of
+                        {<<"1">>, <<"1">>, <<"1">>} ->
+                            ?LLOG(notice, "detected database at last version", []),
+                            ok;
+                        _ ->
+                            ?LLOG(warning, "detected database at wrong version", []),
+                            ok
+                    end;
+                _ ->
+                    ?LLOG(error, "unrecognized database!", []),
+                    {error, database_unrecognized}
+            end;
+        {error, relation_unknown} ->
+            ?LLOG(warning, "database not found: Creating it", []),
+            case query(SrvId, PackageId, create_database_query()) of
+                {ok, _, _} ->
+                    ok;
+                {error, Error} ->
+                    ?LLOG(warning, "Could not create database: ~p", [Error]),
+                    {error, Error}
+            end;
+        {error, Error} ->
+            ?LLOG(notice, "could not create database: ~p (~p tries left)", [Error, Tries]),
+            timer:sleep(1000),
+            init(SrvId, PackageId, Tries-1)
+    end;
+
+init(_SrvId, _PackageId, _Tries) ->
+    {error, database_not_available}.
 
 
 
-%% TODO: we need to re-create all connections or it will not know about the new database
-create_database() ->
-    <<"
+%% @private
+drop(SrvId, PackageId) ->
+    Q = <<"
         DROP TABLE IF EXISTS versions CASCADE;
         DROP TABLE IF EXISTS actors CASCADE;
         DROP TABLE IF EXISTS links CASCADE;
         DROP TABLE IF EXISTS fts CASCADE;
+    ">>,
+    case query(SrvId, PackageId, Q) of
+        {ok, _, _} ->
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+create_database_query() ->
+    <<"
+        BEGIN;
         CREATE TABLE versions (
             id STRING PRIMARY KEY NOT NULL,
             version STRING NOT NULL
@@ -68,13 +119,16 @@ create_database() ->
             uid STRING PRIMARY KEY NOT NULL,
             srv STRING NOT NULL,
             class STRING NOT NULL,
+            actor_type STRING NOT NULL,
             name STRING NOT NULL,
-            spec JSONB,
-            metadata JSONB,
+            vsn STRING NOT NULL,
+            spec JSONB NOT NULL,
+            metadata JSONB NOT NULL,
             path STRING NOT NULL,
             last_update INT NOT NULL,
             expires_time INT,
-            UNIQUE INDEX name_idx (srv, class, name),
+            fts_words STRING,
+            UNIQUE INDEX name_idx (srv, class, actor_type, name),
             INDEX path_idx (path, class),
             INDEX last_update_idx (last_update),
             INDEX expires_time_idx (expires_time),
@@ -82,30 +136,45 @@ create_database() ->
             INVERTED INDEX metadata_idx (metadata)
         );
         INSERT INTO versions VALUES ('actors', '1');
+        CREATE TABLE labels (
+            uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            label_key STRING NOT NULL,
+            label_value STRING NOT NULL,
+            path STRING NOT NULL,
+            PRIMARY KEY (uid, label_key),
+            UNIQUE INDEX label_idx (label_key, uid)
+        ) INTERLEAVE IN PARENT actors(uid);
+        INSERT INTO versions VALUES ('labels', '1');
         CREATE TABLE links (
-            target STRING NOT NULL,
+            uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
             link_type STRING NOT NULL,
-            orig STRING NOT NULL,
-            PRIMARY KEY (target, link_type, orig)
-        );
+            link_target STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            path STRING NOT NULL,
+            PRIMARY KEY (uid, link_target, link_type),
+            UNIQUE INDEX link_idx (link_target, link_type, uid)
+        ) INTERLEAVE IN PARENT actors(uid);
         INSERT INTO versions VALUES ('links', '1');
         CREATE TABLE fts (
-            word STRING NOT NULL,
-            uid STRING NOT NULL,
+            uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            fts_word STRING NOT NULL,
+            fts_field STRING NOT NULL,
             path STRING NOT NULL,
-            class STRING NOT NULL,
-            PRIMARY KEY (word, uid)
-        );
+            PRIMARY KEY (uid, fts_word, fts_field),
+            UNIQUE INDEX fts_idx (fts_word, fts_field, uid)
+        )  INTERLEAVE IN PARENT actors(uid);
         INSERT INTO versions VALUES ('fts', '1');
+        COMMIT;
     ">>.
 
 
 %% @doc Called from actor_db_find callback
-find(SrvId, PackageId, #actor_id{srv=ActorSrvId, class=Class, name=Name}=ActorId) ->
+find(SrvId, PackageId, #actor_id{}=ActorId) ->
+    #actor_id{srv=ActorSrvId, class=Class, type=Type, name=Name} = ActorId,
     Query = [
         <<"SELECT uid FROM actors">>,
         <<" WHERE srv=">>, quote(ActorSrvId),
         <<" AND class=">>, quote(Class),
+        <<" AND actor_type=">>, quote(Type),
         <<" AND name=">>, quote(Name), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
@@ -119,15 +188,16 @@ find(SrvId, PackageId, #actor_id{srv=ActorSrvId, class=Class, name=Name}=ActorId
 
 find(SrvId, PackageId, UID) ->
     Query = [
-        <<"SELECT srv,class,name FROM actors">>,
+        <<"SELECT srv,class,actor_type,name FROM actors">>,
         <<" WHERE uid=">>, quote(UID), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
-        {ok, [[{ActorSrvId, Class, Name}]], QueryMeta} ->
+        {ok, [[{ActorSrvId, Class, Type, Name}]], QueryMeta} ->
             ActorId = #actor_id{
                 srv = get_srv(ActorSrvId),
                 uid = UID,
                 class = Class,
+                type = Type,
                 name = Name
             },
             {ok, ActorId, QueryMeta};
@@ -138,54 +208,110 @@ find(SrvId, PackageId, UID) ->
     end.
 
 
-%% @doc Called from actor_db_find callback
-
-
 %% @doc Called from actor_db_read callback
-load(SrvId, PackageId, UID) ->
-    UID2 = to_bin(UID),
+read(SrvId, PackageId, #actor_id{}=ActorId) ->
+    #actor_id{srv=ActorSrvId, class=Class, type=Type, name=Name} = ActorId,
     Query = [
-        <<"SELECT srv,class,name,metadata,spec">>,
-        <<" FROM actors WHERE uid=">>, quote(UID2), <<";">>
+        <<"SELECT uid,vsn,metadata,spec FROM actors ">>,
+        <<" WHERE srv=">>, quote(ActorSrvId),
+        <<" AND class=">>, quote(Class),
+        <<" AND actor_type=">>, quote(Type),
+        <<" AND name=">>, quote(Name), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {ActorSrvId, Class, Name, {jsonb, Meta}, {jsonb, Spec}} = Fields,
+            {UID, Vsn, {jsonb, Meta}, {jsonb, Spec}} = Fields,
             Actor = #{
-                uid => UID2,
-                srv => get_srv(ActorSrvId),
+                uid => UID,
+                srv => ActorSrvId,
                 class => Class,
+                type => Type,
                 name => Name,
+                vsn => Vsn,
                 spec => nklib_json:decode(Spec),
                 metadata => nklib_json:decode(Meta)
             },
             {ok, Actor, QueryMeta};
+        {ok, [[]], _QueryMeta} ->
+            {error, actor_not_found};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+read(SrvId, PackageId, UID) ->
+    UID2 = to_bin(UID),
+    Query = [
+        <<"SELECT srv,class,actor_type,name,vsn,metadata,spec FROM actors ">>,
+        <<" WHERE uid=">>, quote(UID2), <<";">>
+    ],
+    case query(SrvId, PackageId, Query) of
+        {ok, [[Fields]], QueryMeta} ->
+            {ActorSrvId, Class, Type, Name, Vsn, {jsonb, Meta}, {jsonb, Spec}} = Fields,
+            Actor = #{
+                uid => UID2,
+                srv => get_srv(ActorSrvId),
+                class => Class,
+                type => Type,
+                name => Name,
+                vsn => Vsn,
+                spec => nklib_json:decode(Spec),
+                metadata => nklib_json:decode(Meta)
+            },
+            {ok, Actor, QueryMeta};
+        {ok, [[]], _QueryMeta} ->
+            {error, actor_not_found};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc Called from actor_save callback
+%% Links to invalid objects will not be allowed (foreign key)
 save(SrvId, PackageId, Mode, Actor) ->
     #{
         uid := UID,
         srv := ActorSrvId,
         class := Class,
+        type := Type,
         name := Name,
+        vsn := Vsn,
         spec := Spec,
         metadata := Meta
     } = Actor,
-    Path = nkservice_actor_util:make_path(ActorSrvId),
-    Fields = fields([
+    Path = nkservice_actor_util:make_reversed_srv_id(ActorSrvId),
+    {ok, Updated} = nklib_date:to_epoch(maps:get(<<"updateTime">>, Meta), secs),
+    Expires = case maps:get(<<"expiresTime">>, Meta, 0) of
+        0 ->
+            0;
+        Exp1 ->
+            {ok, Exp2} = nklib_date:to_epoch(Exp1, secs),
+            Exp2
+    end,
+    FTS = maps:get(<<"fts">>, Meta, #{}),
+    FtsWords = lists:foldl(
+        fun({Key, Values}, Acc1) ->
+            lists:foldl(
+                fun(Value, Acc2) ->
+                    [<<" ">>, to_bin(Key), $:, to_bin(Value) | Acc2]
+                end,
+                Acc1,
+                Values)
+        end,
+        [],
+        maps:to_list(FTS)),
+    Fields = quote_list([
         UID,
         ActorSrvId,
         Class,
+        Type,
         Name,
+        Vsn,
         Spec,
         Meta,
         Path,
-        nklib_util:m_timestamp(),
-        maps:get(<<"expiresUnixTime">>, Meta, 0)
+        Updated,
+        Expires,
+        [FtsWords, <<" ">>]
     ]),
     Verb = case Mode of
         create ->
@@ -196,62 +322,87 @@ save(SrvId, PackageId, Mode, Actor) ->
     ActorQuery = [
         Verb,
         <<" INTO actors">>,
-        <<" (uid,srv,class,name,spec,metadata,path,last_update,expires_time)">>,
+        <<" (uid,srv,class,actor_type,name,vsn,spec,metadata,path,last_update,expires_time,fts_words)">>,
         <<" VALUES (">>, Fields, <<");">>
     ],
-    Links = maps:get(<<"links">>, Meta, #{}),
-    LinksQuery1 = lists:map(
-        fun({Type, UID2}) ->
+    QUID = quote(UID),
+    QPath = quote(Path),
+    Labels = maps:get(<<"labels">>, Meta, #{}),
+    LabelsQuery1 = [<<"DELETE FROM labels WHERE uid=">>, QUID, <<";">>],
+    LabelsQuery2 = lists:map(
+        fun({Key, Val}) ->
             [
-                <<"UPSERT INTO links (target,link_type,orig) VALUES (">>,
-                quote(UID2), $,, quote(Type), $,, quote(UID), <<");">>
+                <<"UPSERT INTO labels (uid,label_key,label_value,path) VALUES (">>,
+                QUID, $,, quote(Key), $,, quote(to_bin(Val)), $,, QPath, <<");">>
+            ]
+        end,
+        maps:to_list(Labels)),
+    Links = maps:get(<<"links">>, Meta, #{}),
+    LinksQuery1 = [<<"DELETE FROM links WHERE uid=">>, QUID, <<";">>],
+    LinksQuery2 = lists:map(
+        fun({LinkType, UID2}) ->
+            [
+                <<"UPSERT INTO links (uid,link_type,link_target,path) VALUES (">>,
+                QUID, $,, quote(LinkType), $,, quote(UID2), $,, QPath, <<");">>
             ]
         end,
         maps:to_list(Links)),
-    LinksQuery2 = [<<"DELETE FROM links WHERE orig=">>, quote(UID), <<";">> | LinksQuery1],
-    FTS = maps:get(<<"fts">>, Meta, []),
-    FTSQuery1 = lists:map(
-        fun(Word) ->
-            [
-                <<"UPSERT INTO fts (word,uid,path,class) VALUES (">>,
-                quote(Word), $,, quote(UID), $,, quote(Path), $,, quote(Class), <<");">>
-            ]
+    FTSQuery1 = [<<"DELETE FROM fts WHERE uid=">>, QUID, <<";">>],
+    FTSQuery2 = lists:map(
+        fun({Field, WordList}) ->
+            lists:map(
+                fun(Word) ->
+                    [
+                        <<"UPSERT INTO fts (uid,fts_word,fts_field,path) VALUES (">>,
+                        QUID, $,, quote(Word), $,, quote(Field), $,, QPath, <<");">>
+                    ]
+                end,
+                WordList)
         end,
-        FTS),
-    FTSQuery2 = [<<"DELETE FROM fts WHERE uid=">>, quote(UID), <<";">> | FTSQuery1],
-    Query = [<<"BEGIN;">>, ActorQuery, LinksQuery2, FTSQuery2, <<"COMMIT;">>],
+        maps:to_list(FTS)),
+    Query = [
+        <<"BEGIN;">>,
+        ActorQuery,
+        LabelsQuery1,
+        LabelsQuery2,
+        LinksQuery1,
+        LinksQuery2,
+        FTSQuery1,
+        FTSQuery2,
+        <<"COMMIT;">>
+    ],
     case query(SrvId, PackageId, Query, #{auto_rollback=>true}) of
         {ok, _, SaveMeta} ->
             {ok, SaveMeta};
+        {error, foreign_key_violation} ->
+            {error, linked_actor_unknown};
         {error, Error} ->
             {error, Error}
     end.
 
 
-%% TODO Fold over operations
-%%
-%%
-
-
 %% @doc
 delete(SrvId, PackageId, UID, Opts) ->
+    QUID = quote(UID),
     UID2 = to_bin(UID),
+    QUID2 = quote(UID2),
     QueryFun = fun(Pid) ->
         do_query(Pid, <<"BEGIN;">>, #{}),
         DelQuery = case Opts of
             #{cascade:=true} ->
                 lists:foldl(
                     fun(DeleteUID, Acc) ->
+                        QDeleteUID = quote(DeleteUID),
                         [
-                            [<<"DELETE FROM actors WHERE uid=">>, quote(DeleteUID), <<";">>],
-                            [<<"DELETE FROM links WHERE origorig=">>, quote(DeleteUID), <<";">>]
+                            [<<"DELETE FROM actors WHERE uid=">>, QDeleteUID, <<";">>],
+                            [<<"DELETE FROM links WHERE orig=">>, QDeleteUID, <<";">>]
                             | Acc
                         ]
                     end,
                     [],
                     delete_find_nested(Pid, [UID2], sets:new()));
             _ ->
-                LinksQ = [<<"SELECT uid1 FROM links WHERE origorig=">>, quote(UID), <<";">>],
+                LinksQ = [<<"SELECT uid1 FROM links WHERE orig=">>, QUID, <<";">>],
                 case do_query(Pid, LinksQ, #{}) of
                     {ok, [[]], _} ->
                         ok;
@@ -264,9 +415,10 @@ delete(SrvId, PackageId, UID, Opts) ->
                         end
                 end,
                 [
-                    <<"DELETE FROM actors WHERE uid=">>, quote(UID2), <<";">>,
-                    <<"DELETE FROM links WHERE orig=">>, quote(UID2), <<";">>,
-                    <<"DELETE FROM fts WHERE uid=">>, quote(UID2), <<";">>
+                    <<"DELETE FROM actors WHERE uid=">>, QUID2, <<";">>,
+                    <<"DELETE FROM labels WHERE uid=">>, QUID2, <<";">>,
+                    <<"DELETE FROM links WHERE orig=">>, QUID2, <<";">>,
+                    <<"DELETE FROM fts WHERE uid=">>, QUID2, <<";">>
                 ]
         end,
         do_query(Pid, DelQuery, #{}),
@@ -306,13 +458,6 @@ delete_find_nested(Pid, [UID|Rest], Set) ->
                     end
             end
     end.
-
-
-
-
-
-
-
 
 
 %% @doc
@@ -399,12 +544,14 @@ get_linked(SrvId, PackageId, UID, Type) ->
 %% ===================================================================
 
 %% @private
-query(SrvId, PackageId, Fun) ->
-    query(SrvId, PackageId, Fun, #{}).
+query(SrvId, PackageId, Query) ->
+    query(SrvId, PackageId, Query, #{}).
 
 
 %% @private
 query(SrvId, PackageId, Query, QueryMeta) ->
+    Debug = nkservice_util:get_debug('nkdomain-root', nkservice_pgsql, PackageId, debug),
+    QueryMeta2 = QueryMeta#{pgsql_debug=>Debug},
     case nkservice_pgsql:get_connection(SrvId, PackageId) of
         {ok, Pid} ->
             try
@@ -412,7 +559,7 @@ query(SrvId, PackageId, Query, QueryMeta) ->
                     true ->
                         Query(Pid);
                     false ->
-                        do_query(Pid, Query, QueryMeta)
+                        do_query(Pid, Query, QueryMeta2)
                 end,
                 {ok, Data, MetaData}
             catch
@@ -421,11 +568,11 @@ query(SrvId, PackageId, Query, QueryMeta) ->
                     % If we are on a transaction, and some line fails,
                     % it will abort but we need to rollback to be able to
                     % reuse the connection
-                    case QueryMeta of
+                    case QueryMeta2 of
                         #{auto_rollback:=false} ->
                             ok;
                         _ ->
-                            case catch do_query(Pid, <<"ROLLBACK;">>, #{}) of
+                            case catch do_query(Pid, <<"ROLLBACK;">>, #{pgsql_debug=>Debug}) of
                                 {ok, _, _} ->
                                     ok;
                                 no_transaction ->
@@ -451,9 +598,16 @@ query(SrvId, PackageId, Query, QueryMeta) ->
 
 %% @private
 do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
-    lager:notice("Query: ~s", [Query]),
+    ?LLOG(info, "PreQuery: ~s", [Query]),
     case nkservice_pgsql:do_query(Pid, Query) of
         {ok, Ops, PgMeta} ->
+            case maps:get(pgsql_debug, QueryMeta) of
+                true ->
+                    ?LLOG(notice, "Query: ~s\n~p", [Query, PgMeta]),
+                    ok;
+                _ ->
+                    ok
+            end,
             case QueryMeta of
                 #{result_fun:=ResultFun} ->
                     ResultFun(Ops, #{pgsql=>PgMeta});
@@ -463,21 +617,29 @@ do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
             end;
         {error, {pgsql_error, #{routine:=<<"NewUniquenessConstraintViolationError">>}}} ->
             throw(uniqueness_violation);
-        {error, {pgsql_error, #{code := <<"XX000">>}}} ->
+        {error, {pgsql_error, #{code := <<"23503">>}}} ->
+            throw(foreign_key_violation);
+        {error, {pgsql_error, #{code := <<"XX000">>}}=Error} ->
+            ?LLOG(warning, "no_transaction PGSQL error: ~p", [Error]),
             throw(no_transaction);
+        {error, {pgsql_error, #{code := <<"42P01">>}}} ->
+            throw(relation_unknown);
+        {error, {pgsql_error, Error}} ->
+            ?LLOG(warning, "unknown PGSQL error: ~p", [Error]),
+            throw(pgsql_error);
         {error, Error} ->
             throw(Error)
     end.
 
 
 
-fields(List) ->
-    nkservice_pgsql_util:fields(List).
+quote_list(List) ->
+    nkservice_pgsql_util:quote_list(List).
 
 
 %% @private
 get_srv(ActorSrvId) ->
-    nkservice_actor_util:get_srv(ActorSrvId).
+    nkservice_actor_util:gen_srv_id(ActorSrvId).
 
 
 %% @private

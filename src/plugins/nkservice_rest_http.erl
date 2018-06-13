@@ -48,7 +48,7 @@
 %% ===================================================================
 
 
--type method() :: binary().
+-type method() :: binary().         %% <<"GET">> ...
 
 -type code() :: 100 .. 599.
 
@@ -96,12 +96,28 @@ get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
             case maps:get(parse, Opts, false) of
                 true ->
                     case CT of
-                        <<"application/json">> ->
+                        <<"application/json", _/binary>> when is_binary(Body) ->
                             case nklib_json:decode(Body) of
                                 error ->
                                     {error, invalid_json};
                                 Json ->
                                     {ok, Json, Req2}
+                            end;
+                        <<"application/json", _/binary>> ->
+                            {error, invalid_json};
+                        _ when is_binary(CT) ->
+                            case binary:split(CT, <<"yaml">>) of
+                                [_, _] when is_binary(Body) ->
+                                    case nklib_yaml:decode(Body) of
+                                        {error, _} ->
+                                            {error, invalid_yaml};
+                                        Yaml ->
+                                            {ok, Yaml, Req2}
+                                    end;
+                                [_, _] ->
+                                    {error, invalid_yaml};
+                                _ ->
+                                    {ok, Body, Req2}
                             end;
                         _ ->
                             {ok, Body, Req2}
@@ -152,7 +168,7 @@ get_basic_auth(#{cowboy_req:=CowReq}) ->
 
 %% @private
 make_req_ext(PackageId, #{srv:=SrvId, content_type:=CT}=Req) ->
-    Config = nkservice_util:get_cache(SrvId, {?PKG_REST, PackageId, request_config}),
+    Config = nkservice_util:get_cache(SrvId, ?PKG_REST, PackageId, request_config),
     Map1 = maps:with([srv, plugin_id, method, path, peer], Req),
     Map2 = Map1#{contentType => CT},
     make_req_ext(Config, Config, Map2, Req).
@@ -301,7 +317,7 @@ terminate(_Reason, _Req, _Opts) ->
 
 %% @private
 set_debug(#{srv:=SrvId, plugin_id:=Id}=Req) ->
-    Debug = nkservice_util:get_debug(SrvId, {nkservice_rest, Id, http}) == true,
+    Debug = nkservice_util:get_debug(SrvId, nkservice_rest, Id, http) == true,
     put(nkservice_rest_debug, Debug),
     ?DEBUG("debug mode activated", [], Req).
 

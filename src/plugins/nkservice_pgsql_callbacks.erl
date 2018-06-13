@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([actor_db_find/2, actor_db_read/2, actor_db_create/2,
-         actor_db_update/2, actor_db_delete/3, actor_db_search/3, actor_db_aggregation/3]).
+         actor_db_update/2, actor_db_delete/3, actor_db_search/3,actor_db_aggregate/3]).
 
 -include("nkservice.hrl").
 -include("nkservice_actor.hrl").
@@ -41,27 +41,23 @@
 
 %% ===================================================================
 %% Plugin Callbacks
+%% SrvId field is used to call the package's database
 %% ===================================================================
 
 
 actor_db_find(SrvId, Id) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
-            case nkservice_actor_util:is_path(Id) of
-                {true, #actor_id{srv=SrvId}=ActorId} ->
-                    nkservice_pgsql_actors:find(SrvId, PackageId, ActorId);
-                {false, UID} ->
-                    nkservice_pgsql_actors:find(SrvId, PackageId, UID)
-            end;
+            nkservice_pgsql_actors:find(SrvId, PackageId, get_id(Id));
         false ->
             continue
     end.
 
 
-actor_db_read(SrvId, UID) ->
+actor_db_read(SrvId, Id) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
-            nkservice_pgsql_actors:load(SrvId, PackageId, to_bin(UID));
+            nkservice_pgsql_actors:read(SrvId, PackageId, get_id(Id));
         false ->
             continue
     end.
@@ -103,7 +99,7 @@ actor_db_search(SrvId, SearchType, Opts) ->
     end.
 
 
-actor_db_aggregation(SrvId, SearchType, Opts) ->
+actor_db_aggregate(SrvId, SearchType, Opts) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
             nkservice_pgsql_actors:aggregation(SrvId, PackageId, SearchType, Opts);
@@ -112,13 +108,29 @@ actor_db_aggregation(SrvId, SearchType, Opts) ->
     end.
 
 
+
+
+
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
+%% @private
+get_id(#actor_id{}=ActorId) ->
+    ActorId;
 
+get_id(Id) ->
+    case nkservice_actor_util:is_path(Id) of
+        {true, ActorId} ->
+            ActorId;
+        false ->
+            to_bin(Id)
+end.
+
+
+%% @private
 get_package_id(SrvId) ->
-    nkservice_pgsql_util:actor_persistence_package_id(SrvId).
+    nkservice_pgsql_actors_util:persistence_package_id(SrvId).
 
 
 %% @private

@@ -22,22 +22,23 @@
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([error/1, error/2, i18n/3]).
--export([service_event/3]).
+-export([service_event/3, service_timed_check/2]).
 -export([service_init/2, service_handle_call/4, service_handle_cast/3,
          service_handle_info/3, service_code_change/4, service_terminate/3]).
--export([service_leader_init/2, service_leader_find_uid/2,
-         service_leader_handle_call/3, service_leader_handle_cast/2,
-         service_leader_handle_info/2, service_leader_code_change/3,
-         service_leader_terminate/2]).
--export([actor_init/1, actor_terminate/2, actor_stop/2,
-         actor_event/2, actor_link_event/4, actor_sync_op/3, actor_async_op/2,
+-export([service_master_init/2, service_master_leader/4, service_master_find_uid/2,
+         service_master_handle_call/3, service_master_handle_cast/2,
+         service_master_handle_info/2, service_leader_code_change/3,
+         service_master_terminate/2]).
+-export([actor_activate/2, actor_config/1, actor_init/1, actor_terminate/2, actor_stop/2,
+         actor_get/2, actor_event/2, actor_link_event/4, actor_sync_op/3, actor_async_op/2,
          actor_save/2, actor_delete/1, actor_link_down/2, actor_enabled/2, actor_next_status_timer/1,
          actor_alarms/1, actor_heartbeat/1,
          actor_handle_call/3, actor_handle_cast/2, actor_handle_info/2, actor_conflict_detected/3]).
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/2, actor_db_create/2, actor_db_read/2,
-         actor_db_update/2, actor_db_delete/3, actor_db_search/3, actor_db_aggregation/3,
-         actor_db_get_query/3]).
+         actor_db_update/2, actor_db_delete/3, actor_db_search/3,
+         actor_db_aggregate/3, actor_db_get_query/3]).
+-export([nkservice_find_uid/2, nkservice_make_srv_id/2]).
 
 -export_type([continue/0]).
 
@@ -90,6 +91,9 @@ error(api_stop) 				-> "API stop received";
 error(data_not_available)   	-> "Data is not available";
 error(destionation_not_found)   -> "Destination not found";
 error(duplicated_session_id)	-> "Duplicated session";
+error({field_missing, Txt})	    -> {"Missing field: '~s'", [Txt]};
+error({field_invalid, Txt})	    -> {"Field '~s' is invalid", [Txt]};
+error({field_unknown, Txt})	    -> {"Unknown field: '~s'", [Txt]};
 error(file_read_error)   		-> "File read error";
 error(internal_error)			-> "Internal error";
 error({internal_error, Ref})	-> {"Internal error: ~s", [Ref]};
@@ -107,8 +111,11 @@ error(invalid_session_id)		-> "Invalid session";
 error(invalid_state) 			-> "Invalid state";
 error(invalid_uri) 			    -> "Invalid Uri";
 error(invalid_object_id) 		-> "Invalid ObjectId";
+error(json_encode_error)        -> "JSON encode error";
+error(linked_actor_unknown)     -> "Linked actor not found";
+error({linked_actor_unknown, Txt}) -> {"Linked actor '~s', not found", [Txt]};
 error(max_disabled_time)        -> "Maximum disabled time reached";
-error({missing_field, Txt})	    -> {"Missing field: '~s'", [Txt]};
+error(method_not_allowed)       -> "Method not allowed";
 error(missing_id)				-> "Missing Id";
 error(no_password) 		        -> "No supplied password";
 error(no_usages)           		-> "No remaining usages";
@@ -129,10 +136,12 @@ error({syntax_error, Txt})		-> {"Syntax error: '~s'", [Txt]};
 error(timeout) 				    -> "Timeout";
 error(ttl_timeout) 			    -> "TTL Timeout";
 error(unauthorized) 			-> "Unauthorized";
+error(uniqueness_violation)	    -> "Actor is not unique";
 error({unknown_command, Txt})	-> {"Unknown command '~s'", [Txt]};
 error(unknown_peer) 			-> "Unknown peer";
 error(unknown_op)   			-> "Unknown operation";
 error(updated_invalid_field) 	-> "Tried to update invalid field";
+error({updated_invalid_field, Txt}) -> {"Tried to update invalid field: '~s'", [Txt]};
 error(user_not_found)			-> "User not found";
 error({user_not_found, User})	-> {"User not found: '~s'", [User]};
 error(user_stop) 				-> "User stop";
@@ -157,14 +166,21 @@ i18n(SrvId, Key, Lang) ->
 %% Service Callbacks
 %% ===================================================================
 
-
-
-%% @doc Called when a new service starts, first for the top-level plugin
+%% @doc
 -spec service_event(nkservice:event(), service(), user_state()) ->
     {ok, user_state()}.
 
 service_event(_Event, _Service, State) ->
     {ok, State}.
+
+
+%% @doc Called periodically
+-spec service_timed_check(service(), user_state()) ->
+    {ok, user_state()}.
+
+service_timed_check(_Service, State) ->
+    {ok, State}.
+
 
 
 %% @doc Called when a new service starts, first for the top-level plugin
@@ -221,52 +237,66 @@ service_terminate(_Reason, _Service, State) ->
 
 
 
+%% ===================================================================
+%% Service Master Callbacks
+%% These callbacks are called by the service master process running
+%% at each node. One of the will be elected master
+%% ===================================================================
 
-%% @doc Called when a new service starts, first for the top-level plugin
--spec service_leader_init(service(), user_state()) ->
+
+%% @doc
+-spec service_master_init(nkservice:id(), user_state()) ->
     {ok, user_state()} | {stop, term()}.
 
-service_leader_init(_Service, UserState) ->
+service_master_init(_SrvId, UserState) ->
+    {ok, UserState}.
+
+
+%% @doc
+-spec service_master_leader(nkservice:id(), boolean(), pid()|undefined, user_state()) ->
+    {ok, user_state()}.
+
+service_master_leader(_SrvId, _IsLeader, _Pid, UserState) ->
     {ok, UserState}.
 
 
 %% @doc Find an UUID in global database
--spec service_leader_find_uid(UID::binary(), user_state()) ->
+-spec service_master_find_uid(UID::binary(), user_state()) ->
     {reply, #actor_id{}, user_state()} |
     {stop, actor_not_found|term(), user_state()} |
     continue().
 
-service_leader_find_uid(_Service, UserState) ->
+service_master_find_uid(_UID, UserState) ->
     {stop, actor_not_found, UserState}.
 
 
-%% @doc Called when the service process receives a handle_call/3.
--spec service_leader_handle_call(term(), {pid(), reference()}, user_state()) ->
+%% @doc Called when the service master process receives a handle_call/3.
+-spec service_master_handle_call(term(), {pid(), reference()}, user_state()) ->
     {reply, term(), user_state()} | {noreply, user_state()} | continue().
 
-service_leader_handle_call(Msg, _From, State) ->
-    lager:error("Module nkservice_leader received unexpected call ~p", [Msg]),
+service_master_handle_call(Msg, _From, State) ->
+    lager:error("Module nkservice_master received unexpected call ~p", [Msg]),
     {noreply, State}.
 
 
-%% @doc Called when the NkApp process receives a handle_cast/3.
--spec service_leader_handle_cast(term(), user_state()) ->
+%% @doc Called when the service master process receives a handle_cast/3.
+-spec service_master_handle_cast(term(), user_state()) ->
     {noreply, user_state()} | continue().
 
-service_leader_handle_cast(Msg, State) ->
-    lager:error("Module nkservice_leader received unexpected cast ~p", [Msg]),
+service_master_handle_cast(Msg, State) ->
+    lager:error("Module nkservice_master received unexpected cast ~p", [Msg]),
     {noreply, State}.
 
 
-%% @doc Called when the NkApp process receives a handle_info/3.
--spec service_leader_handle_info(term(), user_state()) ->
+%% @doc Called when the service master process receives a handle_info/3.
+-spec service_master_handle_info(term(), user_state()) ->
     {noreply, user_state()} | continue().
 
-service_leader_handle_info({'EXIT', _, normal}, State) ->
+service_master_handle_info({'EXIT', _, normal}, State) ->
     {noreply, State};
 
-service_leader_handle_info(Msg, State) ->
-    lager:notice("Module nkservice_leader received unexpected info ~p", [Msg]),
+service_master_handle_info(Msg, State) ->
+    lager:notice("Module nkservice_master received unexpected info ~p", [Msg]),
     {noreply, State}.
 
 
@@ -278,12 +308,11 @@ service_leader_code_change(_OldVsn, State, _Extra) ->
 
 
 %% @doc Called when a service is stopped
--spec service_leader_terminate(term(), user_state()) ->
+-spec service_master_terminate(term(), user_state()) ->
     ok.
 
-service_leader_terminate(_Reason, _State) ->
+service_master_terminate(_Reason, _State) ->
     ok.
-
 
 
 
@@ -293,6 +322,23 @@ service_leader_terminate(_Reason, _State) ->
 
 -type actor_st() :: #actor_st{}.
 -type actor_id() :: #actor_id{}.
+
+%% @doc Called from nkdomain_actor_db:load() when an actor has been read and must be activated
+%% Can be used to select a different node, etc()
+%% By default we start it at this node
+-spec actor_activate(nkservice:actor(), nkservice_actor_srv:start_opts()) ->
+    {ok, pid()} | {error, term()}.
+
+actor_activate(Actor, StartOpts) ->
+    nkservice_actor_srv:start(Actor, StartOpts).
+
+
+%% @doc Called to get the default configuration for an actor
+-spec actor_config(actor_id()) ->
+    nkservice_actor_srv:config().
+
+actor_config(_ActorId) ->
+    #{}.
 
 
 %% @doc Called when a new session starts
@@ -317,6 +363,14 @@ actor_terminate(_Reason, State) ->
 
 actor_stop(_Reason, State) ->
     {ok, State}.
+
+
+%%  @doc Called update an actor with status
+-spec actor_get(nkservice_actor:actor(), actor_st()) ->
+    {ok, nkservice_actor:actor(), actor_st()} | continue().
+
+actor_get(Actor, State) ->
+    {ok, Actor#{status=>#{}}, State}.
 
 
 %%  @doc Called to send an event
@@ -363,8 +417,20 @@ actor_async_op(_Op, _State) ->
 -spec actor_save(nkservice_actor_srv:save_reason(), actor_st()) ->
     {ok, Meta::map(), actor_st()} | {error, term(), actor_st()} | continue().
 
-actor_save(Reason, #actor_st{actor_id=#actor_id{srv=SrvId}}=ActorSt) ->
-    Actor = nkservice_actor_util:make_actor(ActorSt),
+actor_save(Reason, ActorSt) ->
+    #actor_st{actor_id=ActorId, vsn=Vsn, spec=Spec, meta=Meta} = ActorSt,
+    #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = ActorId,
+    true = is_binary(UID),
+    Actor = #{
+        uid => UID,
+        srv => SrvId,
+        vsn => Vsn,
+        class => Class,
+        type => Type,
+        name => Name,
+        spec => Spec,
+        metadata => Meta
+    },
     Fun = case Reason of
         creation ->
             actor_db_create;
@@ -372,8 +438,8 @@ actor_save(Reason, #actor_st{actor_id=#actor_id{srv=SrvId}}=ActorSt) ->
             actor_db_update
     end,
     case ?CALL_SRV(SrvId, Fun, [SrvId, Actor]) of
-        {ok, Meta} ->
-            {ok, Meta, ActorSt};
+        {ok, DbMeta} ->
+            {ok, DbMeta, ActorSt};
         {error, Error} ->
             {error, Error, ActorSt}
     end.
@@ -463,8 +529,9 @@ actor_conflict_detected(_ActorId, _Pid, _State) ->
     erlang:error(conflict_detected).
 
 
+
 %% ===================================================================
-%% Actor
+%% Actor utilities
 %% ===================================================================
 
 %% @doc Called when an 'isActivated' actor is read
@@ -484,13 +551,23 @@ actor_do_expired(_Actor) ->
     ok.
 
 
+%%%% @doc Tries to find the #actor_id{} of a path
+%%%% Plugins can modify the behaviour
+%%-spec actor_path_preprocess([binary()]) ->
+%%    {ok, #actor_id{}, Resource::binary()} | {error, term()}.
+%%
+%%actor_path_preprocess(Parts) ->
+%%    nkservice_actor_util:path_parts_to_actor_id(Parts).
+
+
+
+
 %% ===================================================================
 %% Actor DB
 %% ===================================================================
 
-
 %% @doc Called to find an actor on disk
--spec actor_db_find(nkservice:id(), nkservice_actor_srv:id()) ->
+-spec actor_db_find(nkservice:id(), nkservice_actor:id()) ->
     {ok, #actor_id{}, Meta::map()} | {error, term()} | continue().
 
 actor_db_find(_SrvId, _Id) ->
@@ -498,10 +575,10 @@ actor_db_find(_SrvId, _Id) ->
 
 
 %% @doc Called to save the actor to disk
--spec actor_db_read(nkservice:id(), nkservice_actor:uid()) ->
+-spec actor_db_read(nkservice:id(), nkservice_actor:id()) ->
     {ok, nkservice_actor:actor(), Meta::map()} | {error, term()} | continue().
 
-actor_db_read(_SrvId, _UID) ->
+actor_db_read(_SrvId, _Id) ->
     {error, not_implemented}.
 
 
@@ -539,13 +616,12 @@ actor_db_search(_SrvId, _SearchType, _Opts) ->
 
 
 %% @doc
--spec actor_db_aggregation(nkservice:id(), nkservice_actor_db:agg_type(),
+-spec actor_db_aggregate(nkservice:id(), nkservice_actor_db:agg_type(),
     nkservice_actor_db:opts()) ->
     ok.
 
-actor_db_aggregation(_SrvId, _SearchType, _Opts) ->
+actor_db_aggregate(_SrvId, _SearchType, _Opts) ->
     {error, not_implemented}.
-
 
 
 %% @doc
@@ -553,8 +629,33 @@ actor_db_aggregation(_SrvId, _SearchType, _Opts) ->
                             nkservice_actor_db:opts()) ->
     {ok, term()} | {error, term()}.
 
-actor_db_get_query(Backend, SearchType, Opts) ->
-    nkservice_actor_queries:get_query(Backend, SearchType, Opts).
+actor_db_get_query(pgsql, SearchType, Opts) ->
+    nkservice_actor_queries_pgsql:get_query(SearchType, Opts);
+
+actor_db_get_query(Backend, _SearchType, _Opts) ->
+    {error, {query_backend_unknown, Backend}}.
+
+
+%% @doc Called to find an actor on disk, when we only have the UUID and no service
+%% from id_to_actor_id/1
+%% SrvId will be nkservice_app:get(dbDefaultService)
+-spec nkservice_find_uid(nkservice:id(), UID::binary()) ->
+    {ok, #actor_id{}, Meta::map()} | {error, term()} | continue().
+
+nkservice_find_uid(_SrvId, _UID) ->
+    {error, not_implemented}.
+
+
+%% @doc Called to check if a service atom must be created,
+%% from nkservice_actor_util:gen_srv_id/1
+%% SrvId will be nkservice_app:get(dbDefaultService)
+-spec nkservice_make_srv_id(nkservice:id(), Srv::binary()) ->
+    {ok, nkservice:id()} | {error, term()}.
+
+nkservice_make_srv_id(_SrvId, _UID) ->
+    {error, not_implemented}.
+
+
 
 
 %% ===================================================================

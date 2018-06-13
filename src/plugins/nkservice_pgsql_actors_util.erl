@@ -18,20 +18,37 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_pgsql_util).
+-module(nkservice_pgsql_actors_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([quote_list/1, quote/1, quote_double/1]).
+-export([persistence_package_id/1, fields/1, quote/1, quote_double/1]).
+-export([drop/1, actors_query/2]).
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
+%% @private
+persistence_package_id(SrvId) ->
+    nkservice_util:get_cache(SrvId, nkservice_pgsql, any, actor_persistence).
+
+
+%% @private
+drop(SrvId) ->
+    {true, PkgId} = persistence_package_id(SrvId),
+    nkservice_pgsql_actors:drop(SrvId, PkgId).
+
+
+%% @private
+actors_query(SrvId, Query) ->
+    {true, PkgId} = persistence_package_id(SrvId),
+    nkservice_pgsql_actors:query(SrvId, PkgId, Query).
+
 
 
 
 %% @private
-quote_list(List) ->
+fields(List) ->
     List2 = [quote(F) || F <- List],
     nklib_util:bjoin(List2, $,).
 
@@ -43,14 +60,7 @@ quote(Field) when is_integer(Field); is_float(Field) -> to_bin(Field);
 quote(true) -> <<"TRUE">>;
 quote(false) -> <<"FALSE">>;
 quote(Field) when is_atom(Field) -> quote(atom_to_binary(Field, utf8));
-quote(Field) when is_map(Field) ->
-    case nklib_json:encode(Field) of
-        error ->
-            lager:error("Error enconding JSON: ~p", [Field]),
-            error(json_encode_error);
-        Json ->
-            [$', Json, $']
-    end.
+quote(Field) when is_map(Field) -> [$', nklib_json:encode(Field), $'].
 
 
 %% @private
@@ -60,14 +70,7 @@ quote_double(Field) when is_integer(Field); is_float(Field) -> to_bin(Field);
 quote_double(true) -> <<"TRUE">>;
 quote_double(false) -> <<"FALSE">>;
 quote_double(Field) when is_atom(Field) -> quote_double(atom_to_binary(Field, utf8));
-quote_double(Field) when is_map(Field) ->
-    case nklib_json:encode(Field) of
-        error ->
-            lager:error("Error enconding JSON: ~p", [Field]),
-            error(json_encode_error);
-        Json ->
-            [$", Json, $"]
-    end.
+quote_double(Field) when is_map(Field) -> [$', nklib_json:encode(Field), $'].
 
 
 %% @private

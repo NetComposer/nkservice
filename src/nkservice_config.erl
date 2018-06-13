@@ -416,7 +416,7 @@ get_plugin_deps(Plugin, BaseDeps) ->
 
 %% @private
 update_uuid(Id, Spec) ->
-    LogPath = nkservice_app:get(log_path),
+    LogPath = nkservice_app:get(logPath),
     Path = filename:join(LogPath, atom_to_list(Id)++".uuid"),
     case read_uuid(Path) of
         {ok, UUID} ->

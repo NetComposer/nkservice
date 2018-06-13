@@ -44,7 +44,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, sync_op/2, sync_op/3, sync_op/4, async_op/2, async_op/3]).
+-export([start/2, sync_op/2, sync_op/3, async_op/2]).
 -export([actor_is_deleted/1, conflict_detected/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([add_link/3, remove_link/2]).
@@ -103,7 +103,7 @@
     #{
         is_enabled => boolean(),        % Mark as disabled on load
         is_new => boolean(),
-        config => config()
+        config => config()              % Overrides config
     }.
 
 
@@ -126,6 +126,7 @@
     is_enabled |
     {link, nklib:link(), link_opts()} |
     {update, nkservice_actor:actor()} |
+    {update_name, binary()} |
     get_alarms |
     {apply, Mod::module(), Fun::atom(), Args::list()} |
     term().
@@ -151,51 +152,39 @@
 
 
 %% @private
-%% kind is mandatory
+%% Call SrvId:actor_activate/2 instead calling this directly!
 -spec start(nkservice_actor:actor(), start_opts()) ->
     {ok, pid()} | {error, term()}.
 
-start(#{metadata:=#{<<"isDeleted">>:=true}}, _StartOpts) ->
-    {error, actor_is_deleted};
-
-start(#{srv:=_, class:=_}=Actor, StartOpts) ->
+start(#{srv:=_, class:=_, type:=_}=Actor, StartOpts) ->
     gen_server:start(?MODULE, {Actor, StartOpts}, []).
 
 
 %% @doc
--spec sync_op(pid(), sync_op()) ->
+-spec sync_op(nkservice_actor:id()|pid(), sync_op()) ->
     term() | {error, timeout|process_not_found|object_not_found|term()}.
 
-sync_op(Pid, Op) when is_pid(Pid) ->
-    sync_op(none, Pid, Op).
+sync_op(Id, Op) ->
+    sync_op(Id, Op, ?DEF_SYNC_CALL).
 
 
 %% @doc
--spec sync_op(nkservice:id(), nkservice_actor:id()|pid(), sync_op()) ->
+-spec sync_op(nkservice_actor:id()|pid(), sync_op(), timeout()) ->
     term() | {error, timeout|process_not_found|object_not_found|term()}.
 
-sync_op(SrvId, Id, Op) ->
-    sync_op(SrvId, Id, Op, ?DEF_SYNC_CALL).
-
-
-
-%% @doc
--spec sync_op(nkservice:id(), nkservice_actor:id()|pid(), sync_op(), timeout()) ->
-    term() | {error, timeout|process_not_found|object_not_found|term()}.
-
-sync_op(_SrvId, Pid, Op, Timeout) when is_pid(Pid) ->
+sync_op(Pid, Op, Timeout) when is_pid(Pid) ->
     nklib_util:call2(Pid, {nkservice_sync_op, Op}, Timeout);
 
-sync_op(SrvId, Id, Op, Timeout) ->
-    sync_op(SrvId, Id, Op, Timeout, 5).
+sync_op(Id, Op, Timeout) ->
+    sync_op(Id, Op, Timeout, 5).
 
 
 %% @private
-sync_op(_SrvId, _Id, _Op, _Timeout, 0) ->
+sync_op(_Id, _Op, _Timeout, 0) ->
     {error, process_not_found};
 
-sync_op(SrvId, Id, Op, Timeout, Tries) ->
-    case nkservice_actor_db:load(SrvId, Id) of
+sync_op(Id, Op, Timeout, Tries) ->
+    case nkservice_actor_db:activate(Id) of
         {ok, #actor_id{pid=Pid}, _} when is_pid(Pid) ->
             case sync_op(Pid, Op, Timeout) of
                 {error, process_not_found} ->
@@ -215,18 +204,10 @@ sync_op(SrvId, Id, Op, Timeout, Tries) ->
     ok | {error, process_not_found|object_not_found|term()}.
 
 async_op(Pid, Op) when is_pid(Pid) ->
-    gen_server:cast(Pid, {nkservice_async_op, Op}).
-
-
-%% @doc
--spec async_op(nkservice:id(), nkservice_actor:id()|pid(), async_op()) ->
-    ok | {error, process_not_found|object_not_found|term()}.
-
-async_op(_SrvId, Pid, Op) when is_pid(Pid) ->
     gen_server:cast(Pid, {nkservice_async_op, Op});
 
-async_op(SrvId, Id, Op) ->
-    case nkservice_actor_db:load(SrvId, Id) of
+async_op(Id, Op) ->
+    case nkservice_actor_db:activate(Id) of
         {ok, #actor_id{pid=Pid}, _} when is_pid(Pid) ->
             async_op(Pid, Op);
         {error, Error} ->
@@ -284,25 +265,28 @@ unload_all() ->
 
 init({Actor, StartOpts}) ->
     State1 = do_init(Actor, StartOpts),
-    ?DEBUG("started (~p)", [self()], State1),
-    case register_with_leader(State1) of
+    case handle(actor_init, [], State1) of
         {ok, State2} ->
-            case handle(actor_init, [], State2) of
+            case register_with_leader(State2) of
                 {ok, State3} ->
-                    State4 = case maps:get(is_new, StartOpts, false) of
+                    set_debug(State3),
+                    ?DEBUG("started (~p)", [self()], State3),
+                    State4 = set_unload_policy(State3),
+                    State5 = case maps:get(is_new, StartOpts, false) of
                         true ->
-                            do_event(created, State3);
+                            do_event(created, State4);
                         false ->
-                            State3
+                            State4
                     end,
-                    State5 = do_event(loaded, State4),
-                    State6 = do_check_alarms(State5),
+                    State6 = do_event(loaded, State5),
+                    State7 = do_check_alarms(State6),
                     % Save if created or init sets is_dirty = true
-                    case do_save(creation, State6) of
-                        {ok, State7} ->
-                            {ok, do_refresh_ttl(State7)};
-                        {{error, Error}, State7} ->
-                            ?LLOG(warning, "error creating object: ~p", [Error], State7),
+                    case do_save(creation, State7) of
+                        {ok, State8} ->
+                            self() ! nkservice_heartbeat,
+                            {ok, do_refresh_ttl(State8)};
+                        {{error, Error}, State8} ->
+                            ?LLOG(warning, "error creating object: ~p", [Error], State8),
                             {stop, Error}
                     end;
                 {error, Error} ->
@@ -311,6 +295,7 @@ init({Actor, StartOpts}) ->
         {error, Error} ->
             {stop, Error}
     end.
+
 
 
 %% @private
@@ -479,19 +464,23 @@ do_sync_op(get_actor_id, _From, #actor_st{actor_id =ActorId}=State) ->
 
 do_sync_op(get_actor, _From, State) ->
     #actor_st{
-        actor_id = #actor_id{srv=SrvId, uid=UID, class=Class, name=Name},
+        actor_id = #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name},
         spec = Spec,
-        meta = Meta
+        meta = Meta,
+        vsn = Vsn
     } = State,
     Actor = #{
         srv => SrvId,
         uid => UID,
         class => Class,
+        type => Type,
         name => Name,
+        vsn => Vsn,
         spec => Spec,
         metadata => Meta
     },
-    reply({ok, Actor}, do_refresh_ttl(State));
+    {ok, UserActor, State2} = handle(actor_get, [Actor], State),
+    reply({ok, UserActor}, do_refresh_ttl(State2));
 
 do_sync_op(get_state, _From, State) ->
     reply({ok, State}, State);
@@ -562,6 +551,19 @@ do_sync_op({update, Actor}, _From, #actor_st{is_enabled=IsEnabled, config=Config
             end
     end;
 
+do_sync_op({update_name, Name}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
+    case {IsEnabled, Config} of
+        {false, #{dont_update_on_disabled:=true}} ->
+            reply({error, object_is_disabled}, State);
+        _ ->
+            case do_update_name(Name, State) of
+                {ok, State2} ->
+                    reply(ok, do_refresh_ttl(State2));
+                {error, Error, State2} ->
+                    reply({error, Error}, State2)
+            end
+    end;
+
 do_sync_op(get_alarms, _From, #actor_st{meta=Meta}=State) ->
     Alarms = case Meta of
         #{<<"isInAlarm">>:=true, <<"alarms">>:=AlarmList} ->
@@ -611,27 +613,11 @@ do_async_op(Op, State) ->
 %% Internals
 %% ===================================================================
 
-do_init(#{srv:=SrvId, class:=Class}=Actor, StartOpts) ->
-    UID = case maps:find(uid, Actor) of
-        {ok, UID0} ->
-            UID0;
-        error ->
-            Base = nklib_util:luid(),
-            <<(to_bin(Class))/binary, $-, Base/binary>>
-    end,
-    Name = case maps:find(name, Actor) of
-        {ok, Name0} ->
-            Name0;
-        error ->
-            Base2 = case binary:split(UID, <<"-">>) of
-                [_, Rest] when byte_size(Rest) >= 7 -> Rest;
-                [Rest] when byte_size(Rest) >= 7 -> Rest;
-                _ -> nklib_util:luid()
-            end,
-            nkservice_util:name(binary:part(Base2, 0, 7))
-    end,
+do_init(Actor, StartOpts) ->
+    #{srv:=SrvId, uid:=UID, class:=Class, type:=Type, name:=Name} = Actor,
     Meta = maps:get(metadata, Actor, #{}),
     Spec = maps:get(spec, Actor, #{}),
+    ActorVsn = maps:get(vsn, Actor, <<"0">>),
     IsEnabled = case maps:find(is_enabled, StartOpts) of
         {ok, false} ->
             false;
@@ -642,11 +628,12 @@ do_init(#{srv:=SrvId, class:=Class}=Actor, StartOpts) ->
         srv = SrvId,
         uid = UID,
         class = Class,
+        type = Type,
         name = Name,
         pid = self()
     },
     nklib_proc:put(?MODULE, ActorId),
-    Now = nklib_util:m_timestamp(),
+    Now = nklib_date:epoch(msecs),
     NextStatusTimer = case Meta of
         #{<<"nextStatusTime">>:=NextStatusTime} ->
             case NextStatusTime - Now of
@@ -660,43 +647,29 @@ do_init(#{srv:=SrvId, class:=Class}=Actor, StartOpts) ->
             undefined
     end,
     IsNew = maps:get(is_new, StartOpts, false),
-    Meta2 = case IsNew andalso not maps:is_key(<<"creationTimestamp">>, Meta) of
-        true ->
-            {ok, Time} = rfc3339:format(Now * 1000 * 1000),
-            Meta#{<<"creationTimestamp">> => Time};
-        false ->
-            Meta
-    end,
-    Meta3 = case Meta2 of
-        #{<<"generation">> := _} ->
-            Meta2;
+    Config1 = ?CALL_SRV(SrvId, actor_config, [ActorId]),
+    Config2 = case StartOpts of
+        #{config:=StartConfig} ->
+            maps:merge(Config1, StartConfig);
         _ ->
-            Meta2#{<<"generation">> => 0}
+            Config1
     end,
-    Meta4 = case Meta3 of
-        #{<<"resourceVersion">> := _} ->
-            Meta3;
-        _ ->
-            Vsn = erlang:phash2({Name, Spec, Meta3}),
-            Meta3#{<<"resourceVersion">> => Vsn}
-    end,
-    State = #actor_st{
+    #actor_st{
         actor_id = ActorId,
-        config = maps:get(config, StartOpts, #{}),
+        config = Config2,
         spec = Spec,
-        meta = Meta4,
+        meta = Meta,
+        vsn = ActorVsn,
         status = #{},
         links = nklib_links:new(),
         is_dirty = IsNew,
         is_enabled = IsEnabled,
         is_leader_enabled = false,          % Updated later
+        saved_time = 0,
         loaded_time = Now,
         status_timer = NextStatusTimer,
         unload_policy = permanent           % Updated later
-    },
-    self() ! nkservice_heartbeat,
-    set_debug(State),
-    set_unload_policy(State).
+    }.
 
 
 %% @private
@@ -705,7 +678,7 @@ set_unload_policy(#actor_st{config=Config, meta=Meta}=State) ->
         true ->
             permanent;
         false ->
-            case maps:get(<<"expiresUnixTime">>, Meta, 0) of
+            case maps:get(<<"expiresTime">>, Meta, 0) of
                 0 ->
                     % A TTL reseated after each operation
                     {ttl, maps:get(ttl, Config, ?DEFAULT_TTL)};
@@ -719,12 +692,12 @@ set_unload_policy(#actor_st{config=Config, meta=Meta}=State) ->
 
 
 %% @private
-set_debug(#actor_st{actor_id =#actor_id{srv=SrvId, class=Class}}=State) ->
-    Debug = case nkservice_util:get_debug(SrvId, {nkservice_actor, <<"all">>}) of
+set_debug(#actor_st{actor_id =#actor_id{srv=SrvId, type=Type}}=State) ->
+    Debug = case nkservice_util:get_debug(SrvId, nkservice_actor, <<"all">>, debug) of
         true ->
             true;
         _ ->
-            case nkservice_util:get_debug(SrvId, {nkservice_actor, Class}) of
+            case nkservice_util:get_debug(SrvId, nkservice_actor, Type, debug) of
                 true ->
                     true;
                 _ ->
@@ -736,11 +709,8 @@ set_debug(#actor_st{actor_id =#actor_id{srv=SrvId, class=Class}}=State) ->
 
 
 %% @private
-%% The service leader registers the UID and the set {Name, Api, Kind} with
+%% The service leader registers the UID and the set {Srv, Class, Type, Name} with
 %% this pid.
-
-
-
 register_with_leader(#actor_st{actor_id=#actor_id{srv=SrvId}=ActorId}=State) ->
     case nkservice_master:register_actor(ActorId) of
         {ok, Pid} ->
@@ -775,7 +745,7 @@ do_save(Reason, State) ->
             ?DEBUG("save (~p) (~p)", [Reason, Meta], State2),
             State3 = State2#actor_st{
                 is_dirty = false,
-                saved_time = nklib_util:m_timestamp()
+                saved_time = nklib_date:epoch(msecs)
             },
             {ok, do_event(saved, State3)};
         {error, not_implemented, State2} ->
@@ -789,14 +759,6 @@ do_save(Reason, State) ->
 %% @private
 do_delete(#actor_st{meta=Meta}=State) ->
     {_, State2} = do_save(pre_delete, State),
-    State2 = case maps:is_key(<<"deletionTimestamp">>, Meta) of
-        false ->
-            {ok, Time} = rfc3339:format(nklib_util:m_timestamp() * 1000 * 1000),
-            Meta2 = Meta#{<<"deletionTimestamp">> => Time},
-            do_update_version(State#actor_st{meta=Meta2});
-        true ->
-            State
-    end,
     case handle(actor_delete, [], State2) of
         {ok, State3} ->
             ?DEBUG("object deleted", [], State3),
@@ -820,7 +782,7 @@ do_refresh_ttl(State) ->
 %% @private
 do_check_expired(#actor_st{unload_policy={expires, Expires}, ttl_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
-    case nklib_util:m_timestamp() of
+    case nklib_date:epoch(msecs) of
         Now when Now >= Expires ->
             true;
         Now ->
@@ -859,52 +821,64 @@ do_stop2(_Reason, State) ->
 
 %% @private
 do_update(Actor, #actor_st{actor_id =Id, spec=Spec, meta=Meta}=State) ->
-    #actor_id{srv=SrvId, uid=UID, class=Class, name=Name} = Id,
+    #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = Id,
+
     try
         case maps:get(srv, Actor, SrvId) of
             SrvId -> ok;
-            _ -> throw(updated_invalid_field)
+            _ -> throw({updated_invalid_field, srv})
         end,
         case maps:get(uid, Actor, UID) of
             UID -> ok;
-            _ -> throw(updated_invalid_field)
+            _ -> throw({updated_invalid_field, uid})
         end,
         case maps:get(class, Actor, Class) of
             Class -> ok;
-            _ -> throw(updated_invalid_field)
+            _ -> throw({updated_invalid_field, class})
         end,
-        State2 = case maps:get(name, Actor, Name) of
-            Name ->
-                State;
-            Name2 ->
-                Id2 = Id#actor_id{name=Name2},
-                case register_with_leader(State#actor_st{actor_id =Id2}) of
-                    {ok, S2} ->
-                        S2;
-                    {error, RegError} ->
-                        throw(RegError)
-                end
+        case maps:get(type, Actor, Type) of
+            Type -> ok;
+            _ -> throw({updated_invalid_field, type})
         end,
-        {SpecUpdated, Spec2} = case maps:get(spec, Actor, undefined) of
-            undefined -> {false, Spec};
-            Spec -> {false, Spec};
-            NewSpec -> {true, NewSpec}
+        case maps:get(name, Actor, Name) of
+            Name -> ok;
+            _ -> throw({updated_invalid_field, name})
         end,
-        {MetaUpdated, Meta2} = case maps:get(metadata, Actor, undefined) of
-            undefined -> {false, Meta};
-            Meta -> {false, Meta};
-            NewMeta -> {true, NewMeta}
+        Spec2 = maps:get(spec, Actor, Spec),
+        SpecUpdated = Spec /= Spec2,
+        ActorMeta1 = maps:get(metadata, Actor, #{}),
+        ActorMeta2 = case nkservice_actor_util:check_links(ActorMeta1) of
+            {ok, MetaLinks} ->
+                MetaLinks;
+            {error, Error} ->
+                throw(Error)
         end,
+        ForbiddenFields = [
+            <<"resourceVersion">>,
+            <<"generation">>,
+            <<"creationTime">>,
+            % <<"isActivated">>,
+            %% <<"links">>,
+            <<"expiresTime">>
+        ],
+        case maps:with(ForbiddenFields, ActorMeta2) of
+            M when map_size(M)==0 ->
+                ok;
+            M ->
+                throw({updated_invalid_field, hd(maps:keys(M))})
+        end,
+        Meta2 = maps:merge(Meta, ActorMeta2),
+        MetaUpdated = Meta /= Meta2,
         case SpecUpdated orelse MetaUpdated of
             true ->
-                State3 = State2#actor_st{spec=Spec2, meta=Meta2, is_dirty=true},
-                State4 = do_update_version(State3),
-                State5 = do_enabled(State4),
-                case do_save(update, State5) of
-                    {ok, State6} ->
-                        {ok, do_event({updated, Actor}, State6)};
-                    {{error, SaveError}, State6} ->
-                        {error, SaveError, State6}
+                State2 = State#actor_st{spec=Spec2, meta=Meta2, is_dirty=true},
+                State3 = do_update_version(State2),
+                State4 = do_enabled(State3),
+                case do_save(update, State4) of
+                    {ok, State5} ->
+                        {ok, do_event({updated, Actor}, State5)};
+                    {{error, SaveError}, State5} ->
+                        {error, SaveError, State5}
                 end;
             false ->
                 {ok, State}
@@ -916,13 +890,34 @@ do_update(Actor, #actor_st{actor_id =Id, spec=Spec, meta=Meta}=State) ->
 
 
 %% @private
+do_update_name(Name, #actor_st{actor_id=#actor_id{name=OldName}=Id}=State) ->
+    lager:error("NKLOG UPDATE NAME ~p", [Name]),
+    case nkservice_actor_util:normalized_name(Name) of
+        OldName ->
+            {ok, State};
+        NewName ->
+            Id2 = Id#actor_id{name=NewName},
+            case register_with_leader(State#actor_st{actor_id=Id2}) of
+                {ok, State2} ->
+                    State3 = State2#actor_st{is_dirty=true},
+                    State4 = do_update_version(State3),
+                    case do_save(update, State4) of
+                        {ok, State5} ->
+                            {ok, do_event({updated, #{name=>NewName}}, State5)};
+                        {{error, SaveError}, State5} ->
+                            {error, SaveError, State5}
+                    end;
+                {error, RegError} ->
+                    {error, RegError, State}
+            end
+    end.
+
+
+
+%% @private
 do_update_version(#actor_st{actor_id =#actor_id{name=Name}, spec=Spec, meta=Meta}=State) ->
-    Gen = maps:get(<<"generation">>, Meta, -1),
-    Vsn = erlang:phash2({Name, Spec, Meta}),
-    Meta2 = Meta#{
-        <<"generation">> => Gen+1,
-        <<"resourceVersion">> => Vsn
-    },
+    {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
+    Meta2 = nkservice_actor_util:update_meta(Name, Spec, Meta, Time),
     State#actor_st{meta=Meta2}.
 
 
@@ -946,7 +941,7 @@ do_enabled(Enabled, State) ->
         true ->
             0;
         false ->
-            nklib_util:m_timestamp()
+            nklib_date:epoch(msecs)
     end,
     State2 = State#actor_st{
         is_enabled = Enabled,
@@ -960,7 +955,7 @@ do_enabled(Enabled, State) ->
 do_heartbeat(State) ->
     case State of
         #actor_st{is_enabled=false, disabled_time=Time} ->
-            case nklib_util:m_timestamp() - Time > ?MAX_DISABLED_TIME of
+            case nklib_date:epoch(msecs) - Time > ?MAX_DISABLED_TIME of
                 true ->
                     do_stop(max_disabled_time, State);
                 false ->
@@ -973,7 +968,7 @@ do_heartbeat(State) ->
 %% @private
 do_check_save(#actor_st{is_dirty=true, saved_time=Time, config=Config}=State) ->
     ConfigTime = maps:get(save_time, Config, ?DEFAULT_SAVE_TIME),
-    case nklib_util:m_timestamp() - Time > ConfigTime of
+    case nklib_date:epoch(msecs) - Time > ConfigTime of
         true ->
             {_, State2} = do_save(timer, State),
             do_heartbeat_user(State2);
@@ -1113,6 +1108,6 @@ link_down(Mon, #actor_st{links=Links}=State) ->
 %%links_iter(Fun, Acc, #actor_st{links=Links}) ->
 %%    nklib_links:fold_values(Fun, Acc, Links).
 
-%% @private
-to_bin(Term) when is_binary(Term) -> Term;
-to_bin(Term) -> nklib_util:to_binary(Term).
+%%%% @private
+%%to_bin(Term) when is_binary(Term) -> Term;
+%%to_bin(Term) -> nklib_util:to_binary(Term).

@@ -80,19 +80,14 @@ plugin_config(?PKG_PGSQL, #{id:=Id, config:=Config}=Spec, _Service) ->
                 false ->
                     false
             end,
-            CacheMap1 = maps:get(cache_map, Spec, #{}),
-            CacheMap2 = CacheMap1#{
-                {nkservice_pgsql, any, actor_persistence} => ActorPersistence
-            },
+            CacheMap1 = nkservice_config_util:get_cache_map(Spec),
+            CacheMap2 = nkservice_config_util:set_cache_key(nkservice_pgsql, any, actor_persistence, ActorPersistence, CacheMap1),
+            Spec2 = nkservice_config_util:set_cache_map(CacheMap2, Spec),
+            DebugMap1 = nkservice_config_util:get_debug_map(Spec2),
             Debug = maps:get(debug, Parsed, false),
-            DebugMap1 = maps:get(debug_map, Spec, #{}),
-            DebugMap2 = DebugMap1#{{nkservice_pgsql, Id, debug} => Debug},
-            Spec2 = Spec#{
-                config := Parsed,
-                cache_map => CacheMap2,
-                debug_map => DebugMap2
-            },
-            {ok, Spec2};
+            DebugMap2 = nkservice_config_util:set_debug_key(nkservice_pgsql, Id, debug, Debug, DebugMap1),
+            Spec3 = nkservice_config_util:set_debug_map(DebugMap2, Spec2),
+            {ok, Spec3#{config:=Parsed}};
         {error, Error} ->
             {error, Error}
     end;
@@ -102,8 +97,19 @@ plugin_config(_Class, _Package, _Service) ->
 
 
 %% @doc
-plugin_start(?PKG_PGSQL, #{id:=Id, config:=Config}, Pid, Service) ->
-    insert(Id, Config, Pid, Service);
+plugin_start(?PKG_PGSQL, #{id:=Id, config:=Config}, Pid, #{id:=SrvId}=Service) ->
+    case insert(Id, Config, Pid, Service) of
+        ok ->
+            case nkservice_pgsql_actors_util:persistence_package_id(SrvId) of
+                {true, Id} ->
+                    % Initialize the Actor Database
+                    nkservice_pgsql_actors:init(SrvId, Id);
+                false ->
+                    ok
+            end;
+        {error, Error} ->
+            {error, Error}
+    end;
 
 plugin_start(_Id, _Spec, _Pid, _Service) ->
     continue.

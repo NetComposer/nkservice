@@ -64,17 +64,14 @@ compile_modules([ModuleId|Rest], Modules, Service) ->
 %% @private
 compile_module(ModuleId, ModSpec, Bin, #{id:=SrvId}=Service) ->
     MaxInstances = maps:get(max_instances, ModSpec),
-    Cache1 = maps:get(cache, ModSpec, #{}),
-    Cache2 = Cache1#{{nkservice_luerl, max_instances, ModuleId} => MaxInstances},
-    ModSpec2 = ModSpec#{cache_map => Cache2},
-    ModSpec3 = case maps:get(debug, ModSpec, false) of
-        true ->
-            Debug1 = maps:get(debug_map, ModSpec, #{}),
-            Debug2 = Debug1#{{nkservice_luerl, ModuleId} => true},
-            ModSpec2#{debug_map=>Debug2};
-        false ->
-            ModSpec2
-    end,
+    %% Was cache instead of cache_map!
+    Cache1 = nkservice_config_util:get_debug_map(ModSpec),
+    Cache2 = nkservice_config_util:set_cache_key(nkservice_luerl, ModuleId, max_instances, MaxInstances, Cache1),
+    ModSpec2 = nkservice_config_util:set_cache_map(Cache2, ModSpec),
+    Debug1 = nkservice_config_util:get_debug_map(ModSpec),
+    Debug = maps:get(debug, ModSpec, false),
+    Debug2 = nkservice_config_util:set_debug_key(nkservice_luerl, ModuleId, debug, Debug, Debug1),
+    ModSpec3 = nkservice_config_util:set_debug_map(Debug2, ModSpec),
     LuaState1 = nkservice_luerl_lib:init(SrvId, ModuleId),
     Db1 = #{srv=>SrvId, module_id=>ModuleId, packages=>#{}, callbacks=>#{}},
     put(nkservice_config_luerl, Db1),

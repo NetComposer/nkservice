@@ -91,8 +91,9 @@ stop_connection(Pid) ->
     {error, {pgsql_error, pgsql_error()}|term()}.
 
 do_query(Pid, Query) ->
-    Start = nklib_util:m_timestamp(),
-    Opts = [{return_descriptions, true}],
+    Start = nklib_date:epoch(msecs),
+    % Opts = [{return_descriptions, true}],
+    Opts = [],
     case pgsql_connection:simple_query(Query, Opts, {pgsql_connection, Pid}) of
         {error, {pgsql_error, List}} ->
             {error, {pgsql_error, maps:from_list(List)}};
@@ -110,17 +111,17 @@ do_query(Pid, Query) ->
             lager:error("PGSQL UNEXPECTED ERR2 ~p", [Error]),
             {error, Error};
         Data ->
-            Time = nklib_util:m_timestamp() - Start,
+            Time = nklib_date:epoch(msecs) - Start,
             {ok, parse_results(Data, []), #{time=>Time}}
     end.
 
 
 %% @private
-parse_results([], [Acc]) ->
-    [Acc];
+%%parse_results([], [Acc]) ->
+%%    [Acc];
 
 parse_results([], Acc) ->
-    lists:reverse(Acc);
+    Acc;
 
 parse_results([{Op, Desc, List}|Rest], Acc) ->
     Desc2 = [{N, F} || {_, N, _, _, _, _, _, F} <- Desc],

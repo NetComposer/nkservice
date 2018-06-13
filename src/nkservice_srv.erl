@@ -85,18 +85,18 @@
 -type package_status() ::
     #{
         status => status(),
-        last_status_time => nklib_util:m_timestamp(),
+        last_status_time => nklib_date:epoch(msecs),
         error => term(),
-        last_error_time => nklib_util:m_timestamp()
+        last_error_time => nklib_date:epoch(msecs)
     }.
 
 
 -type module_status() ::
     #{
         status => status(),
-        last_status_time => nklib_util:m_timestamp(),
+        last_status_time => nklib_date:epoch(msecs),
         error => term(),
-        last_error_time => nklib_util:m_timestamp()
+        last_error_time => nklib_date:epoch(msecs)
     }.
 
 -type event() ::
@@ -314,7 +314,7 @@ init(#{id:=SrvId, hash:=Hash}=Service) ->
     nkservice_config_cache:make_cache(Service),
     % Someone could be listening (like events)
     nkservice_util:notify_updated_service(SrvId),
-    {ok, UserState} = SrvId:service_init(Service, #{}),
+    {ok, UserState} = ?CALL_SRV(SrvId, service_init, [Service, #{}]),
     State = #state{
         id = SrvId,
         service = Service,
@@ -384,8 +384,9 @@ handle_cast(Msg, State) ->
 %% @private
 handle_info(nkservice_timed_check_status, State) ->
     State2 = check_sup_state(State),
+    {ok, State3} = handle(service_timed_check, [], State2),
     erlang:send_after(?SRV_CHECK_TIME, self(), nkservice_timed_check_status),
-    {noreply, State2};
+    {noreply, State3};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
     #state{
@@ -605,7 +606,7 @@ do_event(Event, #state{events={Size, Queue}}=State) ->
         false ->
             {Size, Queue}
     end,
-    Now = nklib_util:m_timestamp(),
+    Now = nklib_date:epoch(msecs),
     {Size3, Queue3} = {Size2+1, queue:in({Now, Event}, Queue2)},
     State2#state{events={Size3, Queue3}}.
 

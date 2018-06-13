@@ -52,9 +52,9 @@
 
 -type node_info() ::
     #{
-        started_time => nklib_util:m_timestamp(),
+        started_time => nklib_date:epoch(msecs),
         node_status => node_status(),
-        status_time => nklib_util:m_timestamp()
+        status_time => nklib_date:epoch(msecs)
     }.
 
 -type info() ::
@@ -118,7 +118,7 @@ start_link() ->
 
 %% @private
 init([]) ->
-    Now = nklib_util:m_timestamp(),
+    Now = nklib_date:epoch(msecs),
     NodeInfo = #{
         started_time => Now,
         node_status => normal,
@@ -216,7 +216,7 @@ handle_info({nodedown, Node, InfoList}, #state{nodes=Nodes}=State) ->
             ?LLOG(warning, "node ~p is DOWN: ~p", [Node, InfoList]),
             Info2 = Info#{
                 node_status := down,
-                status_time := nklib_util:m_timestamp()
+                status_time := nklib_date:epoch(msecs)
             },
             Nodes2 = Nodes#{Node => Info2},
             State#state{nodes=Nodes2};
@@ -279,7 +279,7 @@ update_status(Status, #state{nodes=Nodes}=State) ->
             ?LLOG(notice, "status ~p -> ~p", [OldStatus, Status]),
             Local2 = Local#{
                 node_status := Status,
-                status_time := nklib_util:m_timestamp()
+                status_time := nklib_date:epoch(msecs)
             },
             Nodes2 = Nodes#{node() := Local2},
             {ok, State#state{nodes=Nodes2}}
