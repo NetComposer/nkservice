@@ -68,7 +68,7 @@ compile_module(ModuleId, ModSpec, Bin, #{id:=SrvId}=Service) ->
     Cache1 = nkservice_config_util:get_debug_map(ModSpec),
     Cache2 = nkservice_config_util:set_cache_key(nkservice_luerl, ModuleId, max_instances, MaxInstances, Cache1),
     ModSpec2 = nkservice_config_util:set_cache_map(Cache2, ModSpec),
-    Debug1 = nkservice_config_util:get_debug_map(ModSpec),
+    Debug1 = nkservice_config_util:get_debug_map(ModSpec2),
     Debug = maps:get(debug, ModSpec, false),
     Debug2 = nkservice_config_util:set_debug_key(nkservice_luerl, ModuleId, debug, Debug, Debug1),
     ModSpec3 = nkservice_config_util:set_debug_map(Debug2, ModSpec),
