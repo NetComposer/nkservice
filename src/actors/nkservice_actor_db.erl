@@ -41,7 +41,7 @@
 
 
 %%-type parser_fun() ::
-%%    fun((nkservice_actor:actor()) -> {ok, nkservice_actor:actor()} | {error, nkservice_error:error()}).
+%%    fun((nkservice_actor:actor()) -> {ok, nkservice_actor:actor()} | {error, nkservice_msg:msg()}).
 
 -type opts() ::
 #{
@@ -130,31 +130,22 @@ read(Id) ->
 read(Id, Opts) ->
     case id_to_actor_id(Id) of
         {ok, #actor_id{}=ActorId} ->
-            case is_activated(ActorId) of
-                {true, #actor_id{pid=Pid}} ->
-                    case nkservice_actor_srv:sync_op(Pid, get_actor) of
+            case maps:get(activate, Opts, true) of
+                true ->
+                    case maps:is_key(ttl, Opts) of
+                        true ->
+                            activate(ActorId, Opts);
+                        false ->
+                            ok
+                    end,
+                    case nkservice_actor_srv:sync_op(ActorId, get_actor) of
                         {ok, Actor} ->
-                            {ok, Actor, #{is_loaded=>true}};
+                            {ok, Actor, #{}};
                         {error, Error} ->
                             {error, Error}
                     end;
                 false ->
-                    case maps:get(activate, Opts, true) of
-                        true ->
-                            case activate(ActorId, Opts) of
-                                {ok, #actor_id{pid=Pid}, Meta} ->
-                                    case nkservice_actor_srv:sync_op(Pid, get_actor) of
-                                        {ok, Actor} ->
-                                            {ok, Actor, Meta#{is_loaded=>true}};
-                                        {error, Error} ->
-                                            {error, Error}
-                                    end;
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
-                        false ->
-                            db_read(ActorId, Opts)
-                    end
+                    db_read(ActorId, Opts)
             end;
         {error, Error} ->
             {error, Error}
@@ -218,6 +209,8 @@ create(Actor, Opts) ->
                                 {error, Error} ->
                                     {error, Error}
                             end;
+                        {error, actor_already_registered} ->
+                            {error, uniqueness_violation};
                         {error, Error} ->
                             {error, Error}
                     end;
@@ -243,21 +236,24 @@ delete(Id) ->
 
 
 %% @doc Deletes an actor
+%% Uses options srv_db, cascade
+
 -spec delete(nkservice_actor:id(), opts()) ->
     ok | {error, actor_not_found|term()}.
 
 delete(Id, Opts) ->
     case find(Id, Opts) of
         {ok, #actor_id{srv=ActorSrvId, uid=UID, pid=Pid}, _Meta} ->
-            case is_pid(Pid) of
-                true ->
-                    nkservice_actor_srv:actor_is_deleted(Pid);
-                false ->
-                    ok
-            end,
             SrvId = maps:get(db_srv, Opts, ActorSrvId),
-            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts]) of
+            Opts2 = #{cascade => maps:get(cascade, Opts, false)},
+            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
                 {ok, DeleteMeta} ->
+                    case is_pid(Pid) of
+                        true ->
+                            nkservice_actor_srv:actor_is_deleted(Pid);
+                        false ->
+                            ok
+                    end,
                     {ok, DeleteMeta};
                 {error, Error} ->
                     {error, Error}
@@ -326,7 +322,6 @@ aggregation(SrvId, AggType, Opts) ->
 %% @doc Gets a full #actor_id{} based on path or uid
 %% If uid, and not cached, a service must be provided and db is hit
 %% UID in returning #actor_id{} may be empty
-%% CAN GENERATE ATOMS for the srv in ID
 id_to_actor_id(#actor_id{}=ActorId) ->
     {ok, ActorId};
 
@@ -336,10 +331,10 @@ id_to_actor_id(Id) ->
             {ok, ActorId};
         false ->
             UID = to_bin(Id),
-            case nkservice_master:find_cached_actor(UID) of
-                {ok, ActorId} ->
+            case nkservice_master:is_cached_actor(UID) of
+                {true, ActorId} ->
                     {ok, ActorId};
-                {error, actor_not_found} ->
+                false ->
                     case nkservice_app:get_db_default_service() of
                         undefined ->
                             error(dbDefaultService_not_defined);

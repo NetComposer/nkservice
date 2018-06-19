@@ -21,7 +21,7 @@
 %% @doc Default plugin callbacks
 -module(nkservice_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([error/1, error/2, i18n/3]).
+-export([msg/1, msg/2, i18n/3]).
 -export([service_event/3, service_timed_check/2]).
 -export([service_init/2, service_handle_call/4, service_handle_cast/3,
          service_handle_info/3, service_code_change/4, service_terminate/3]).
@@ -60,7 +60,7 @@
 
 
 %% @doc
--spec error(nkservice:lang(), nkservice:error()) ->
+-spec msg(nkservice:lang(), nkservice:msg()) ->
     atom() |
     tuple() |
     list() |
@@ -68,12 +68,12 @@
     {Fmt::string(), Vals::string()} |
     {atom(), Fmt::string(), Vals::string()}.
 
-error(SrvId, Error) ->
-    SrvId:error(Error).
+msg(SrvId, Msg) ->
+    ?CALL_SRV(SrvId, msg, [Msg]).
 
 
 %% @doc
--spec error(nkservice:error()) ->
+-spec msg(nkservice:msg()) ->
     atom() |
     tuple() |
     list() |
@@ -82,70 +82,71 @@ error(SrvId, Error) ->
     {atom(), Fmt::string(), Vals::string()}.
 
 
-error(actor_expired)	        -> "Actor has expired";
-error(already_authenticated)	-> "Already authenticated";
-error(already_started)	        -> "Already started";
-error(already_uploaded)   		-> "Already uploaded";
-error(api_delete) 				-> "API delete received";
-error(api_stop) 				-> "API stop received";
-error(data_not_available)   	-> "Data is not available";
-error(destionation_not_found)   -> "Destination not found";
-error(duplicated_session_id)	-> "Duplicated session";
-error({field_missing, Txt})	    -> {"Missing field: '~s'", [Txt]};
-error({field_invalid, Txt})	    -> {"Field '~s' is invalid", [Txt]};
-error({field_unknown, Txt})	    -> {"Unknown field: '~s'", [Txt]};
-error(file_read_error)   		-> "File read error";
-error(internal_error)			-> "Internal error";
-error({internal_error, Ref})	-> {"Internal error: ~s", [Ref]};
-error({invalid_action, Txt})    -> {"Invalid action '~s'", [Txt]};
-error({invalid_state, St}) 	    -> {"Invalid state: ~s", [St]};
-error({invalid_value, V}) 		-> {"Invalid value: '~s'", [V]};
-error(invalid_json) 			-> "Invalid JSON";
-error(invalid_operation) 		-> "Invalid operation";
-error(invalid_login_request)    -> "Invalid login request";
-error(invalid_parameters) 		-> "Invalid parameters";
-error(invalid_password) 		-> "Invalid password";
-error(invalid_reply) 			-> "Invalid reply";
-error(invalid_role)			    -> "Invalid role";
-error(invalid_session_id)		-> "Invalid session";
-error(invalid_state) 			-> "Invalid state";
-error(invalid_uri) 			    -> "Invalid Uri";
-error(invalid_object_id) 		-> "Invalid ObjectId";
-error(json_encode_error)        -> "JSON encode error";
-error(linked_actor_unknown)     -> "Linked actor not found";
-error({linked_actor_unknown, Txt}) -> {"Linked actor '~s', not found", [Txt]};
-error(max_disabled_time)        -> "Maximum disabled time reached";
-error(method_not_allowed)       -> "Method not allowed";
-error(missing_id)				-> "Missing Id";
-error(no_password) 		        -> "No supplied password";
-error(no_usages)           		-> "No remaining usages";
-error(normal)           		-> "Normal termination";
-error(normal_termination) 		-> "Normal termination";
-error(not_authenticated)		-> "Not authenticated";
-error(not_found) 				-> "Not found";
-error(not_started) 				-> "Not yet started";
-error(not_implemented) 		    -> "Not implemented";
-error(process_down)  			-> "Process failed";
-error(process_not_found) 		-> "Process not found";
-error(registered_down) 	        -> "Registered process stopped";
-error(service_not_found) 		-> "Service not found";
-error(session_not_found) 		-> "Session not found";
-error(session_stop) 			-> "Session stop";
-error(session_timeout) 		    -> "Session timeout";
-error({syntax_error, Txt})		-> {"Syntax error: '~s'", [Txt]};
-error(timeout) 				    -> "Timeout";
-error(ttl_timeout) 			    -> "TTL Timeout";
-error(unauthorized) 			-> "Unauthorized";
-error(uniqueness_violation)	    -> "Actor is not unique";
-error({unknown_command, Txt})	-> {"Unknown command '~s'", [Txt]};
-error(unknown_peer) 			-> "Unknown peer";
-error(unknown_op)   			-> "Unknown operation";
-error(updated_invalid_field) 	-> "Tried to update invalid field";
-error({updated_invalid_field, Txt}) -> {"Tried to update invalid field: '~s'", [Txt]};
-error(user_not_found)			-> "User not found";
-error({user_not_found, User})	-> {"User not found: '~s'", [User]};
-error(user_stop) 				-> "User stop";
-error(_)   		                -> continue.
+msg(actor_expired)	            -> "Actor has expired";
+msg(actor_has_linked_actors)	-> "Actor has linked actors";
+msg(already_authenticated)	-> "Already authenticated";
+msg(already_started)	        -> "Already started";
+msg(already_uploaded)   		-> "Already uploaded";
+msg(api_delete) 				-> "API delete received";
+msg(api_stop) 				-> "API stop received";
+msg(data_not_available)   	-> "Data is not available";
+msg(destionation_not_found)   -> "Destination not found";
+msg(duplicated_session_id)	-> "Duplicated session";
+msg({field_missing, Txt})	    -> {"Missing field: '~s'", [Txt]};
+msg({field_invalid, Txt})	    -> {"Field '~s' is invalid", [Txt]};
+msg({field_unknown, Txt})	    -> {"Unknown field: '~s'", [Txt]};
+msg(file_read_error)   		-> "File read error";
+msg(internal_error)			-> "Internal error";
+msg({internal_error, Ref})	-> {"Internal error: ~s", [Ref]};
+msg({invalid_action, Txt})    -> {"Invalid action '~s'", [Txt]};
+msg({invalid_state, St}) 	    -> {"Invalid state: ~s", [St]};
+msg({invalid_value, V}) 		-> {"Invalid value: '~s'", [V]};
+msg(invalid_json) 			-> "Invalid JSON";
+msg(invalid_operation) 		-> "Invalid operation";
+msg(invalid_login_request)    -> "Invalid login request";
+msg(invalid_parameters) 		-> "Invalid parameters";
+msg(invalid_password) 		-> "Invalid password";
+msg(invalid_reply) 			-> "Invalid reply";
+msg(invalid_role)			    -> "Invalid role";
+msg(invalid_session_id)		-> "Invalid session";
+msg(invalid_state) 			-> "Invalid state";
+msg(invalid_uri) 			    -> "Invalid Uri";
+msg(invalid_object_id) 		-> "Invalid ObjectId";
+msg(json_encode_error)        -> "JSON encode error";
+msg(linked_actor_unknown)     -> "Linked actor not found";
+msg({linked_actor_unknown, Txt}) -> {"Linked actor '~s', not found", [Txt]};
+msg(max_disabled_time)        -> "Maximum disabled time reached";
+msg(method_not_allowed)       -> "Method not allowed";
+msg(missing_id)				-> "Missing Id";
+msg(no_password) 		        -> "No supplied password";
+msg(no_usages)           		-> "No remaining usages";
+msg(normal)           		-> "Normal termination";
+msg(normal_termination) 		-> "Normal termination";
+msg(not_authenticated)		-> "Not authenticated";
+msg(not_found) 				-> "Not found";
+msg(not_started) 				-> "Not yet started";
+msg(not_implemented) 		    -> "Not implemented";
+msg(process_down)  			-> "Process failed";
+msg(process_not_found) 		-> "Process not found";
+msg(registered_down) 	        -> "Registered process stopped";
+msg(service_not_found) 		-> "Service not found";
+msg(session_not_found) 		-> "Session not found";
+msg(session_stop) 			-> "Session stop";
+msg(session_timeout) 		    -> "Session timeout";
+msg({syntax_error, Txt})		-> {"Syntax error: '~s'", [Txt]};
+msg(timeout) 				    -> "Timeout";
+msg(ttl_timeout) 			    -> "TTL Timeout";
+msg(unauthorized) 			-> "Unauthorized";
+msg(uniqueness_violation)	    -> "Actor is not unique";
+msg({unknown_command, Txt})	-> {"Unknown command '~s'", [Txt]};
+msg(unknown_peer) 			-> "Unknown peer";
+msg(unknown_op)   			-> "Unknown operation";
+msg(updated_invalid_field) 	-> "Tried to update invalid field";
+msg({updated_invalid_field, Txt}) -> {"Tried to update invalid field: '~s'", [Txt]};
+msg(user_not_found)			-> "User not found";
+msg({user_not_found, User})	-> {"User not found: '~s'", [User]};
+msg(user_stop) 				-> "User stop";
+msg(_)   		                -> continue.
 
 
 
@@ -358,7 +359,7 @@ actor_terminate(_Reason, State) ->
 
 
 %% @private
--spec actor_stop(nkservice:error(), actor_st()) ->
+-spec actor_stop(nkservice:msg(), actor_st()) ->
     {ok, actor_st()} | continue().
 
 actor_stop(_Reason, State) ->
@@ -420,7 +421,7 @@ actor_async_op(_Op, _State) ->
 actor_save(Reason, ActorSt) ->
     #actor_st{actor_id=ActorId, vsn=Vsn, spec=Spec, meta=Meta} = ActorSt,
     #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = ActorId,
-    true = is_binary(UID),
+    true = is_binary(UID) andalso UID /= <<>>,
     Actor = #{
         uid => UID,
         srv => SrvId,
@@ -689,8 +690,8 @@ nkservice_make_srv_id(_SrvId, _UID) ->
 %%    ack |
 %%    {ack, pid()} |
 %%    {ack, pid()|undefined, req()} |
-%%    {error, nkservice:error()}  |
-%%    {error, nkservice:error(), req()}.
+%%    {error, nkservice:msg()}  |
+%%    {error, nkservice:msg(), req()}.
 %%
 %%service_api_cmd(_Id, _Req) ->
 %%    {error, not_implemented}.

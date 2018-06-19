@@ -20,8 +20,9 @@
 
 %% @doc Basic Actor behaviour
 %%
-%% When the actor starts, it must register with service's leader
-
+%% When the actor starts, it must register with its service's leader or it won't start
+%% If the leader fails, the actor will save and unload immediately
+%% (the leader keeps the registration for the actor, so it cannot be found any more)
 %%
 %% Unload policy
 %%
@@ -36,9 +37,10 @@
 %%
 %% Enabled policy
 %%
-%% - For an object to be loaded, service master must be available
-%% - It will start enabled only if service is enabled and property of the object is not false
-%% - If service is disabled, object is disabled until both are enabled
+%% - An actor starts disabled if property "isEnabled" is set to false
+%% - All standard operations work normally
+%% - When the actor is enabled or disabled, and event will be fired (useful for links)
+%% - The behaviour will be dependant for each implementation
 
 -module(nkservice_actor_srv).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -62,10 +64,6 @@
 -define(DEF_SYNC_CALL, 5000).
 -define(HEARTBEAT_TIME, 5000).
 -define(DEFAULT_SAVE_TIME, 5000).
--define(RELOAD_MASTER_TIME, 5000).
--define(MAX_DISABLED_TIME, 10000).
-
-%-compile({no_auto_import, [register/2]}).
 
 
 
@@ -80,6 +78,8 @@
         save_time => integer(),                         %% msecs for auto-save
         ttl => integer(),                               %% msecs
         stop_after_disabled => boolean(),               %% Default false
+        dont_update_on_disabled => boolean(),           %% Default false
+        dont_delete_on_disabled => boolean(),           %% Default false
         atom() => term()                                %% User config
     }.
 
@@ -96,12 +96,12 @@
     {link_added, Type::binary()} |
     {link_removed, Type::binary()} |
     {link_down, Type::binary()} |
-    {unloaded, nkservice:error()}.
+    {unloaded, nkservice:msg()}.
 
 
 -type start_opts() ::
     #{
-        is_enabled => boolean(),        % Mark as disabled on load
+        %is_enabled => boolean(),        % Mark as disabled on load
         is_new => boolean(),
         config => config()              % Overrides config
     }.
@@ -136,7 +136,7 @@
     {send_info, atom()|binary(), map()} |
     {send_event, event()} |
     save |
-    {unload, Reason::nkservice:error()} |
+    {unload, Reason::nkservice:msg()} |
     term().
 
 -type state() :: #actor_st{}.
@@ -265,13 +265,13 @@ unload_all() ->
 
 init({Actor, StartOpts}) ->
     State1 = do_init(Actor, StartOpts),
-    case handle(actor_init, [], State1) of
+    case register_with_leader(State1) of
         {ok, State2} ->
-            case register_with_leader(State2) of
-                {ok, State3} ->
-                    set_debug(State3),
-                    ?DEBUG("started (~p)", [self()], State3),
-                    State4 = set_unload_policy(State3),
+            set_debug(State2),
+            State3 = set_unload_policy(State2),
+            case handle(actor_init, [], State3) of
+                {ok, State4} ->
+                    ?DEBUG("started (~p)", [self()], State4),
                     State5 = case maps:get(is_new, StartOpts, false) of
                         true ->
                             do_event(created, State4);
@@ -280,7 +280,7 @@ init({Actor, StartOpts}) ->
                     end,
                     State6 = do_event(loaded, State5),
                     State7 = do_check_alarms(State6),
-                    % Save if created or init sets is_dirty = true
+                    % If it is a creation, is_dirty = true
                     case do_save(creation, State7) of
                         {ok, State8} ->
                             self() ! nkservice_heartbeat,
@@ -386,22 +386,6 @@ handle_info(nkservice_check_expire, State) ->
 handle_info(nkservice_ttl_timeout, State) ->
     do_ttl_timeout(State);
 
-handle_info(nkservice_find_master, #actor_st{leader_pid=undefined}=State) ->
-    case register_with_leader(State) of
-        {ok, State2} ->
-            ?DEBUG("master reloaded", [], State),
-            noreply(State2);
-        {error, Error} ->
-            ?LLOG(notice, "object could not reload master: ~p", [Error], State),
-            Time1 = ?RELOAD_MASTER_TIME - 2500 + rand:uniform(5000),
-            Time2 = max(Time1, 1000),
-            erlang:send_after(Time2, self(), nkservice_find_master),
-            noreply(State)
-    end;
-
-handle_info(nkservice_find_master, State) ->
-    noreply(State);
-
 handle_info(nkservice_next_status_timer, State) ->
     State2 = State#actor_st{status_timer=undefined},
     {ok, State3} = handle(actor_next_status_timer, [], State2),
@@ -412,12 +396,8 @@ handle_info(nkservice_heartbeat, State) ->
     do_heartbeat(State);
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{leader_pid=Pid}=State) ->
-    ?LLOG(notice, "service master has failed", [], State),
-    self() ! nkservice_find_master,
-    % If we had a pending save, do now
-    {_, State2} = do_save(timer, State),
-    State3 = do_enabled(State2#actor_st{leader_pid=undefined, is_leader_enabled=false}),
-    noreply(State3);
+    ?LLOG(notice, "service leader is down, stopping", [], State),
+    do_stop(leader_down, State);
 
 handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, State) ->
     case link_down(Ref, State) of
@@ -511,18 +491,12 @@ do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) -
             end
     end;
 
-do_sync_op({enable, Enable}, From, #actor_st{meta=Meta}=State) ->
-    case maps:get(<<"isEnabled">>, Meta, true) of
-        Enable ->
-            reply(ok, do_refresh_ttl(State));
-        _ ->
-            case do_update(#{metadata=>Meta#{<<"isEnabled">>=>Enable}}, State) of
-                {ok, State2} ->
-                    gen_server:reply(From, ok),
-                    noreply(do_refresh_ttl(State2));
-                {error, Error, State2} ->
-                    reply({error, Error}, State2)
-            end
+do_sync_op({enable, Enable}, _From, State) ->
+    case do_update(#{metadata=>#{<<"isEnabled">>:=Enable}}, State) of
+        {ok, State2} ->
+            reply(ok, do_refresh_ttl(State2));
+        {error, Error, State2} ->
+            reply({error, Error}, State2)
     end;
 
 do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
@@ -618,12 +592,6 @@ do_init(Actor, StartOpts) ->
     Meta = maps:get(metadata, Actor, #{}),
     Spec = maps:get(spec, Actor, #{}),
     ActorVsn = maps:get(vsn, Actor, <<"0">>),
-    IsEnabled = case maps:find(is_enabled, StartOpts) of
-        {ok, false} ->
-            false;
-        _ ->
-            maps:get(<<"isEnabled">>, Meta, true)
-    end,
     ActorId = #actor_id{
         srv = SrvId,
         uid = UID,
@@ -663,8 +631,7 @@ do_init(Actor, StartOpts) ->
         status = #{},
         links = nklib_links:new(),
         is_dirty = IsNew,
-        is_enabled = IsEnabled,
-        is_leader_enabled = false,          % Updated later
+        is_enabled = maps:get(<<"isEnabled">>, Meta, true),
         saved_time = 0,
         loaded_time = Now,
         status_timer = NextStatusTimer,
@@ -681,7 +648,9 @@ set_unload_policy(#actor_st{config=Config, meta=Meta}=State) ->
             case maps:get(<<"expiresTime">>, Meta, 0) of
                 0 ->
                     % A TTL reseated after each operation
-                    {ttl, maps:get(ttl, Config, ?DEFAULT_TTL)};
+                    TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
+                    ?DEBUG("TTL is ~p", [TTL], State),
+                    {ttl, TTL};
                 Expires ->
                     self() ! nkservice_check_expire,
                     {expires, Expires}
@@ -711,16 +680,13 @@ set_debug(#actor_st{actor_id =#actor_id{srv=SrvId, type=Type}}=State) ->
 %% @private
 %% The service leader registers the UID and the set {Srv, Class, Type, Name} with
 %% this pid.
-register_with_leader(#actor_st{actor_id=#actor_id{srv=SrvId}=ActorId}=State) ->
+%% If the service master dies, the process will stop immediately
+register_with_leader(#actor_st{actor_id=ActorId}=State) ->
     case nkservice_master:register_actor(ActorId) of
         {ok, Pid} ->
             ?DEBUG("registered with master service (~p)", [Pid], State),
             monitor(process, Pid),
-            State2 = do_enabled(State#actor_st{leader_pid=Pid, is_leader_enabled=true}),
-            {ok, State2};
-        {error, object_not_found} ->
-            ?LLOG(warning, "cannot load service leader: not found", [], State),
-            {error, {could_not_load_leader, SrvId}};
+            {ok, State#actor_st{leader_pid=Pid}};
         {error, Error} ->
             {error, Error}
     end.
@@ -803,7 +769,7 @@ do_stop(Reason, State) ->
 %% @private
 do_stop2(Reason, #actor_st{actor_id=#actor_id{srv=SrvId}, stop_reason=false, config=Config}=State) ->
     {ok, State2} = handle(actor_stop, [Reason], State#actor_st{stop_reason=Reason}),
-    {Code, Txt} = nkservice_error:error(SrvId, Reason),
+    {Code, Txt} = nkservice_msg:msg(SrvId, Reason),
     State3 = do_event({stopped, Code, Txt}, State2),
     {_, State4} = do_save(unloaded, State3),
     State5 = do_event({unloaded, Reason}, State4),
@@ -822,7 +788,6 @@ do_stop2(_Reason, State) ->
 %% @private
 do_update(Actor, #actor_st{actor_id =Id, spec=Spec, meta=Meta}=State) ->
     #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = Id,
-
     try
         case maps:get(srv, Actor, SrvId) of
             SrvId -> ok;
@@ -846,26 +811,31 @@ do_update(Actor, #actor_st{actor_id =Id, spec=Spec, meta=Meta}=State) ->
         end,
         Spec2 = maps:get(spec, Actor, Spec),
         SpecUpdated = Spec /= Spec2,
+        Links = maps:get(<<"links">>, Meta, #{}),
         ActorMeta1 = maps:get(metadata, Actor, #{}),
-        ActorMeta2 = case nkservice_actor_util:check_links(ActorMeta1) of
-            {ok, MetaLinks} ->
-                MetaLinks;
-            {error, Error} ->
-                throw(Error)
-        end,
         ForbiddenFields = [
             <<"resourceVersion">>,
             <<"generation">>,
             <<"creationTime">>,
-            % <<"isActivated">>,
-            %% <<"links">>,
             <<"expiresTime">>
         ],
-        case maps:with(ForbiddenFields, ActorMeta2) of
+        case maps:with(ForbiddenFields, ActorMeta1) of
             M when map_size(M)==0 ->
                 ok;
             M ->
                 throw({updated_invalid_field, hd(maps:keys(M))})
+        end,
+        ActorLinks = maps:get(<<"links">>, ActorMeta1, Links),
+        ActorMeta2 = case Links /= ActorLinks of
+            true ->
+                case nkservice_actor_util:check_links(ActorMeta1) of
+                    {ok, ActorMetaLinks} ->
+                        ActorMetaLinks;
+                    {error, Error} ->
+                        throw(Error)
+                end;
+            false ->
+                ActorMeta1
         end,
         Meta2 = maps:merge(Meta, ActorMeta2),
         MetaUpdated = Meta /= Meta2,
@@ -873,7 +843,8 @@ do_update(Actor, #actor_st{actor_id =Id, spec=Spec, meta=Meta}=State) ->
             true ->
                 State2 = State#actor_st{spec=Spec2, meta=Meta2, is_dirty=true},
                 State3 = do_update_version(State2),
-                State4 = do_enabled(State3),
+                Enabled = maps:get(<<"isEnabled">>, Meta2, true),
+                State4 = do_enabled(Enabled, State3),
                 case do_save(update, State4) of
                     {ok, State5} ->
                         {ok, do_event({updated, Actor}, State5)};
@@ -921,49 +892,19 @@ do_update_version(#actor_st{actor_id =#actor_id{name=Name}, spec=Spec, meta=Meta
     State#actor_st{meta=Meta2}.
 
 
-%% @private Sets an enabled state at the object
-do_enabled(#actor_st{is_leader_enabled=Master, meta=Meta}=State) ->
-    Enabled = case Master of
-        true ->
-            maps:get(<<"isEnabled">>, Meta, true);
-        false ->
-            false
-    end,
-    do_enabled(Enabled, State).
-
-
 %% @private
 do_enabled(Enabled, #actor_st{is_enabled=Enabled}=State) ->
     State;
 
 do_enabled(Enabled, State) ->
-    DisabledTime = case Enabled of
-        true ->
-            0;
-        false ->
-            nklib_date:epoch(msecs)
-    end,
-    State2 = State#actor_st{
-        is_enabled = Enabled,
-        disabled_time = DisabledTime
-    },
+    State2 = State#actor_st{is_enabled = Enabled},
     {ok, State3} = handle(actor_enabled, [Enabled], State2),
     do_event({enabled, Enabled}, State3).
 
 
 %% @private
 do_heartbeat(State) ->
-    case State of
-        #actor_st{is_enabled=false, disabled_time=Time} ->
-            case nklib_date:epoch(msecs) - Time > ?MAX_DISABLED_TIME of
-                true ->
-                    do_stop(max_disabled_time, State);
-                false ->
-                    do_check_save(State)
-            end;
-        _ ->
-            do_check_save(State)
-    end.
+    do_check_save(State).
 
 %% @private
 do_check_save(#actor_st{is_dirty=true, saved_time=Time, config=Config}=State) ->

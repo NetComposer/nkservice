@@ -179,7 +179,7 @@ find(SrvId, PackageId, #actor_id{}=ActorId) ->
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[{UID}]], QueryMeta} ->
-            {ok, ActorId#actor_id{uid=UID}, QueryMeta};
+            {ok, ActorId#actor_id{uid=UID, pid=undefined}, QueryMeta};
         {ok, [[]], _} ->
             {error, actor_not_found};
         {error, Error} ->
@@ -198,7 +198,8 @@ find(SrvId, PackageId, UID) ->
                 uid = UID,
                 class = Class,
                 type = Type,
-                name = Name
+                name = Name,
+                pid = undefined
             },
             {ok, ActorId, QueryMeta};
         {ok, [[]], _} ->
@@ -382,12 +383,18 @@ save(SrvId, PackageId, Mode, Actor) ->
 
 
 %% @doc
+%% Option 'cascade' to delete all linked
+%% Option 'force' to delete even
+
+
 delete(SrvId, PackageId, UID, Opts) ->
     QUID = quote(UID),
     UID2 = to_bin(UID),
     QUID2 = quote(UID2),
+    Debug = nkservice_util:get_debug('nkdomain-root', nkservice_pgsql, PackageId, debug),
+    QueryMeta = #{pgsql_debug=>Debug},
     QueryFun = fun(Pid) ->
-        do_query(Pid, <<"BEGIN;">>, #{}),
+        do_query(Pid, <<"BEGIN;">>, QueryMeta),
         DelQuery = case Opts of
             #{cascade:=true} ->
                 lists:foldl(
@@ -395,34 +402,29 @@ delete(SrvId, PackageId, UID, Opts) ->
                         QDeleteUID = quote(DeleteUID),
                         [
                             [<<"DELETE FROM actors WHERE uid=">>, QDeleteUID, <<";">>],
-                            [<<"DELETE FROM links WHERE orig=">>, QDeleteUID, <<";">>]
+                            [<<"DELETE FROM links WHERE uid=">>, QDeleteUID, <<";">>]
                             | Acc
                         ]
                     end,
                     [],
                     delete_find_nested(Pid, [UID2], sets:new()));
             _ ->
-                LinksQ = [<<"SELECT uid1 FROM links WHERE orig=">>, QUID, <<";">>],
-                case do_query(Pid, LinksQ, #{}) of
+                LinksQ = [<<"SELECT uid FROM links WHERE link_target=">>, QUID, <<";">>],
+                case do_query(Pid, LinksQ, QueryMeta) of
                     {ok, [[]], _} ->
                         ok;
                     _ ->
-                        case Opts of
-                            #{force:=true} ->
-                                ok;
-                            _ ->
-                                throw(actor_has_linked_actors)
-                        end
+                        throw(actor_has_linked_actors)
                 end,
                 [
                     <<"DELETE FROM actors WHERE uid=">>, QUID2, <<";">>,
                     <<"DELETE FROM labels WHERE uid=">>, QUID2, <<";">>,
-                    <<"DELETE FROM links WHERE orig=">>, QUID2, <<";">>,
+                    <<"DELETE FROM links WHERE uid=">>, QUID2, <<";">>,
                     <<"DELETE FROM fts WHERE uid=">>, QUID2, <<";">>
                 ]
         end,
-        do_query(Pid, DelQuery, #{}),
-        do_query(Pid, <<"COMMIT;">>, #{})
+        do_query(Pid, DelQuery, QueryMeta),
+        do_query(Pid, <<"COMMIT;">>, QueryMeta)
     end,
     case query(SrvId, PackageId, QueryFun, #{}) of
         {ok, _, Meta} ->
@@ -445,7 +447,7 @@ delete_find_nested(Pid, [UID|Rest], Set) ->
                     throw(too_many_actors);
                 false ->
                     lager:error("NKLOG LOOKING FOR ~p", [UID]),
-                    Q = [<<" SELECT orig FROM links WHERE target=">>, quote(UID), <<";">>],
+                    Q = [<<" SELECT uid FROM links WHERE link_target=">>, quote(UID), <<";">>],
                     case do_query(Pid, Q, #{}) of
                         {ok, [[]], _} ->
                             lager:error("NO CHILDS"),
@@ -598,10 +600,10 @@ query(SrvId, PackageId, Query, QueryMeta) ->
 
 %% @private
 do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
-    ?LLOG(info, "PreQuery: ~s", [Query]),
+    % ?LLOG(info, "PreQuery: ~s", [Query]),
     case nkservice_pgsql:do_query(Pid, Query) of
         {ok, Ops, PgMeta} ->
-            case maps:get(pgsql_debug, QueryMeta) of
+            case maps:get(pgsql_debug, QueryMeta, false) of
                 true ->
                     ?LLOG(notice, "Query: ~s\n~p", [Query, PgMeta]),
                     ok;

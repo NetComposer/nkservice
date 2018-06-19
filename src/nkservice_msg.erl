@@ -18,10 +18,10 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_error).
+-module(nkservice_msg).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([is_error/2, error/2]).
+-export([is_msg/2, msg/2]).
 
 -include("nkservice.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -33,62 +33,62 @@
 
 
 %% @private
--spec is_error(nkservice:id(), nkservice:error()) ->
+-spec is_msg(nkservice:id(), nkservice:msg()) ->
     {true, term(), term()} | false.
 
-is_error(SrvId, Error) ->
-    case ?CALL_SRV(SrvId, error, [SrvId, Error]) of
-        {ErrCode, Fmt, List} when is_list(Fmt), is_list(List) ->
-            {true, get_error_code(ErrCode), get_error_fmt(Fmt, List)};
+is_msg(SrvId, Msg) ->
+    case ?CALL_SRV(SrvId, msg, [SrvId, Msg]) of
+        {Code, Fmt, List} when is_list(Fmt), is_list(List) ->
+            {true, get_msg_code(Code), get_msg_fmt(Fmt, List)};
         {Fmt, List} when is_list(Fmt), is_list(List) ->
-            {true, get_error_code(Error), get_error_fmt(Fmt, List)};
-        {ErrCode, ErrReason} when is_list(ErrReason); is_binary(ErrReason) ->
-            {true, get_error_code(ErrCode), to_bin(ErrReason)};
-        ErrReason when is_list(ErrReason) ->
-            {true, get_error_code(Error), to_bin(ErrReason)};
+            {true, get_msg_code(Msg), get_msg_fmt(Fmt, List)};
+        {Code, Reason} when is_list(Reason); is_binary(Reason) ->
+            {true, get_msg_code(Code), to_bin(Reason)};
+        Reason when is_list(Reason) ->
+            {true, get_msg_code(Msg), to_bin(Reason)};
         _ ->
             false
     end.
 
 
 %% @private
--spec error(nkservice:id(), nkservice:error()) ->
+-spec msg(nkservice:id(), nkservice:msg()) ->
     {binary(), binary()}.
 
-error(SrvId, Error) ->
-    case is_error(SrvId, Error) of
+msg(SrvId, Msg) ->
+    case is_msg(SrvId, Msg) of
         {true, Code, Reason} ->
             {Code, Reason};
         false ->
-            % This error is not in any table, but it can be an already processed one
-            case Error of
-                {ErrCode, ErrReason} when is_binary(ErrCode), is_binary(ErrReason) ->
-                    {ErrCode, ErrReason};
-                {ErrCode, _} when is_atom(ErrCode) ->
-                    lager:notice("NkSERVICE unknown error: ~p", [Error]),
-                    {to_bin(ErrCode), to_bin(ErrCode)};
+            % This msg is not in any table, but it can be an already processed one
+            case Msg of
+                {Code, Reason} when is_binary(Code), is_binary(Reason) ->
+                    {Code, Reason};
+                {Code, _} when is_atom(Code) ->
+                    lager:notice("NkSERVICE unknown msg: ~p", [Msg]),
+                    {to_bin(Code), to_bin(Code)};
                 Other ->
                     Ref = erlang:phash2(make_ref()) rem 10000,
-                    lager:notice("NkSERVICE unknown internal error (~p): ~p", [Ref, Other]),
-                    {<<"internal_error">>, get_error_fmt("Internal error (~p)", [Ref])}
+                    lager:notice("NkSERVICE unknown internal msg (~p): ~p", [Ref, Other]),
+                    {<<"internal_error">>, get_msg_fmt("Internal msg (~p)", [Ref])}
             end
     end.
 
 
 %% @private
-get_error_code(Term) when is_atom(Term); is_binary(Term); is_list(Term) ->
+get_msg_code(Term) when is_atom(Term); is_binary(Term); is_list(Term) ->
     to_bin(Term);
 
-get_error_code(Tuple) when is_tuple(Tuple) ->
-    get_error_code(element(1, Tuple));
+get_msg_code(Tuple) when is_tuple(Tuple) ->
+    get_msg_code(element(1, Tuple));
 
-get_error_code(Error) ->
+get_msg_code(Error) ->
     lager:notice("Invalid format in API reason: ~p", [Error]),
     <<"internal_error">>.
 
 
 %% @private
-get_error_fmt(Fmt, List) ->
+get_msg_fmt(Fmt, List) ->
     case catch io_lib:format(Fmt, List) of
         {'EXIT', _} ->
             lager:notice("Invalid format API reason: ~p, ~p", [Fmt, List]),

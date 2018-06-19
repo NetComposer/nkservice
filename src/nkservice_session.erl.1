@@ -46,24 +46,24 @@
 
 %% @doc Send a command to the client using the session and wait a response
 -callback cmd(pid(), nkservice:req_cmd(), data()) ->
-    {ok, Result::binary(), data()} | {error, nkservice:error()}.
+    {ok, Result::binary(), data()} | {error, nkservice:msg()}.
 
 
 %% @doc Send a command and don't wait for a response
 -callback cmd_async(pid(), nkservice:req_cmd(), data()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 
 %% @doc Sends an event directly to the client (as if the session were subscribed to it)
 %% Response is not expected from remote
 -callback send_event(pid(), nkevent:event()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 
 %%%% @doc Sends a reply to a command (when you reply 'ack' in callbacks)
 %%-callback reply(pid(),
 %%                   {ok, map(), req()} |
-%%                   {error, nkservice:error(), req()} |
+%%                   {error, nkservice:msg(), req()} |
 %%                   {ack, req()} |
 %%                   {ack, pid(), req()}
 %%               ) ->
@@ -72,22 +72,22 @@
 
 %% @doc Start sending pings through the session
 -callback start_ping(pid(), integer()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 
 %% @doc Stops the session
--callback stop_session(pid(), nkservice:error()) ->
-    ok | {error, nkservice:error()}.
+-callback stop_session(pid(), nkservice:msg()) ->
+    ok | {error, nkservice:msg()}.
 
 
 %% @doc Registers a process with the session
 -callback register(pid(), nklib:link()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 
 %% @doc Unregisters a process with the session
 -callback unregister(pid(), nklib:link()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 
 %% @doc Registers the session with the Events system
@@ -160,7 +160,7 @@ stop_session(Req) ->
 
 
 %% @doc Stop session
--spec stop_session(req(), nkservice:error()) ->
+-spec stop_session(req(), nkservice:msg()) ->
     ok | {error, term()}.
 
 stop_session(#nkreq{session_module=Mod, session_pid=Pid}, Error) ->
@@ -193,7 +193,7 @@ get_subscriptions(#nkreq{session_module=Mod, session_pid=Pid}) ->
 
 %% @doc Registers a process with the session
 -spec register(req(), nklib:link()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 register(#nkreq{session_module=Mod, session_pid=Pid}, Link) ->
     Mod:register(Pid, Link).
@@ -201,7 +201,7 @@ register(#nkreq{session_module=Mod, session_pid=Pid}, Link) ->
 
 %% @doc Registers a process with the session
 -spec unregister(req(), nklib:link()) ->
-    ok | {error, nkservice:error()}.
+    ok | {error, nkservice:msg()}.
 
 unregister(#nkreq{session_module=Mod, session_pid=Pid}, Link) ->
     Mod:unregister(Pid, Link).

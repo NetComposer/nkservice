@@ -47,12 +47,7 @@ make(Actor, _Opts) ->
         {ok, Actor2, []} ->
             #{type:=Type, spec:=Spec, metadata:=Meta1} = Actor2,
             %% Add UID if not present
-            UID = case maps:find(uid, Actor2) of
-                {ok, UID0} ->
-                    UID0;
-                error ->
-                    make_uid(Type)
-            end,
+            UID = make_uid(Type),
             %% Add Name if not present
             Name = case maps:find(name, Actor2) of
                 {ok, Name0} ->
@@ -180,15 +175,14 @@ actor_to_actor_id(Actor) ->
         srv := SrvId,
         class := Class,
         type := Type,
-        name := Name,
-        uid := UID
+        name := Name
     } = Actor,
     #actor_id{
         srv=SrvId,
         class=Class,
         type=Type,
         name=Name,
-        uid=UID
+        uid=maps:get(uid, Actor, undefined)
     }.
 
 
@@ -212,8 +206,8 @@ gen_srv_id(BinSrvId) when is_binary(BinSrvId) ->
 
                     end
             end;
-        ExistingAtom ->
-            ExistingAtom
+        SrvId ->
+            SrvId
     end.
 
 

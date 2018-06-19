@@ -72,7 +72,7 @@
 -spec api(req()) ->
     {ok, Reply::term(), req()} |
     {ack, pid()|undefined, req()} |
-    {error, nkservice:error(), req()}.
+    {error, nkservice:msg(), req()}.
 
 api(#nkreq{cmd = <<"event">>=Req}) ->
     #nkreq{srv_id=SrvId, api_id=ApiId, data=Data} = Req,
@@ -150,7 +150,7 @@ event(#nkreq{cmd = <<"event">>, srv_id=SrvId, api_id=ApiId}=Req) ->
 %% @doc Sends a reply to a command (when you reply 'ack' in specs)
 -spec reply(
                {ok, map(), req()} |
-               {error, nkservice:error(), req()} |
+               {error, nkservice:msg(), req()} |
                {ack, req()} |
                {ack, pid(), req()}
            ) ->

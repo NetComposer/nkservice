@@ -187,7 +187,6 @@ enable(Id, Enable) ->
     nkservice_actor_srv:sync_op(Id, {enable, Enable}).
 
 
-
 %% @doc Updates an object
 -spec update(id()|pid(), map()) ->
     {ok, UnknownFields::[binary()]} | {error, term()}.
@@ -213,7 +212,7 @@ unload(Id) ->
 
 
 %% @doc Unloads the object
--spec unload(id()|pid(), Reason::nkservice:error()) ->
+-spec unload(id()|pid(), Reason::nkservice:msg()) ->
     ok | {error, term()}.
 
 unload(Id, Reason) ->

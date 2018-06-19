@@ -254,7 +254,7 @@ reply_json({ok, Data}, _Req) ->
 
 reply_json({error, Error}, #{srv:=SrvId}) ->
     Hds = #{<<"Content-Tytpe">> => <<"application/json">>},
-    {Code, Txt} = nkservice_error:error(SrvId, Error),
+    {Code, Txt} = nkservice_msg:msg(SrvId, Error),
     Body = nklib_json:encode(#{result=>error, data=>#{code=>Code, error=>Txt}}),
     {http, 200, Hds, Body}.
 

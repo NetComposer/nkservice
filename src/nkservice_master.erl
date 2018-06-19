@@ -37,7 +37,7 @@
 -export([get_info/1, stop/1, update/2, replace/2]).
 -export([get_leader_pid/1]).
 -export([get_all_actors/1]).
--export([find_actor/1, find_cached_actor/1, register_actor/1]).
+-export([find_actor/1, is_cached_actor/1, register_actor/1]).
 -export([updated_nodes_info/2, updated_service_status/2]).
 -export([call_leader/2, cast_leader/2]).
 -export([start_link/1]).
@@ -128,10 +128,10 @@ find_actor(#actor_id{srv=SrvId, uid=undefined}=ActorId) ->
     % We don't have a valid UID, use the path fields (class, type, name)
     case call_leader_retry(SrvId, {nkservice_find_actor_id, ActorId}) of
         {ok, #actor_id{uid=UID}=ActorId2} ->
-            case find_cached_actor(UID) of
-                {ok, _} ->
+            case is_cached_actor(UID) of
+                {true, _} ->
                     ok;
-                {error, actor_not_found} ->
+                false ->
                     insert_uid_cache(ActorId2)
             end,
             {ok, ActorId2};
@@ -142,11 +142,11 @@ find_actor(#actor_id{srv=SrvId, uid=undefined}=ActorId) ->
 find_actor(#actor_id{srv=SrvId, uid=UID}) ->
     % We have a valid UID
     % First, look in cache in this node. If not cached, call the master.
-    case find_cached_actor(UID) of
-        {ok, ActorId2} ->
+    case is_cached_actor(UID) of
+        {true, ActorId2} ->
             % We may have added the pid()
             {ok, ActorId2};
-        {error, actor_not_found} ->
+        false ->
             case call_leader_retry(SrvId, {nkservice_find_actor_uid, UID}) of
                 {ok, ActorId2} ->
                     insert_uid_cache(ActorId2),
@@ -158,14 +158,9 @@ find_actor(#actor_id{srv=SrvId, uid=UID}) ->
 
 
 %% @doc
-find_cached_actor(UID) ->
+is_cached_actor(UID) ->
     % Do a direct-uuid search, only in local node's cache
-    case is_uid_cached(to_bin(UID)) of
-        {true, ActorId} ->
-            {ok, ActorId};
-        false ->
-            {error, actor_not_found}
-    end.
+    is_uid_cached(UID).
 
 
 %% @doc
@@ -365,7 +360,7 @@ handle_call({nkservice_find_actor_uid, UID}, _From, State) ->
 handle_call({nkservice_register_actor, ActorId}, _From, State) ->
     case do_register_actor(ActorId, State) of
         ok ->
-            ?LLOG(debug, "Actor ~p registered", [ActorId], State),
+            %?LLOG(debug, "Actor ~p registered", [ActorId], State),
             {reply, {ok, self()}, State};
         {error, Error} ->
             {reply, {error, Error}, State}
@@ -716,7 +711,7 @@ do_register_actor(Actor, #state{actor_ets=Ets}=State) ->
             true = do_remove_actor(Pid, State),
             do_register_actor(Actor, State);
         _ ->
-            {error, already_registered}
+            {error, actor_already_registered}
     end.
 
 

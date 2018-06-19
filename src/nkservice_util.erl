@@ -135,7 +135,7 @@ luerl_api(SrvId, PackageId, Mod, Fun, Args, St) ->
     try
         Res = case apply(Mod, Fun, [SrvId, PackageId, Args]) of
             {error, Error} ->
-                {Code, Txt} = nkservice_error:error(SrvId, Error),
+                {Code, Txt} = nkservice_msg:msg(SrvId, Error),
                 [nil, Code, Txt];
             Other when is_list(Other) ->
                 Other

@@ -237,7 +237,7 @@ plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
                 {ok, {Syntax, Pos0}} ->
                     Case = case Arity==2 andalso lists:reverse(FunStr) of
                         "tini_"++_ -> case_expr_ok;         % Fun is ".._init"
-                        "etanimret_"++_ -> case_expr_ok;    % Fun is ".._terminate"
+                        % "etanimret_"++_ -> case_expr_ok;    % Fun is ".._terminate"
                         _ -> case_expr
                     end,
                     Pos = Pos0+1,
