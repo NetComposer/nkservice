@@ -80,7 +80,7 @@ config_core(#{id:=Id}=Spec, Service) ->
         _ ->
             update_uuid(Id, Spec)
     end,
-    General = maps:with([class, name, plugins, debug_actors, meta], Spec),
+    General = maps:with([class, name, plugins, debug_actors, meta, parent], Spec),
     Service2 = maps:merge(Service, General#{uuid=>UUID}),
     Defaults = #{
         class => <<>>,

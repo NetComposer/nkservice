@@ -23,6 +23,7 @@
 -export([init/2, drop/2]).
 -export([find/3, read/3, save/4, delete/4, search/4, aggregation/4]).
 -export([get_links/4, get_linked/4]).
+-export([get_service/3, update_service/4]).
 -export([query/3, query/4]).
 -export_type([result_fun/0]).
 
@@ -98,6 +99,7 @@ drop(SrvId, PackageId) ->
         DROP TABLE IF EXISTS actors CASCADE;
         DROP TABLE IF EXISTS links CASCADE;
         DROP TABLE IF EXISTS fts CASCADE;
+        DROP TABLE IF EXISTS domains CASCADE;
     ">>,
     case query(SrvId, PackageId, Q) of
         {ok, _, _} ->
@@ -109,6 +111,7 @@ drop(SrvId, PackageId) ->
 
 %% @private
 create_database_query() ->
+    % last_update and expires are secs
     <<"
         BEGIN;
         CREATE TABLE versions (
@@ -126,12 +129,12 @@ create_database_query() ->
             metadata JSONB NOT NULL,
             path STRING NOT NULL,
             last_update INT NOT NULL,
-            expires_time INT,
+            expires INT,
             fts_words STRING,
             UNIQUE INDEX name_idx (srv, class, actor_type, name),
             INDEX path_idx (path, class),
             INDEX last_update_idx (last_update),
-            INDEX expires_time_idx (expires_time),
+            INDEX expires_idx (expires),
             INVERTED INDEX spec_idx (spec),
             INVERTED INDEX metadata_idx (metadata)
         );
@@ -163,6 +166,14 @@ create_database_query() ->
             UNIQUE INDEX fts_idx (fts_word, fts_field, uid)
         )  INTERLEAVE IN PARENT actors(uid);
         INSERT INTO versions VALUES ('fts', '1');
+        CREATE TABLE services (
+            srv STRING PRIMARY KEY NOT NULL,
+            cluster STRING NOT NULL,
+            node STRING NOT NULL,
+            last_update INT NOT NULL,
+            pid STRING NOT NULL
+        );
+        INSERT INTO versions VALUES ('services', '1');
         COMMIT;
     ">>.
 
@@ -323,7 +334,7 @@ save(SrvId, PackageId, Mode, Actor) ->
     ActorQuery = [
         Verb,
         <<" INTO actors">>,
-        <<" (uid,srv,class,actor_type,name,vsn,spec,metadata,path,last_update,expires_time,fts_words)">>,
+        <<" (uid,srv,class,actor_type,name,vsn,spec,metadata,path,last_update,expires,fts_words)">>,
         <<" VALUES (">>, Fields, <<");">>
     ],
     QUID = quote(UID),
@@ -388,27 +399,32 @@ save(SrvId, PackageId, Mode, Actor) ->
 
 
 delete(SrvId, PackageId, UID, Opts) ->
-    QUID = quote(UID),
     UID2 = to_bin(UID),
-    QUID2 = quote(UID2),
-    Debug = nkservice_util:get_debug('nkdomain-root', nkservice_pgsql, PackageId, debug),
+    Debug = nkservice_util:get_debug(SrvId, nkservice_pgsql, PackageId, debug),
     QueryMeta = #{pgsql_debug=>Debug},
     QueryFun = fun(Pid) ->
         do_query(Pid, <<"BEGIN;">>, QueryMeta),
         DelQuery = case Opts of
             #{cascade:=true} ->
+                ChildUIDs = delete_find_nested(Pid, [UID2], sets:new()),
+                ?LLOG(notice, "DELETE on CASCADE: ~p", [ChildUIDs]),
                 lists:foldl(
-                    fun(DeleteUID, Acc) ->
-                        QDeleteUID = quote(DeleteUID),
+                    fun(ChildUID, Acc) ->
+                        nkservice_actor_srv:actor_deleted(ChildUID),
+                        QChildUID = quote(ChildUID),
                         [
-                            [<<"DELETE FROM actors WHERE uid=">>, QDeleteUID, <<";">>],
-                            [<<"DELETE FROM links WHERE uid=">>, QDeleteUID, <<";">>]
+                            <<"DELETE FROM actors WHERE uid=">>, QChildUID, <<"; ">>,
+                            <<"DELETE FROM labels WHERE uid=">>, QChildUID, <<"; ">>,
+                            <<"DELETE FROM links WHERE uid=">>, QChildUID, <<"; ">>,
+                            <<"DELETE FROM fts WHERE uid=">>, QChildUID, <<"; ">>
                             | Acc
                         ]
                     end,
                     [],
-                    delete_find_nested(Pid, [UID2], sets:new()));
+                    ChildUIDs);
             _ ->
+                nkservice_actor_srv:actor_deleted(UID2),
+                QUID = quote(UID),
                 LinksQ = [<<"SELECT uid FROM links WHERE link_target=">>, QUID, <<";">>],
                 case do_query(Pid, LinksQ, QueryMeta) of
                     {ok, [[]], _} ->
@@ -417,10 +433,10 @@ delete(SrvId, PackageId, UID, Opts) ->
                         throw(actor_has_linked_actors)
                 end,
                 [
-                    <<"DELETE FROM actors WHERE uid=">>, QUID2, <<";">>,
-                    <<"DELETE FROM labels WHERE uid=">>, QUID2, <<";">>,
-                    <<"DELETE FROM links WHERE uid=">>, QUID2, <<";">>,
-                    <<"DELETE FROM fts WHERE uid=">>, QUID2, <<";">>
+                    <<"DELETE FROM actors WHERE uid=">>, QUID, <<";">>,
+                    <<"DELETE FROM labels WHERE uid=">>, QUID, <<";">>,
+                    <<"DELETE FROM links WHERE uid=">>, QUID, <<";">>,
+                    <<"DELETE FROM fts WHERE uid=">>, QUID, <<";">>
                 ]
         end,
         do_query(Pid, DelQuery, QueryMeta),
@@ -433,6 +449,7 @@ delete(SrvId, PackageId, UID, Opts) ->
             {error, Error}
     end.
 
+%% @private Returns the list of UIDs an UID depends on
 delete_find_nested(_Pid, [], Set) ->
     sets:to_list(Set);
 
@@ -444,20 +461,16 @@ delete_find_nested(Pid, [UID|Rest], Set) ->
             Set2 = sets:add_element(UID, Set),
             case sets:size(Set2) > 5 of
                 true ->
-                    throw(too_many_actors);
+                    throw(delete_too_deep);
                 false ->
-                    lager:error("NKLOG LOOKING FOR ~p", [UID]),
                     Q = [<<" SELECT uid FROM links WHERE link_target=">>, quote(UID), <<";">>],
-                    case do_query(Pid, Q, #{}) of
+                    Childs = case do_query(Pid, Q, #{}) of
                         {ok, [[]], _} ->
-                            lager:error("NO CHILDS"),
-                            delete_find_nested(Pid, Rest, Set);
-                        {ok, [List2], _} ->
-                            List3 = [U || {U} <- List2],
-                            lager:error("CHILDS: ~p", [List3]),
-                            Set3 = sets:union(Set2, sets:from_list(List3)),
-                            delete_find_nested(Pid, List3++Rest, Set3)
-                    end
+                            [];
+                        {ok, [List], _} ->
+                            [U || {U} <- List]
+                    end,
+                    delete_find_nested(Pid, Childs++Rest, Set2)
             end
     end.
 
@@ -489,6 +502,46 @@ aggregation(SrvId, PackageId, SearchType, Opts) ->
                 {error, Error} ->
                     {error, Error}
             end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
+get_service(SrvId, PackageId, ActorSrvId) ->
+    Query = [
+        <<"SELECT cluster,node,last_update,pid FROM services ">>,
+        <<" WHERE srv=">>, quote(ActorSrvId), <<";">>
+    ],
+    case query(SrvId, PackageId, Query) of
+        {ok, [[Fields]], QueryMeta} ->
+            {Cluster, Node, Updated, Pid} = Fields,
+            Reply = #{
+                cluster => Cluster,
+                node => nklib_util:make_atom(?MODULE, Node),
+                updated => Updated,     % secs
+                pid => list_to_pid(binary_to_list(Pid))
+            },
+            {ok, Reply, QueryMeta};
+        {ok, [[]], _QueryMeta} ->
+            {error, service_not_found};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
+update_service(SrvId, PackageId, ActorSrvId, Cluster) ->
+    Update = integer_to_binary(nklib_date:epoch(secs)),
+    Pid2 = quote(list_to_binary(pid_to_list(self()))),
+    Query = [
+        <<"UPSERT INTO services (srv,cluster,node,last_update,pid) VALUES (">>,
+        quote(ActorSrvId), $,, quote(Cluster), $,,  quote(node()), $,, Update, $,, Pid2,
+        <<");">>
+    ],
+    case query(SrvId, PackageId, Query) of
+        {ok, _, QueryMeta} ->
+            {ok, QueryMeta};
         {error, Error} ->
             {error, Error}
     end.
@@ -552,7 +605,7 @@ query(SrvId, PackageId, Query) ->
 
 %% @private
 query(SrvId, PackageId, Query, QueryMeta) ->
-    Debug = nkservice_util:get_debug('nkdomain-root', nkservice_pgsql, PackageId, debug),
+    Debug = nkservice_util:get_debug(SrvId, nkservice_pgsql, PackageId, debug),
     QueryMeta2 = QueryMeta#{pgsql_debug=>Debug},
     case nkservice_pgsql:get_connection(SrvId, PackageId) of
         {ok, Pid} ->
@@ -600,7 +653,7 @@ query(SrvId, PackageId, Query, QueryMeta) ->
 
 %% @private
 do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
-    % ?LLOG(info, "PreQuery: ~s", [Query]),
+    %?LLOG(info, "PreQuery: ~s", [Query]),
     case nkservice_pgsql:do_query(Pid, Query) of
         {ok, Ops, PgMeta} ->
             case maps:get(pgsql_debug, QueryMeta, false) of

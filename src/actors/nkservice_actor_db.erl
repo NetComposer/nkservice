@@ -22,10 +22,12 @@
 -module(nkservice_actor_db).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, find/2, read/1, read/2, activate/1, activate/2]).
+-export([find/1, find/2, is_activated/1, read/1, read/2, activate/1, activate/2]).
 -export([create/2, delete/1, delete/2]).
 -export([search/2, search/3, aggregation/2, aggregation/3]).
 -export([db_read/2]).
+-export([check_service/4]).
+
 %%-export_type([search_obj/0, search_objs_opts/0]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -33,7 +35,6 @@
 
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE DB "++Txt, Args)).
-
 
 %% ===================================================================
 %% Types
@@ -63,6 +64,13 @@
 %-type aggregation_type() :: term().
 
 
+-type service_info() ::
+    #{
+        cluster => binary(),
+        node => atom(),
+        updated => nklib_date:epoch(secs),
+        pid => pid()
+    }.
 
 
 %% ===================================================================
@@ -108,6 +116,25 @@ find(Id, Opts) ->
             end;
         {error, Error} ->
             {error, Error}
+    end.
+
+
+%% @doc Finds if an actor is currently activated
+%% If true, full #actor_id{} will be returned (with uid and pid)
+-spec is_activated(nkservice_actor:id()) ->
+    {true, #actor_id{}} | false.
+
+is_activated(Id) ->
+    case id_to_actor_id(Id) of
+        {ok, ActorId} ->
+            case nkservice_master:find_actor(ActorId) of
+                {ok, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
+                    {true, ActorId2};
+                {error, _} ->
+                    false
+            end;
+        _ ->
+            false
     end.
 
 
@@ -174,12 +201,19 @@ activate(Id, Opts) ->
                     case db_read(ActorId, Opts) of
                         {ok, Actor, Meta2} ->
                             LoadOpts = load_opts(Opts),
-                            case ?CALL_SRV(ActorSrvId, actor_activate, [Actor, LoadOpts]) of
-                                {ok, Pid} ->
-                                    ActorId2 = nkservice_actor_util:actor_to_actor_id(Actor),
-                                    {ok, ActorId2#actor_id{pid=Pid}, Meta2};
-                                {error, Error} ->
-                                    {error, Error}
+                            case is_pid(whereis(ActorSrvId)) of
+                                true ->
+                                    case
+                                        ?CALL_SRV(ActorSrvId, actor_activate, [Actor, LoadOpts])
+                                    of
+                                        {ok, Pid} ->
+                                            ActorId2 = nkservice_actor_util:actor_to_actor_id(Actor),
+                                            {ok, ActorId2#actor_id{pid=Pid}, Meta2};
+                                        {error, Error} ->
+                                            {error, Error}
+                                    end;
+                                false ->
+                                    {error, {service_not_available, ActorSrvId}}
                             end;
                         {error, Error} ->
                             {error, Error}
@@ -243,17 +277,12 @@ delete(Id) ->
 
 delete(Id, Opts) ->
     case find(Id, Opts) of
-        {ok, #actor_id{srv=ActorSrvId, uid=UID, pid=Pid}, _Meta} ->
+        {ok, #actor_id{srv=ActorSrvId, uid=UID}, _Meta} ->
             SrvId = maps:get(db_srv, Opts, ActorSrvId),
             Opts2 = #{cascade => maps:get(cascade, Opts, false)},
+            % Implementation must call nkservice_actor_srv:actor_deleted/1
             case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
                 {ok, DeleteMeta} ->
-                    case is_pid(Pid) of
-                        true ->
-                            nkservice_actor_srv:actor_is_deleted(Pid);
-                        false ->
-                            ok
-                    end,
                     {ok, DeleteMeta};
                 {error, Error} ->
                     {error, Error}
@@ -311,6 +340,49 @@ aggregation(SrvId, AggType) ->
 aggregation(SrvId, AggType, Opts) ->
     ?CALL_SRV(SrvId, actor_db_aggregate, [SrvId, AggType, Opts]).
 
+%% @doc Check if the info on database for service is up to date, and update it
+%% - If the current info belongs to us (or it is missing), the time is updated
+%% - If the info does not belong to us, but it is old (more than serviceDbMaxHeartbeatTime)
+%%   it is overwritten
+%% - If it is recent, and error alternate_service is returned
+
+-spec check_service(nkservice:id(), nkservice:id(), binary(), integer()) ->
+    ok | {alternate_service, service_info()} | {error, term()}.
+
+check_service(SrvId, ActorSrvId, Cluster, MaxTime) ->
+    Node = node(),
+    Pid = self(),
+    case ?CALL_SRV(SrvId, actor_db_get_service, [SrvId, ActorSrvId]) of
+        {ok, #{cluster:=Cluster, node:=Node, pid:=Pid}, _} ->
+            check_service_update(SrvId, ActorSrvId, Cluster);
+        {ok, #{updated:=Updated}=Info, _} ->
+            Now = nklib_date:epoch(secs),
+            case Now - Updated < (MaxTime div 1000) of
+                true ->
+                    % It is recent, we consider it valid
+                    {alternate_service, Info};
+                false ->
+                    % Too old, we overwrite it
+                    check_service_update(SrvId, ActorSrvId, Cluster)
+            end;
+        {error, service_not_found} ->
+            check_service_update(SrvId, ActorSrvId, Cluster);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private
+check_service_update(SrvId, ActorSrvId, Cluster) ->
+    case ?CALL_SRV(SrvId, actor_db_update_service, [SrvId, ActorSrvId, Cluster]) of
+        {ok, _} ->
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+
 
 
 %% ===================================================================
@@ -349,20 +421,6 @@ id_to_actor_id(Id) ->
             end
     end.
 
-
-
-%% @doc Finds if an actor is currently activated
-%% If true, full #actor_id{} will be returned (with uid and pid)
--spec is_activated(nkservice_actor:id()) ->
-    {true, #actor_id{}} | false.
-
-is_activated(#actor_id{}=ActorId) ->
-    case nkservice_master:find_actor(ActorId) of
-        {ok, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
-            {true, ActorId2};
-        {error, _} ->
-            false
-    end.
 
 
 %% @private

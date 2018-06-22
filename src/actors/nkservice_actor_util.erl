@@ -51,7 +51,12 @@ make(Actor, _Opts) ->
             %% Add Name if not present
             Name = case maps:find(name, Actor2) of
                 {ok, Name0} ->
-                    normalized_name(Name0);
+                    case normalized_name(Name0) of
+                        <<>> ->
+                            make_name(UID);
+                        Name1 ->
+                            Name1
+                    end;
                 error ->
                     make_name(UID)
             end,
@@ -195,8 +200,7 @@ gen_srv_id(BinSrvId) when is_binary(BinSrvId) ->
         {'EXIT', _} ->
             case nkservice_app:get_db_default_service() of
                 undefined ->
-                    lager:warning("Module ~s creating atom '~s'", [?MODULE, BinSrvId]),
-                    binary_to_atom(BinSrvId, utf8);
+                    nklib_util:make_atom(?MODULE, BinSrvId);
                 DefSrvId ->
                     case ?CALL_SRV(DefSrvId, nkservice_make_srv_id, [DefSrvId, BinSrvId]) of
                         {ok, SrvId} ->

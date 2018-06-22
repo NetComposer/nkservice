@@ -24,6 +24,7 @@
 
 -export([actor_db_find/2, actor_db_read/2, actor_db_create/2,
          actor_db_update/2, actor_db_delete/3, actor_db_search/3,actor_db_aggregate/3]).
+-export([actor_db_get_service/2, actor_db_update_service/3]).
 
 -include("nkservice.hrl").
 -include("nkservice_actor.hrl").
@@ -103,6 +104,24 @@ actor_db_aggregate(SrvId, SearchType, Opts) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
             nkservice_pgsql_actors:aggregation(SrvId, PackageId, SearchType, Opts);
+        false ->
+            continue
+    end.
+
+
+actor_db_get_service(SrvId, ActorSrvId) ->
+    case get_package_id(SrvId) of
+        {true, PackageId} ->
+            nkservice_pgsql_actors:get_service(SrvId, PackageId, ActorSrvId);
+        false ->
+            continue
+    end.
+
+
+actor_db_update_service(SrvId, ActorSrvId, Cluster) ->
+    case get_package_id(SrvId) of
+        {true, PackageId} ->
+            nkservice_pgsql_actors:update_service(SrvId, PackageId, ActorSrvId, Cluster);
         false ->
             continue
     end.

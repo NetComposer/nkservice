@@ -29,7 +29,7 @@
     status :: map(),
     leader_pid :: pid() | undefined,
     is_dirty :: boolean(),
-    saved_time :: nklib_util:m_timestamp(),
+    save_timer :: reference(),
     is_enabled :: boolean(),
     loaded_time :: nklib_util:m_timestamp(),
     links :: nklib_links:links(),

@@ -37,7 +37,8 @@
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/2, actor_db_create/2, actor_db_read/2,
          actor_db_update/2, actor_db_delete/3, actor_db_search/3,
-         actor_db_aggregate/3, actor_db_get_query/3]).
+         actor_db_aggregate/3, actor_db_get_query/3,
+         actor_db_get_service/2, actor_db_update_service/3]).
 -export([nkservice_find_uid/2, nkservice_make_srv_id/2]).
 
 -export_type([continue/0]).
@@ -82,71 +83,73 @@ msg(SrvId, Msg) ->
     {atom(), Fmt::string(), Vals::string()}.
 
 
-msg(actor_expired)	            -> "Actor has expired";
-msg(actor_has_linked_actors)	-> "Actor has linked actors";
-msg(already_authenticated)	-> "Already authenticated";
-msg(already_started)	        -> "Already started";
-msg(already_uploaded)   		-> "Already uploaded";
-msg(api_delete) 				-> "API delete received";
-msg(api_stop) 				-> "API stop received";
-msg(data_not_available)   	-> "Data is not available";
-msg(destionation_not_found)   -> "Destination not found";
-msg(duplicated_session_id)	-> "Duplicated session";
-msg({field_missing, Txt})	    -> {"Missing field: '~s'", [Txt]};
-msg({field_invalid, Txt})	    -> {"Field '~s' is invalid", [Txt]};
-msg({field_unknown, Txt})	    -> {"Unknown field: '~s'", [Txt]};
-msg(file_read_error)   		-> "File read error";
-msg(internal_error)			-> "Internal error";
-msg({internal_error, Ref})	-> {"Internal error: ~s", [Ref]};
-msg({invalid_action, Txt})    -> {"Invalid action '~s'", [Txt]};
-msg({invalid_state, St}) 	    -> {"Invalid state: ~s", [St]};
-msg({invalid_value, V}) 		-> {"Invalid value: '~s'", [V]};
-msg(invalid_json) 			-> "Invalid JSON";
-msg(invalid_operation) 		-> "Invalid operation";
-msg(invalid_login_request)    -> "Invalid login request";
-msg(invalid_parameters) 		-> "Invalid parameters";
-msg(invalid_password) 		-> "Invalid password";
-msg(invalid_reply) 			-> "Invalid reply";
-msg(invalid_role)			    -> "Invalid role";
-msg(invalid_session_id)		-> "Invalid session";
-msg(invalid_state) 			-> "Invalid state";
-msg(invalid_uri) 			    -> "Invalid Uri";
-msg(invalid_object_id) 		-> "Invalid ObjectId";
-msg(json_encode_error)        -> "JSON encode error";
-msg(linked_actor_unknown)     -> "Linked actor not found";
-msg({linked_actor_unknown, Txt}) -> {"Linked actor '~s', not found", [Txt]};
-msg(max_disabled_time)        -> "Maximum disabled time reached";
-msg(method_not_allowed)       -> "Method not allowed";
-msg(missing_id)				-> "Missing Id";
-msg(no_password) 		        -> "No supplied password";
-msg(no_usages)           		-> "No remaining usages";
-msg(normal)           		-> "Normal termination";
-msg(normal_termination) 		-> "Normal termination";
-msg(not_authenticated)		-> "Not authenticated";
-msg(not_found) 				-> "Not found";
-msg(not_started) 				-> "Not yet started";
-msg(not_implemented) 		    -> "Not implemented";
-msg(process_down)  			-> "Process failed";
-msg(process_not_found) 		-> "Process not found";
-msg(registered_down) 	        -> "Registered process stopped";
-msg(service_not_found) 		-> "Service not found";
-msg(session_not_found) 		-> "Session not found";
-msg(session_stop) 			-> "Session stop";
-msg(session_timeout) 		    -> "Session timeout";
-msg({syntax_error, Txt})		-> {"Syntax error: '~s'", [Txt]};
-msg(timeout) 				    -> "Timeout";
-msg(ttl_timeout) 			    -> "TTL Timeout";
-msg(unauthorized) 			-> "Unauthorized";
-msg(uniqueness_violation)	    -> "Actor is not unique";
-msg({unknown_command, Txt})	-> {"Unknown command '~s'", [Txt]};
-msg(unknown_peer) 			-> "Unknown peer";
-msg(unknown_op)   			-> "Unknown operation";
-msg(updated_invalid_field) 	-> "Tried to update invalid field";
-msg({updated_invalid_field, Txt}) -> {"Tried to update invalid field: '~s'", [Txt]};
-msg(user_not_found)			-> "User not found";
-msg({user_not_found, User})	-> {"User not found: '~s'", [User]};
-msg(user_stop) 				-> "User stop";
-msg(_)   		                -> continue.
+msg(actor_expired)	                -> "Actor has expired";
+msg(actor_has_linked_actors)	    -> "Actor has linked actors";
+msg(already_authenticated)	        -> "Already authenticated";
+msg(already_started)	            -> "Already started";
+msg(already_uploaded)   		    -> "Already uploaded";
+msg(api_delete) 				    -> "API delete received";
+msg(api_stop) 				        -> "API stop received";
+msg(data_not_available)   	        -> "Data is not available";
+msg(delete_too_deep)                -> "DELETE is too deep";
+msg(duplicated_session_id)	        -> "Duplicated session";
+msg({field_missing, Txt})	        -> {"Missing field: '~s'", [Txt]};
+msg({field_invalid, Txt})	        -> {"Field '~s' is invalid", [Txt]};
+msg({field_unknown, Txt})	        -> {"Unknown field: '~s'", [Txt]};
+msg(file_read_error)   		        -> "File read error";
+msg(internal_error)			        -> "Internal error";
+msg({internal_error, Ref})	        -> {"Internal error: ~s", [Ref]};
+msg({invalid_action, Txt})          -> {"Invalid action '~s'", [Txt]};
+msg({invalid_state, St}) 	        -> {"Invalid state: ~s", [St]};
+msg({invalid_value, V}) 		    -> {"Invalid value: '~s'", [V]};
+msg(invalid_json) 			        -> "Invalid JSON";
+msg(invalid_operation) 		        -> "Invalid operation";
+msg(invalid_login_request)          -> "Invalid login request";
+msg(invalid_parameters) 		    -> "Invalid parameters";
+msg(invalid_password) 		        -> "Invalid password";
+msg(invalid_reply) 			        -> "Invalid reply";
+msg(invalid_role)			        -> "Invalid role";
+msg(invalid_session_id)		        -> "Invalid session";
+msg(invalid_state) 			        -> "Invalid state";
+msg(invalid_uri) 			        -> "Invalid Uri";
+msg(invalid_object_id) 		        -> "Invalid ObjectId";
+msg(json_encode_error)              -> "JSON encode error";
+msg(leader_is_down)                 -> "Service leader is down";
+msg(linked_actor_unknown)           -> "Linked actor not found";
+msg({linked_actor_unknown, Txt})    -> {"Linked actor '~s', not found", [Txt]};
+msg(max_disabled_time)              -> "Maximum disabled time reached";
+msg(method_not_allowed)             -> "Method not allowed";
+msg(missing_id)				        -> "Missing Id";
+msg(no_password) 		            -> "No supplied password";
+msg(no_usages)           		    -> "No remaining usages";
+msg(normal)           		        -> "Normal termination";
+msg(normal_termination) 		    -> "Normal termination";
+msg(not_authenticated)		        -> "Not authenticated";
+msg(not_found) 				        -> "Not found";
+msg(not_started) 				    -> "Not yet started";
+msg(not_implemented) 		        -> "Not implemented";
+msg(process_down)  			        -> "Process failed";
+msg(process_not_found) 		        -> "Process not found";
+msg(registered_down) 	            -> "Registered process stopped";
+msg({service_not_available, S}) 	-> {"Service '~s' is not available", [S]};
+msg(service_not_found) 		        -> "Service not found";
+msg(session_not_found) 		        -> "Session not found";
+msg(session_stop) 			        -> "Session stop";
+msg(session_timeout) 		        -> "Session timeout";
+msg({syntax_error, Txt})		    -> {"Syntax error: '~s'", [Txt]};
+msg(timeout) 				        -> "Timeout";
+msg(ttl_timeout) 			        -> "TTL Timeout";
+msg(unauthorized) 			        -> "Unauthorized";
+msg(uniqueness_violation)	        -> "Actor is not unique";
+msg({unknown_command, Txt})	        -> {"Unknown command '~s'", [Txt]};
+msg(unknown_peer) 			        -> "Unknown peer";
+msg(unknown_op)   			        -> "Unknown operation";
+msg(updated_invalid_field) 	        -> "Tried to update invalid field";
+msg({updated_invalid_field, Txt})   -> {"Tried to update invalid field: '~s'", [Txt]};
+msg(user_not_found)			        -> "User not found";
+msg({user_not_found, User})	        -> {"User not found: '~s'", [User]};
+msg(user_stop) 				        -> "User stop";
+msg(_)   		                    -> continue.
 
 
 
@@ -472,7 +475,7 @@ actor_enabled(_Enabled, State) ->
 
 %% @doc Called when an object is enabled/disabled
 -spec actor_heartbeat(actor_st()) ->
-    {ok, actor_st()} | continue().
+    {ok, actor_st()} | {error, nkservice_msg:msg(), actor_st()} | continue().
 
 actor_heartbeat(State) ->
     {ok, State}.
@@ -567,6 +570,7 @@ actor_do_expired(_Actor) ->
 %% Actor DB
 %% ===================================================================
 
+
 %% @doc Called to find an actor on disk
 -spec actor_db_find(nkservice:id(), nkservice_actor:id()) ->
     {ok, #actor_id{}, Meta::map()} | {error, term()} | continue().
@@ -600,6 +604,7 @@ actor_db_update(_SrvId, _Actor) ->
 
 
 %% @doc Called to delete the actor to disk
+%% The implementation must call nkservice_actor_srv:actor_deleted/1 before deletion
 -spec actor_db_delete(nkservice:id(), nkservice_actor:uid(), nkservice_actor_db:delete_opts()) ->
     {ok, Meta::map()} | {error, term()} | continue().
 
@@ -635,6 +640,23 @@ actor_db_get_query(pgsql, SearchType, Opts) ->
 
 actor_db_get_query(Backend, _SearchType, _Opts) ->
     {error, {query_backend_unknown, Backend}}.
+
+
+%% @doc
+-spec actor_db_get_service(nkservice:id(), nkservice:id()) ->
+    {ok, nkservice_actor_db:service_info()} | {error, term()}.
+
+actor_db_get_service(_SrvId, _ActorSrvId) ->
+    {error, not_implemented}.
+
+
+%% @doc
+-spec actor_db_update_service(nkservice:id(), nkservice:id(), binary()) ->
+    {ok, Meta::map()} | {error, term()}.
+
+actor_db_update_service(_SrvId, _ActorSrvId, _Cluster) ->
+    {error, not_implemented}.
+
 
 
 %% @doc Called to find an actor on disk, when we only have the UUID and no service

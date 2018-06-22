@@ -101,8 +101,10 @@ syntax() ->
             '__mandatory' => [key, value],
             '__defaults' => #{class=><<>>, id=><<>>}
         }},
-        debug_actors => {list, binary},
+        debug_actors => {list, binary},     % Can be "all", "(class)", or "(class):(type)"
         meta => map,
+        parent => atom,
+        '__defaults' => #{parent => undefined},
         '__post_check' => fun ?MODULE:syntax_duplicated_ids/1
     }.
 

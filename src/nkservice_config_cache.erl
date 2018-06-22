@@ -62,7 +62,7 @@ make_cache(#{id:=Id}=Service) ->
     },
     FunKeys = [
         id, class, name, uuid, hash, timestamp,
-        plugins, plugin_ids, packages, modules, meta
+        plugins, plugin_ids, packages, modules, meta, parent
     ],
     Spec1 = maps:map(
         fun(_K, V) -> {single, V} end,
@@ -151,7 +151,19 @@ get_debug(Service) ->
         Debug1,
         maps:get(modules, Service, #{})),
     Debug3 = lists:foldl(
-        fun(Kind, Acc) -> Acc ++ [{{nkservice_actor, Kind, debug}, true}] end,
+        fun(Key, Acc) ->
+            Key2 = case Key of
+                <<"all">> ->
+                    <<"all">>;
+                _ ->
+                    case binary:split(Key, <<":">>) of
+                        [Class, Type] ->
+                            {Class, Type};
+                        [Class] ->
+                            {Class, <<"all">>}
+                    end
+            end,
+            Acc ++ [{{nkservice_actor, Key2, debug}, true}] end,
         Debug2,
         maps:get(debug_actors, Service, [])),
     ServiceDebug = [{[Type], Val} || {Type, Val} <- Debug3],
@@ -269,10 +281,12 @@ filter_for_disk(_) ->
 
 
 %% @private
-to_atom(Key) when is_atom(Key) -> Key;
-to_atom(Key) -> binary_to_atom(to_bin(Key), utf8).
+%%to_atom(Key) when is_atom(Key) -> Key;
+%%to_atom(Key) -> binary_to_atom(to_bin(Key), utf8).
+to_atom(Key) -> nklib_util:make_atom(?MODULE, Key).
 
-%% @private
-to_bin(Term) when is_binary(Term) -> Term;
-to_bin(Term) -> nklib_util:to_binary(Term).
+
+%%%% @private
+%%to_bin(Term) when is_binary(Term) -> Term;
+%%to_bin(Term) -> nklib_util:to_binary(Term).
 

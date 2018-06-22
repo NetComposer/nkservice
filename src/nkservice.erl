@@ -90,7 +90,8 @@
         packages => [package_spec()],
         modules => [module_spec()],
         secret => [secret_spec()],
-        meta => map()
+        meta => map(),
+        parent => id()                  % Parent service, used for counters
 	}.
 
 %%
@@ -138,7 +139,8 @@
         timestamp => nklib_date:epoch(msecs),
         secret => #{{term(), binary(), binary()} => service_secret()},
         hash => integer(),
-        meta => map()
+        meta => map(),
+        parent => id()
     }.
 
 %%

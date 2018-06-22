@@ -28,7 +28,7 @@
 -module(nkservice_actor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([create/1]).
--export([get_actor/1, get_path/1, enable/2, update/2, delete/1,
+-export([get_actor/1, get_path/1, is_enabled/1, enable/2, update/2, delete/1,
          unload/1, unload/2]).
 -export([search_classes/2, search_types/3]).
 -export([search_linked_to/4, search_fts/4, search/2, search_ids/2]).
@@ -177,6 +177,14 @@ get_path(Id) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @doc Check if an actor is enabled
+-spec is_enabled(id()|pid()) ->
+    {ok, boolean()} | {error, term()}.
+
+is_enabled(Id) ->
+    nkservice_actor_srv:sync_op(Id, is_enabled).
 
 
 %% @doc Enables/disabled an object
