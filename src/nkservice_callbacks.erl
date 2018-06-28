@@ -140,6 +140,7 @@ msg({syntax_error, Txt})		    -> {"Syntax error: '~s'", [Txt]};
 msg(timeout) 				        -> "Timeout";
 msg(ttl_timeout) 			        -> "TTL Timeout";
 msg(unauthorized) 			        -> "Unauthorized";
+msg(uid_not_allowed) 	            -> "UID is not allowed";
 msg(uniqueness_violation)	        -> "Actor is not unique";
 msg({unknown_command, Txt})	        -> {"Unknown command '~s'", [Txt]};
 msg(unknown_peer) 			        -> "Unknown peer";
@@ -374,7 +375,7 @@ actor_stop(_Reason, State) ->
     {ok, nkservice_actor:actor(), actor_st()} | continue().
 
 actor_get(Actor, State) ->
-    {ok, Actor#{status=>#{}}, State}.
+    {ok, Actor, State}.
 
 
 %%  @doc Called to send an event
@@ -421,20 +422,9 @@ actor_async_op(_Op, _State) ->
 -spec actor_save(nkservice_actor_srv:save_reason(), actor_st()) ->
     {ok, Meta::map(), actor_st()} | {error, term(), actor_st()} | continue().
 
-actor_save(Reason, ActorSt) ->
-    #actor_st{actor_id=ActorId, vsn=Vsn, spec=Spec, meta=Meta} = ActorSt,
-    #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = ActorId,
+actor_save(Reason, #actor_st{actor=Actor}=ActorSt) ->
+    #actor{srv=SrvId, uid=UID} = Actor,
     true = is_binary(UID) andalso UID /= <<>>,
-    Actor = #{
-        uid => UID,
-        srv => SrvId,
-        vsn => Vsn,
-        class => Class,
-        type => Type,
-        name => Name,
-        spec => Spec,
-        metadata => Meta
-    },
     Fun = case Reason of
         creation ->
             actor_db_create;

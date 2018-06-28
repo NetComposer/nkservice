@@ -125,7 +125,7 @@ create_database_query() ->
             actor_type STRING NOT NULL,
             name STRING NOT NULL,
             vsn STRING NOT NULL,
-            spec JSONB NOT NULL,
+            data JSONB NOT NULL,
             metadata JSONB NOT NULL,
             path STRING NOT NULL,
             last_update INT NOT NULL,
@@ -135,7 +135,7 @@ create_database_query() ->
             INDEX path_idx (path, class),
             INDEX last_update_idx (last_update),
             INDEX expires_idx (expires),
-            INVERTED INDEX spec_idx (spec),
+            INVERTED INDEX data_idx (data),
             INVERTED INDEX metadata_idx (metadata)
         );
         INSERT INTO versions VALUES ('actors', '1');
@@ -224,7 +224,7 @@ find(SrvId, PackageId, UID) ->
 read(SrvId, PackageId, #actor_id{}=ActorId) ->
     #actor_id{srv=ActorSrvId, class=Class, type=Type, name=Name} = ActorId,
     Query = [
-        <<"SELECT uid,vsn,metadata,spec FROM actors ">>,
+        <<"SELECT uid,vsn,metadata,data FROM actors ">>,
         <<" WHERE srv=">>, quote(ActorSrvId),
         <<" AND class=">>, quote(Class),
         <<" AND actor_type=">>, quote(Type),
@@ -232,16 +232,16 @@ read(SrvId, PackageId, #actor_id{}=ActorId) ->
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {UID, Vsn, {jsonb, Meta}, {jsonb, Spec}} = Fields,
-            Actor = #{
-                uid => UID,
-                srv => ActorSrvId,
-                class => Class,
-                type => Type,
-                name => Name,
-                vsn => Vsn,
-                spec => nklib_json:decode(Spec),
-                metadata => nklib_json:decode(Meta)
+            {UID, Vsn, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            Actor = #actor{
+                uid = UID,
+                srv = ActorSrvId,
+                class = Class,
+                type = Type,
+                name = Name,
+                vsn = Vsn,
+                data = nklib_json:decode(Data),
+                metadata = nklib_json:decode(Meta)
             },
             {ok, Actor, QueryMeta};
         {ok, [[]], _QueryMeta} ->
@@ -253,21 +253,21 @@ read(SrvId, PackageId, #actor_id{}=ActorId) ->
 read(SrvId, PackageId, UID) ->
     UID2 = to_bin(UID),
     Query = [
-        <<"SELECT srv,class,actor_type,name,vsn,metadata,spec FROM actors ">>,
+        <<"SELECT srv,class,actor_type,name,vsn,metadata,data FROM actors ">>,
         <<" WHERE uid=">>, quote(UID2), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {ActorSrvId, Class, Type, Name, Vsn, {jsonb, Meta}, {jsonb, Spec}} = Fields,
-            Actor = #{
-                uid => UID2,
-                srv => get_srv(ActorSrvId),
-                class => Class,
-                type => Type,
-                name => Name,
-                vsn => Vsn,
-                spec => nklib_json:decode(Spec),
-                metadata => nklib_json:decode(Meta)
+            {ActorSrvId, Class, Type, Name, Vsn, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            Actor = #actor{
+                uid = UID2,
+                srv = get_srv(ActorSrvId),
+                class = Class,
+                type = Type,
+                name = Name,
+                vsn = Vsn,
+                data = nklib_json:decode(Data),
+                metadata = nklib_json:decode(Meta)
             },
             {ok, Actor, QueryMeta};
         {ok, [[]], _QueryMeta} ->
@@ -280,16 +280,17 @@ read(SrvId, PackageId, UID) ->
 %% @doc Called from actor_save callback
 %% Links to invalid objects will not be allowed (foreign key)
 save(SrvId, PackageId, Mode, Actor) ->
-    #{
-        uid := UID,
-        srv := ActorSrvId,
-        class := Class,
-        type := Type,
-        name := Name,
-        vsn := Vsn,
-        spec := Spec,
-        metadata := Meta
+    #actor{
+        uid = UID,
+        srv = ActorSrvId,
+        class = Class,
+        type = Type,
+        name = Name,
+        vsn = Vsn,
+        data = Data,
+        metadata = Meta
     } = Actor,
+    true = is_binary(UID) andalso UID /= <<>>,
     Path = nkservice_actor_util:make_reversed_srv_id(ActorSrvId),
     {ok, Updated} = nklib_date:to_epoch(maps:get(<<"updateTime">>, Meta), secs),
     Expires = case maps:get(<<"expiresTime">>, Meta, 0) of
@@ -318,7 +319,7 @@ save(SrvId, PackageId, Mode, Actor) ->
         Type,
         Name,
         Vsn,
-        Spec,
+        Data,
         Meta,
         Path,
         Updated,
@@ -334,7 +335,7 @@ save(SrvId, PackageId, Mode, Actor) ->
     ActorQuery = [
         Verb,
         <<" INTO actors">>,
-        <<" (uid,srv,class,actor_type,name,vsn,spec,metadata,path,last_update,expires,fts_words)">>,
+        <<" (uid,srv,class,actor_type,name,vsn,data,metadata,path,last_update,expires,fts_words)">>,
         <<" VALUES (">>, Fields, <<");">>
     ],
     QUID = quote(UID),

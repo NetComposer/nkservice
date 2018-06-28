@@ -131,7 +131,7 @@ get_query({search_service_actors, SrvId, Params}, _Opts) ->
             false ->
                 []
         end,
-        <<"SELECT uid,srv,class,actor_type,name,vsn,spec,metadata FROM actors">>,
+        <<"SELECT uid,srv,class,actor_type,name,vsn,data,metadata FROM actors">>,
         SQLFilters,
         SQLSort,
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Limit),
@@ -193,17 +193,17 @@ get_query(QueryType, _Opts) ->
 %% @private
 pgsql_actors([{{select, Size}, Rows, _OpMeta}], Meta) ->
     Actors = [
-        #{
-            uid => UID,
-            srv => nkservice_actor_util:gen_srv_id(SrvId),
-            class => Class,
-            type => Type,
-            vsn => Vsn,
-            name => Name,
-            spec => nklib_json:decode(Spec),
-            metadata => nklib_json:decode(MetaData)
+        #actor{
+            uid = UID,
+            srv = nkservice_actor_util:gen_srv_id(SrvId),
+            class = Class,
+            type = Type,
+            vsn = Vsn,
+            name = Name,
+            data = nklib_json:decode(Data),
+            metadata = nklib_json:decode(MetaData)
         }
-        || {UID, SrvId, Class, Type, Name, Vsn, {jsonb, Spec}, {jsonb, MetaData}} <- Rows
+        || {UID, SrvId, Class, Type, Name, Vsn, {jsonb, Data}, {jsonb, MetaData}} <- Rows
     ],
     {ok, Actors, Meta#{size=>Size}}.
 
@@ -211,17 +211,17 @@ pgsql_actors([{{select, Size}, Rows, _OpMeta}], Meta) ->
 %% @private
 pgsql_totals_actors([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta}], Meta) ->
     Actors = [
-        #{
-            uid => UID,
-            srv => nkservice_actor_util:gen_srv_id(SrvId),
-            class => Class,
-            type => Type,
-            vsn => Vsn,
-            name => Name,
-            spec => nklib_json:decode(Spec),
-            metadata => nklib_json:decode(MetaData)
+        #actor{
+            uid = UID,
+            srv = nkservice_actor_util:gen_srv_id(SrvId),
+            class = Class,
+            type = Type,
+            vsn = Vsn,
+            name = Name,
+            data = nklib_json:decode(Data),
+            metadata = nklib_json:decode(MetaData)
         }
-        || {UID, SrvId, Class, Type, Name, Vsn, {jsonb, Spec}, {jsonb, MetaData}} <- Rows
+        || {UID, SrvId, Class, Type, Name, Vsn, {jsonb, Data}, {jsonb, MetaData}} <- Rows
     ],
     {ok, Actors, Meta#{size=>Size, total=>Total}}.
 

@@ -49,6 +49,7 @@
     db_srv => atom(),               % Service to use for database access
     ttl => integer(),               % For loading, changes default
     activate => boolean(),          % Active object on creation, read
+    activate_srv => atom(),         % Service fto call actor_activate
     cascade => boolean(),           % For deletes, hard deletes, deletes all linked objects
     force => boolean()              % For hard delete, deletes even if linked objects
 }.
@@ -159,15 +160,14 @@ read(Id, Opts) ->
         {ok, #actor_id{}=ActorId} ->
             case maps:get(activate, Opts, true) of
                 true ->
-                    case maps:is_key(ttl, Opts) of
-                        true ->
-                            activate(ActorId, Opts);
-                        false ->
-                            ok
-                    end,
-                    case nkservice_actor_srv:sync_op(ActorId, get_actor) of
-                        {ok, Actor} ->
-                            {ok, Actor, #{}};
+                    case activate(ActorId, Opts) of
+                        {ok, #actor_id{pid=Pid}, _} ->
+                            case nkservice_actor_srv:sync_op(Pid, get_actor) of
+                                {ok, Actor} ->
+                                    {ok, Actor, #{}};
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
                         {error, Error} ->
                             {error, Error}
                     end;
@@ -200,11 +200,11 @@ activate(Id, Opts) ->
                 _ ->
                     case db_read(ActorId, Opts) of
                         {ok, Actor, Meta2} ->
-                            LoadOpts = load_opts(Opts),
-                            case is_pid(whereis(ActorSrvId)) of
+                            SrvId = maps:get(activate_srv, Opts, ActorSrvId),
+                            case is_pid(whereis(SrvId)) of
                                 true ->
                                     case
-                                        ?CALL_SRV(ActorSrvId, actor_activate, [Actor, LoadOpts])
+                                        ?CALL_SRV(SrvId, actor_activate, [Actor, Opts])
                                     of
                                         {ok, Pid} ->
                                             ActorId2 = nkservice_actor_util:actor_to_actor_id(Actor),
@@ -213,7 +213,8 @@ activate(Id, Opts) ->
                                             {error, Error}
                                     end;
                                 false ->
-                                    {error, {service_not_available, ActorSrvId}}
+                                    % ActorSrvId must be running to activate Actor
+                                    {error, {service_not_available, SrvId}}
                             end;
                         {error, Error} ->
                             {error, Error}
@@ -227,15 +228,13 @@ activate(Id, Opts) ->
 %% @doc Creates a brand new actor
 %% It will activate the object, unless indicated
 create(Actor, Opts) ->
-    case nkservice_actor_util:make(Actor, Opts) of
-        {ok, #{srv:=ActorSrvId}=Actor2} ->
+    case nkservice_actor_util:check_create_fields(Actor, Opts) of
+        {ok, #actor{srv=ActorSrvId}=Actor2} ->
             case maps:get(activate, Opts, true) of
                 true ->
-                    LoadOpts1 = load_opts(Opts),
-                    LoadOpts2 = LoadOpts1#{is_new=>true},
                     % Do we still need to load the object first, now that we
                     % have a consistent database?
-                    case ?CALL_SRV(ActorSrvId, actor_activate, [Actor2, LoadOpts2]) of
+                    case ?CALL_SRV(ActorSrvId, actor_activate, [Actor2, Opts#{is_new=>true}]) of
                         {ok, Pid} ->
                             case nkservice_actor_srv:sync_op(Pid, get_actor) of
                                 {ok, Actor3} ->
@@ -423,14 +422,6 @@ id_to_actor_id(Id) ->
 
 
 
-%% @private
-load_opts(Opts) ->
-    case Opts of
-        #{ttl:=TTL} ->
-            #{config=>#{ttl=>TTL}};
-        _ ->
-            #{}
-    end.
 
 
 %% @private
@@ -439,7 +430,7 @@ db_read(Id, Opts) ->
         {ok, #actor_id{srv=ActorSrvId} = ActorId} ->
             SrvId = maps:get(db_srv, Opts, ActorSrvId),
             case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId]) of
-                {ok, #{srv:=ActorSrvId, metadata:=Meta}=Actor, DbMeta} ->
+                {ok, #actor{srv=ActorSrvId, metadata=Meta}=Actor, DbMeta} ->
                     case check_actor(ActorSrvId, Meta, Actor, Opts) of
                         ok ->
                             {ok, Actor, DbMeta};

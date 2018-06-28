@@ -21,22 +21,56 @@
 %% @doc Actor Syntax
 -module(nkservice_actor_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([syntax/0, syntax/2]).
+-export([parse/1, parse/2]).
+-export([syntax/0, meta_syntax/0]).
 -export([syntax_parse_fun/2]).
+
+-include("nkservice_actor.hrl").
 
 
 %% ===================================================================
 %% Syntax
 %% ===================================================================
 
+%% @doc
+parse(ActorMap) ->
+    parse(ActorMap, syntax()).
+
+
+%% @doc
+parse(ActorMap, Syntax) ->
+    case nklib_syntax:parse(ActorMap, Syntax, #{}) of
+        {ok, ActorMap2, []} ->
+            #{
+                srv := Srv,
+                class := Class,
+                type := Type,
+                name := Name,
+                vsn := Vsn,
+                data := Data,
+                metadata := Meta
+            } = ActorMap2,
+            Actor = #actor{
+                uid = maps:get(uid, ActorMap2, undefined),
+                srv = Srv,
+                class = Class,
+                type = Type,
+                name = Name,
+                vsn = Vsn,
+                data = Data,
+                metadata = Meta,
+                status = undefined
+            },
+            {ok, Actor};
+        {ok, _, [Field|_]} ->
+            {error, {field_unknown, Field}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 %% @private
 syntax() ->
-    syntax(map, #{'__allow_unknown' => true}).
-
-
-%% @private
-syntax(Spec, Meta) ->
     #{
         uid => binary,
         srv => atom,
@@ -44,31 +78,36 @@ syntax(Spec, Meta) ->
         type => binary,
         name => binary,
         vsn => binary,
-        spec => Spec,
-        metadata => Meta#{
-            <<"resourceVersion">> => binary,
-            <<"generation">> => pos_integer,
-            <<"creationTime">> => date_3339,
-            <<"updateTime">> => date_3339,
-            <<"isEnabled">> => boolean,
-            <<"isActivated">> => boolean,
-            <<"expiresTime">> => date_3339,
-            <<"labels">> => fun ?MODULE:syntax_parse_fun/2,
-            <<"annotations">> => fun ?MODULE:syntax_parse_fun/2,
-            <<"links">> => fun ?MODULE:syntax_parse_fun/2,
-            <<"fts">> => fun ?MODULE:syntax_parse_fun/2,
-            <<"isInAlarm">> => boolean,
-            <<"alarms">> => {list, binary},
-            <<"nextStatusTime">> => date_3339,
-            <<"description">> => binary,
-            <<"createdBy">> => binary,
-            <<"updatedBy">> => binary
-        },
+        data => map,
+        metadata => meta_syntax(),
         '__mandatory' => [srv, class, type, name, vsn],
         '__defaults' => #{
-            spec => #{},
+            data => #{},
             metadata => #{}
         }
+    }.
+
+
+%% @private
+meta_syntax() ->
+    #{
+        <<"resourceVersion">> => binary,
+        <<"generation">> => pos_integer,
+        <<"creationTime">> => date_3339,
+        <<"updateTime">> => date_3339,
+        <<"isEnabled">> => boolean,
+        <<"isActivated">> => boolean,
+        <<"expiresTime">> => date_3339,
+        <<"labels">> => fun ?MODULE:syntax_parse_fun/2,
+        <<"annotations">> => fun ?MODULE:syntax_parse_fun/2,
+        <<"links">> => fun ?MODULE:syntax_parse_fun/2,
+        <<"fts">> => fun ?MODULE:syntax_parse_fun/2,
+        <<"isInAlarm">> => boolean,
+        <<"alarms">> => {list, binary},
+        <<"nextStatusTime">> => date_3339,
+        <<"description">> => binary,
+        <<"createdBy">> => binary,
+        <<"updatedBy">> => binary
     }.
 
 

@@ -32,7 +32,7 @@
          unload/1, unload/2]).
 -export([search_classes/2, search_types/3]).
 -export([search_linked_to/4, search_fts/4, search/2, search_ids/2]).
--export_type([actor/0, id/0]).
+-export_type([actor/0, actor_map/0, id/0]).
 
 
 -include("nkservice.hrl").
@@ -45,18 +45,21 @@
 %% Callbacks definitions
 %% ===================================================================
 
--type actor() ::
+-type actor() :: #actor{}.
+
+-type actor_map() ::
     #{
         srv => nkservice:id(),              %% Service where it is loaded
-        class => class(),                   %% Mandatory
-        type => type(),                     %% Mandatory
-        name => name(),                     %% Generated if not included
-        uid => uid(),                       %% Always generated
-        vsn => vsn(),                       %% DB version
-        spec => spec(),
+        class => class(),         %% Mandatory
+        type => type(),           %% Mandatory
+        name => name(),           %% Generated if not included
+        uid => uid(),             %% Always generated
+        vsn => vsn(),             %% DB version
+        data => data(),
         metadata => metadata(),
         status => status()
     }.
+
 
 -type id() :: path() | uid() | #actor_id{}.
 
@@ -72,7 +75,7 @@
 
 -type vsn() :: binary().
 
--type spec() ::
+-type data() ::
     #{
         binary() => binary() | integer() | float() | boolean()
     }.

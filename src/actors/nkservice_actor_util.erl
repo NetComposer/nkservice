@@ -28,7 +28,7 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
--export([make/2, update/2, update_meta/4, check_links/1]).
+-export([check_create_fields/2, update_meta/4, check_links/1]).
 -export([is_path/1, actor_id_to_path/1, actor_to_actor_id/1]).
 -export([make_reversed_srv_id/1, gen_srv_id/1]).
 -export([make_plural/1, normalized_name/1]).
@@ -37,79 +37,41 @@
 %% Public
 %% ===================================================================
 
-%% @doc Creates a new actor
-make(Actor, _Opts) ->
-    Syntax1 = nkservice_actor_syntax:syntax(),
-    Syntax2 = Syntax1#{
-        '__mandatory' := [srv, class, type, vsn]
-    },
-    case nklib_syntax:parse(Actor, Syntax2, #{}) of
-        {ok, Actor2, []} ->
-            #{type:=Type, spec:=Spec, metadata:=Meta1} = Actor2,
-            %% Add UID if not present
-            UID = make_uid(Type),
-            %% Add Name if not present
-            Name = case maps:find(name, Actor2) of
-                {ok, Name0} ->
-                    case normalized_name(Name0) of
-                        <<>> ->
-                            make_name(UID);
-                        Name1 ->
-                            Name1
-                    end;
-                error ->
-                    make_name(UID)
-            end,
-            {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
-            Meta2 = Meta1#{<<"creationTime">> => Time},
-            Meta3 = update_meta(Name, Spec, Meta2, Time),
-            case check_links(Meta3) of
-                {ok, Meta4} ->
-                    Actor3 = Actor2#{
-                        uid => UID,
-                        name => Name,
-                        metadata := Meta4
-                    },
-                    {ok, Actor3};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {ok, _, [Field|_]} ->
-            {error, {field_unknown, Field}};
-        {error, Error} ->
-            {error, Error}
-    end.
 
+%% @doc Creates a new actor from a actor_map()
+check_create_fields(#actor{uid=UID}, _Opts) when UID /= undefined ->
+    {error, uid_not_allowed};
 
-%% @doc
-update(Actor, _Opts) ->
-    Syntax = nkservice_actor_syntax:syntax(),
-    case nklib_syntax:parse(Actor, Syntax, #{}) of
-        {ok, Actor2, []} ->
-            Id = case Actor2 of
-                #{uid:=UID} ->
-                    UID;
-                _ ->
-                    nkservice_actor_util:actor_to_actor_id(Actor2)
-            end,
-            % nkservice_actor_srv will call update_meta/4
-            case nkservice_actor:update(Id, Actor2) of
-                ok ->
-                    {ok, Id};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {ok, _, [Field|_]} ->
-            {error, {field_unknown, Field}};
+check_create_fields(Actor, _Opts) ->
+    #actor{type=Type, name=Name1, data=Data, metadata=Meta1} = Actor,
+    UID = make_uid(Type),
+    %% Add Name if not present
+    Name2 = case normalized_name(Name1) of
+        <<>> ->
+            make_name(UID);
+        Name1 ->
+            Name1
+    end,
+    {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
+    Meta2 = Meta1#{<<"creationTime">> => Time},
+    Meta3 = update_meta(Name2, Data, Meta2, Time),
+    case check_links(Meta3) of
+        {ok, Meta4} ->
+            Actor2 = Actor#actor{
+                uid = UID,
+                name = Name2,
+                metadata = Meta4
+            },
+            {ok, Actor2};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @private
-update_meta(Name, Spec, Meta, Time3339) ->
+update_meta(Name, Data, Meta, Time3339) ->
     Gen = maps:get(<<"generation">>, Meta, -1),
-    Vsn = erlang:phash2({Name, Spec, Meta}),
+    Vsn = erlang:phash2({Name, Data, Meta}),
     Meta#{
         <<"updateTime">> => Time3339,
         <<"generation">> => Gen+1,
@@ -176,18 +138,19 @@ actor_id_to_path(#actor_id{srv=SrvId, class=Class, type=Type, name=Name}) ->
 
 %% @doc
 actor_to_actor_id(Actor) ->
-    #{
-        srv := SrvId,
-        class := Class,
-        type := Type,
-        name := Name
+    #actor{
+        uid = UID,
+        srv = SrvId,
+        class = Class,
+        type = Type,
+        name = Name
     } = Actor,
     #actor_id{
-        srv=SrvId,
-        class=Class,
-        type=Type,
-        name=Name,
-        uid=maps:get(uid, Actor, undefined)
+        uid = UID,
+        srv = SrvId,
+        class = Class,
+        type = Type,
+        name = Name
     }.
 
 

@@ -169,8 +169,13 @@
 -spec start(nkservice_actor:actor(), start_opts()) ->
     {ok, pid()} | {error, term()}.
 
-start(Actor, StartOpts) ->
-    gen_server:start(?MODULE, {Actor, StartOpts}, []).
+start(#actor{srv=Srv}=Actor, StartOpts) ->
+    case is_pid(whereis(Srv)) of
+        true ->
+            gen_server:start(?MODULE, {Actor, StartOpts}, []);
+        false ->
+            {error, {service_not_available, Srv}}
+    end.
 
 
 %% @doc
@@ -276,7 +281,13 @@ unload_all() ->
     {ok, state()} | {stop, term()}.
 
 init({Actor, StartOpts}) ->
-    #{srv:=SrvId, uid:=UID, class:=Class, type:=Type, name:=Name} = Actor,
+    #actor{
+        srv = SrvId,
+        uid = UID,
+        class = Class,
+        type = Type,
+        name = Name
+    } = Actor,
     ActorId = #actor_id{
         srv = SrvId,
         uid = UID,
@@ -314,6 +325,7 @@ init({Actor, StartOpts}) ->
                     {stop, Error}
             end;
         {error, Error} ->
+            lager:error("NKLOG EEE ~p", [Error]),
             {stop, Error}
     end.
 
@@ -458,23 +470,7 @@ terminate(Reason, State) ->
 do_sync_op(get_actor_id, _From, #actor_st{actor_id =ActorId}=State) ->
     reply({ok, ActorId}, do_refresh_ttl(State));
 
-do_sync_op(get_actor, _From, State) ->
-    #actor_st{
-        actor_id = #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name},
-        spec = Spec,
-        meta = Meta,
-        vsn = Vsn
-    } = State,
-    Actor = #{
-        srv => SrvId,
-        uid => UID,
-        class => Class,
-        type => Type,
-        name => Name,
-        vsn => Vsn,
-        spec => Spec,
-        metadata => Meta
-    },
+do_sync_op(get_actor, _From, #actor_st{actor=Actor}=State) ->
     {ok, UserActor, State2} = handle(actor_get, [Actor], State),
     reply({ok, UserActor}, do_refresh_ttl(State2));
 
@@ -554,9 +550,9 @@ do_sync_op({update_name, Name}, _From, #actor_st{is_enabled=IsEnabled, config=Co
             end
     end;
 
-do_sync_op(get_alarms, _From, #actor_st{meta=Meta}=State) ->
-    Alarms = case Meta of
-        #{<<"isInAlarm">>:=true, <<"alarms">>:=AlarmList} ->
+do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
+    Alarms = case Actor of
+        #actor{metadata = #{<<"isInAlarm">>:=true, <<"alarms">>:=AlarmList}} ->
             AlarmList;
         _ ->
             []
@@ -610,9 +606,7 @@ do_async_op(Op, State) ->
 %% ===================================================================
 
 do_init(ActorId, Actor, StartOpts) ->
-    Meta = maps:get(metadata, Actor, #{}),
-    Spec = maps:get(spec, Actor, #{}),
-    ActorVsn = maps:get(vsn, Actor, <<"0">>),
+    #actor{metadata=Meta} = Actor,
     nklib_proc:put(?MODULE, ActorId),
     Now = nklib_date:epoch(msecs),
     NextStatusTimer = case Meta of
@@ -639,10 +633,7 @@ do_init(ActorId, Actor, StartOpts) ->
     #actor_st{
         actor_id = ActorId,
         config = Config2,
-        spec = Spec,
-        meta = Meta,
-        vsn = ActorVsn,
-        status = #{},
+        actor = Actor#actor{status=#{}},
         links = nklib_links:new(),
         is_dirty = IsNew,
         is_enabled = maps:get(<<"isEnabled">>, Meta, true),
@@ -654,11 +645,12 @@ do_init(ActorId, Actor, StartOpts) ->
 
 
 %% @private
-set_unload_policy(#actor_st{config=Config, meta=Meta}=State) ->
+set_unload_policy(#actor_st{config=Config}=State) ->
     Policy = case maps:get(permanent, Config, false) of
         true ->
             permanent;
         false ->
+            #actor_st{actor=#actor{metadata=Meta}} = State,
             case maps:get(<<"expiresTime">>, Meta, 0) of
                 0 ->
                     % A TTL reseated after each operation
@@ -733,14 +725,15 @@ wait_start_srv(SrvId, _Tries) ->
     {error, service_wait_timeout}.
 
 
-
 %% @private
-do_check_alarms(#actor_st{meta=#{<<"isInAlarm">>:=true}}=State) ->
-    {ok, State2} = handle(actor_alarms, [], State),
-    State2;
-
-do_check_alarms(State) ->
-    State.
+do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
+    case Meta of
+        #{<<"isInAlarm">>:=true} ->
+            {ok, State2} = handle(actor_alarms, [], State),
+            State2;
+        _ ->
+            State
+    end.
 
 
 %% @private
@@ -763,7 +756,7 @@ do_save(Reason, #actor_st{save_timer=Timer}=State) ->
 
 
 %% @private
-do_delete(#actor_st{meta=Meta}=State) ->
+do_delete(#actor_st{actor=Actor}=State) ->
     {_, State2} = do_save(pre_delete, State),
     case handle(actor_delete, [], State2) of
         {ok, State3} ->
@@ -771,7 +764,7 @@ do_delete(#actor_st{meta=Meta}=State) ->
             {ok, do_event(deleted, State3)};
         {error, Error, State3} ->
             ?LLOG(warning, "object could not be deleted: ~p", [Error], State3),
-            {{error, Error}, State3#actor_st{meta=Meta}}
+            {{error, Error}, State3#actor_st{actor=Actor}}
     end.
 
 
@@ -826,71 +819,74 @@ do_stop2(_Reason, State) ->
 
 
 %% @private
-do_update(Actor, #actor_st{actor_id=Id, spec=Spec, meta=Meta}=State) ->
+do_update(UpdActor, #actor_st{actor_id=Id, actor=Actor}=State) ->
     #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = Id,
     try
-        case maps:get(srv, Actor, SrvId) of
+        case UpdActor#actor.srv of
             SrvId -> ok;
             _ -> throw({updated_invalid_field, srv})
         end,
-        case maps:get(uid, Actor, UID) of
+        case UpdActor#actor.uid of
+            undefined -> ok;
             UID -> ok;
             _ -> throw({updated_invalid_field, uid})
         end,
-        case maps:get(class, Actor, Class) of
+        case UpdActor#actor.class of
             Class -> ok;
             _ -> throw({updated_invalid_field, class})
         end,
-        case maps:get(type, Actor, Type) of
+        case UpdActor#actor.type of
             Type -> ok;
             _ -> throw({updated_invalid_field, type})
         end,
-        case maps:get(name, Actor, Name) of
+        case UpdActor#actor.name of
             Name -> ok;
             _ -> throw({updated_invalid_field, name})
         end,
-        Spec2 = maps:get(spec, Actor, Spec),
-        SpecUpdated = Spec /= Spec2,
-        ActorMeta1 = maps:get(metadata, Actor, #{}),
+        #actor{data=Data, metadata=Meta} = Actor,
+        UpdData = UpdActor#actor.data,
+        IsDataUpdated = UpdData /= Data,
+        UpdMeta = UpdActor#actor.metadata,
         ForbiddenFields = [
             <<"resourceVersion">>,
             <<"generation">>,
             <<"creationTime">>,
             <<"expiresTime">>
         ],
-        case maps:with(ForbiddenFields, ActorMeta1) of
+        case maps:with(ForbiddenFields, UpdMeta) of
             M when map_size(M)==0 ->
                 ok;
             M ->
                 throw({updated_invalid_field, hd(maps:keys(M))})
         end,
         Links = maps:get(<<"links">>, Meta, #{}),
-        ActorLinks = maps:get(<<"links">>, ActorMeta1, Links),
-        ActorMeta2 = case Links == ActorLinks of
+        UpdLinks = maps:get(<<"links">>, UpdMeta, Links),
+        UpdMeta2 = case UpdLinks == Links of
             true ->
-                ActorMeta1;
+                UpdMeta;
             false ->
-                case nkservice_actor_util:check_links(ActorMeta1) of
-                    {ok, ActorMetaLinks} ->
-                        ActorMetaLinks;
+                case nkservice_actor_util:check_links(UpdMeta) of
+                    {ok, UpdMetaLinks} ->
+                        UpdMetaLinks;
                     {error, Error} ->
                         throw(Error)
                 end
         end,
-        ActorMeta3 = case ActorMeta2 of
+        UpdMeta3 = case UpdMeta2 of
             #{<<"isEnabled">>:=true} ->
-                maps:remove(<<"isEnabled">>, ActorMeta2);
+                maps:remove(<<"isEnabled">>, UpdMeta2);
             _ ->
-                ActorMeta2
+                UpdMeta2
         end,
-        Meta2 = maps:merge(Meta, ActorMeta3),
-        MetaUpdated = Meta /= Meta2,
-        case SpecUpdated orelse MetaUpdated of
+        NewMeta = maps:merge(Meta, UpdMeta3),
+        IsMetaUpdated = Meta /= NewMeta,
+        case IsDataUpdated orelse IsMetaUpdated of
             true ->
-                lager:error("NKLOG UPDATE Spec:~p, Meta:~p", [SpecUpdated, MetaUpdated]),
-                State2 = State#actor_st{spec=Spec2, meta=Meta2, is_dirty=true},
+                lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
+                NewActor = Actor#actor{data=UpdData, metadata=NewMeta},
+                State2 = State#actor_st{actor=NewActor, is_dirty=true},
                 State3 = do_update_version(State2),
-                Enabled = maps:get(<<"isEnabled">>, Meta2, true),
+                Enabled = maps:get(<<"isEnabled">>, NewMeta, true),
                 State4 = do_enabled(Enabled, State3),
                 case do_save(update, State4) of
                     {ok, State5} ->
@@ -932,12 +928,12 @@ do_update_name(Name, #actor_st{actor_id=#actor_id{name=OldName}=Id}=State) ->
     end.
 
 
-
 %% @private
-do_update_version(#actor_st{actor_id =#actor_id{name=Name}, spec=Spec, meta=Meta}=State) ->
+do_update_version(#actor_st{actor=Actor}=State) ->
+    #actor{name=Name, data=Data, metadata=Meta} = Actor,
     {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
-    Meta2 = nkservice_actor_util:update_meta(Name, Spec, Meta, Time),
-    State#actor_st{meta=Meta2}.
+    Meta2 = nkservice_actor_util:update_meta(Name, Data, Meta, Time),
+    State#actor_st{actor=Actor#actor{metadata=Meta2}}.
 
 
 %% @private
