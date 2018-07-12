@@ -63,7 +63,7 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([add_link/3, remove_link/2]).
 -export([get_all/0, unload_all/0, get_state/1, actor_deleted/1]).
--export([do_stop/2]).
+-export([do_stop/2, do_event_link/2]).
 -export_type([event/0, save_reason/0]).
 
 
@@ -92,6 +92,7 @@
         stop_after_disabled => boolean(),               %% Default false
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false
+        activable => boolean(),                         %% Default true
         atom() => term()                                %% User config
     }.
 
@@ -121,10 +122,10 @@
 
 -type link_opts() ::
     #{
-        type => atom()|binary(),        % If used, will generate events
-        get_events => boolean(),        % calls to actor_link_event for each event
-        avoid_unload => boolean(),      % do not unload until is unlinked
-        atom() => term()                % user config
+        get_events => boolean(),        % calls to actor_link_event for each event (false)
+        gen_events => boolean(),        % generate events {link_XXX} (true)
+        avoid_unload => boolean(),      % do not unload until is unlinked (false)
+        data => term()                  % user config
     }.
 
 
@@ -168,6 +169,9 @@
 %% Call SrvId:actor_activate/2 instead calling this directly!
 -spec start(nkservice_actor:actor(), start_opts()) ->
     {ok, pid()} | {error, term()}.
+
+start(_Actor, #{config:=#{activable:=false}}) ->
+    {error, actor_is_not_activable};
 
 start(#actor{srv=Srv}=Actor, StartOpts) ->
     case is_pid(whereis(Srv)) of
@@ -268,11 +272,11 @@ unload_all() ->
 %% ===================================================================
 
 
--record(link_opts, {
-    type :: binary(),
+-record(link_info, {
     get_events :: boolean(),
+    gen_events :: boolean(),
     avoid_unload :: boolean(),
-    opts :: link_opts()
+    data :: term()
 }).
 
 
@@ -479,7 +483,7 @@ do_sync_op(get_state, _From, State) ->
 
 do_sync_op(get_links, _From, #actor_st{links=Links}=State) ->
     Data = nklib_links:fold_values(
-        fun(Link, #link_opts{opts=Opts}, Acc) -> [{Link, Opts}|Acc] end,
+        fun(Link, #link_info{data=Data}, Acc) -> [{Link, Data}|Acc] end,
         [],
         Links),
     reply({ok, Data}, State);
@@ -515,14 +519,14 @@ do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
     reply({ok, IsEnabled}, State);
 
 do_sync_op({link, Link, Opts}, _From, State) ->
-    LinkOpts = #link_opts{
-        type = nklib_util:to_binary(maps:get(disable_actor, Opts, <<>>)),
+    LinkData = #link_info{
         get_events = maps:get(get_events, Opts, false),
+        gen_events = maps:get(gen_events, Opts, true),
         avoid_unload = maps:get(avoid_unload, Opts, false),
-        opts = Opts
+        data = maps:get(data, Opts, undefined)
     },
-    ?DEBUG("link ~p added (~p)", [Link, LinkOpts], State),
-    {reply, ok, add_link(Link, LinkOpts, do_refresh_ttl(State))};
+    ?DEBUG("link ~p added (~p)", [Link, LinkData], State),
+    {reply, ok, add_link(Link, LinkData, do_refresh_ttl(State))};
 
 do_sync_op({update, Actor}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
@@ -890,7 +894,7 @@ do_update(UpdActor, #actor_st{actor_id=Id, actor=Actor}=State) ->
                 State4 = do_enabled(Enabled, State3),
                 case do_save(update, State4) of
                     {ok, State5} ->
-                        {ok, do_event({updated, Actor}, State5)};
+                        {ok, do_event({updated, UpdActor}, State5)};
                     {{error, SaveError}, State5} ->
                         {error, SaveError, State5}
                 end;
@@ -917,8 +921,8 @@ do_update_name(Name, #actor_st{actor_id=#actor_id{name=OldName}=Id}=State) ->
                     State3 = State2#actor_st{is_dirty=true},
                     State4 = do_update_version(State3),
                     case do_save(update, State4) of
-                        {ok, State5} ->
-                            {ok, do_event({updated, #{name=>NewName}}, State5)};
+                        {ok, #actor_st{actor=Actor}=State5} ->
+                            {ok, do_event({updated, Actor}, State5)};
                         {{error, SaveError}, State5} ->
                             {error, SaveError, State5}
                     end;
@@ -967,27 +971,33 @@ do_check_save(State) ->
 
 
 %% @private
-do_event(Event, #actor_st{links=Links}=State) ->
+do_event(Event, State) ->
     ?DEBUG("sending 'event': ~p", [Event], State),
-    State2 = nklib_links:fold_values(
+    State2 = do_event_link(Event, State),
+    {ok, State3} = handle(actor_event, [Event], State2),
+    State3.
+
+
+%% @private
+do_event_link(Event, #actor_st{links=Links}=State) ->
+    nklib_links:fold_values(
         fun
-            (Link, #link_opts{get_events=true, opts=Opts}, Acc) ->
-                {ok, Acc2} = handle(actor_link_event,[Link, Opts, Event], Acc),
+            (Link, #link_info{get_events=true, data=Data}, Acc) ->
+                {ok, Acc2} = handle(actor_link_event, [Link, Data, Event], Acc),
                 Acc2;
             (_Link, _LinkOpts, Acc) ->
                 Acc
         end,
         State,
-        Links),
-    {ok, State3} = handle(actor_event, [Event], State2),
-    State3.
+        Links).
+
 
 
 %% @private
 do_ttl_timeout(#actor_st{unload_policy={ttl, _}, links=Links, status_timer=undefined}=State) ->
     Avoid = nklib_links:fold_values(
         fun
-            (_Link, #link_opts{avoid_unload=true}, _Acc) -> true;
+            (_Link, #link_info{avoid_unload=true}, _Acc) -> true;
             (_Link, _LinkOpts, Acc) -> Acc
         end,
         false,
@@ -1047,21 +1057,22 @@ safe_handle(Fun, Args, State) ->
 
 
 %% @private
-add_link(Link, #link_opts{}=LinkOpts, #actor_st{links=Links}=State) ->
-    State2 = case LinkOpts of
-        #link_opts{type=Type} when Type /= <<>> ->
-            do_event({link_added, Type}, State);
+add_link(Link, LinkInfo, #actor_st{links=Links}=State) ->
+    #link_info{gen_events=GenEvents, data=Data} = LinkInfo,
+    State2 = case GenEvents of
+        true ->
+            do_event({link_added, Data}, State);
         _ ->
             State
     end,
-    State2#actor_st{links=nklib_links:add(Link, LinkOpts, Links)}.
+    State2#actor_st{links=nklib_links:add(Link, LinkInfo, Links)}.
 
 
 %% @private
 remove_link(Link, #actor_st{links=Links}=State) ->
     State2 = case nklib_links:get_value(Link, Links) of
-        {ok, #link_opts{type=Type}} when Type /= <<>> ->
-            do_event({link_removed, Type}, State);
+        {ok, #link_info{gen_events=true, data=Data}} ->
+            do_event({link_removed, Data}, State);
         _ ->
             State
     end,
@@ -1071,13 +1082,13 @@ remove_link(Link, #actor_st{links=Links}=State) ->
 %% @private
 link_down(Mon, #actor_st{links=Links}=State) ->
     case nklib_links:down(Mon, Links) of
-        {ok, Link, LinkOpts, Links2} ->
-            case LinkOpts of
-                #link_opts{type=Type} when Type /= <<>> ->
-                    State2 = do_event({link_down, Type}, State),
-                    {ok, Link, LinkOpts, State2#actor_st{links=Links2}};
+        {ok, Link, LinkInfo, Links2} ->
+            case LinkInfo of
+                #link_info{gen_events=true, data=Data} ->
+                    State2 = do_event({link_down, Data}, State),
+                    {ok, Link, LinkInfo, State2#actor_st{links=Links2}};
                 _ ->
-                    {ok, Link, LinkOpts, State#actor_st{links=Links2}}
+                    {ok, Link, LinkInfo, State#actor_st{links=Links2}}
             end;
         not_found ->
             not_found

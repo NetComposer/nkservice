@@ -21,6 +21,7 @@
 %% @doc
 -module(nkservice_rest_http).
 -export([get_body/2, get_headers/1, get_qs/1, get_basic_auth/1]).
+-export([stream_start/3, stream_body/2, stream_stop/1]).
 -export([get_accept/1]).
 -export([reply_json/2, make_req_ext/2, reply_req_ext/2]).
 -export([init/4, terminate/3]).
@@ -97,8 +98,8 @@ get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
                 true ->
                     case CT of
                         <<"application/json", _/binary>> when is_binary(Body) ->
-                            case nklib_json:decode(Body) of
-                                error ->
+                            case catch nklib_json:decode(Body) of
+                                {'EXIT', _} ->
                                     {error, invalid_json};
                                 Json ->
                                     {ok, Json, Req2}
@@ -108,8 +109,8 @@ get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
                         _ when is_binary(CT) ->
                             case binary:split(CT, <<"yaml">>) of
                                 [_, _] when is_binary(Body) ->
-                                    case nklib_yaml:decode(Body) of
-                                        {error, _} ->
+                                    case catch nklib_yaml:decode(Body) of
+                                        {'EXIT', _} ->
                                             {error, invalid_yaml};
                                         Yaml ->
                                             {ok, Yaml, Req2}
@@ -245,6 +246,24 @@ do_reply_req_ext(#{code:=Code}=Luerl, Req) ->
     {http, Code, Headers1, Body, Req}.
 
 
+%% @doc Streamed responses
+%% First, call this function
+%% Then call stream_body/2 for each chunk, and finish with {stop, Req}
+
+stream_start(Code, Hds, #{cowboy_req:=CowReq}=Req) ->
+    CowReq2 = nkpacket_cowboy:stream_reply(Code, Hds, CowReq),
+    Req#{cowboy_req:=CowReq2}.
+
+
+%% @doc
+stream_body(Body, #{cowboy_req:=CowReq}) ->
+    ok = nkpacket_cowboy:stream_body(Body, nofin, CowReq).
+
+
+%% @doc
+stream_stop(#{cowboy_req:=CowReq}) ->
+    ok = nkpacket_cowboy:stream_body(<<>>, fin, CowReq).
+
 
 %% @doc
 reply_json({ok, Data}, _Req) ->
@@ -265,6 +284,7 @@ reply_json({error, Error}, #{srv:=SrvId}) ->
 
 
 %% @private
+%% Called from nkpacket_transport_http:cowboy_init/5
 init(Paths, CowReq, Env, NkPort) ->
     Start = nklib_util:l_timestamp(),
     {Ip, Port} = cowboy_req:peer(CowReq),
@@ -291,6 +311,9 @@ init(Paths, CowReq, Env, NkPort) ->
         {http, Code, Hds, Body, #{cowboy_req:=CowReq2}} ->
             ?DEBUG("replying '~p' (~p) ~s", [Code, Hds, Body], Req),
             {ok, nkpacket_cowboy:reply(Code, Hds, Body, CowReq2), Env};
+        {stop, #{cowboy_req:=CowReq2}} ->
+            ?DEBUG("replying stream stop", [], Req),
+            {ok, CowReq2, Env};
         {redirect, Path3} ->
             {redirect, Path3};
         {cowboy_static, Opts} ->
@@ -301,8 +324,9 @@ init(Paths, CowReq, Env, NkPort) ->
             {cowboy_rest, Module, State};
         continue ->
             ?DEBUG("replying 'continue'", [], Req),
-            {ok, nkpacket_cowboy:reply(404, #{},
-                                        <<"NkSERVICE REST resource not found">>, CowReq)}
+            Reply = nkpacket_cowboy:reply(404, #{},
+                        <<"NkSERVICE REST resource not found">>, CowReq),
+            {ok, Reply, Env}
     end.
 
 

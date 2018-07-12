@@ -21,7 +21,7 @@
 -module(nkservice_pgsql_actors).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([init/2, drop/2]).
--export([find/3, read/3, save/4, delete/4, search/4, aggregation/4]).
+-export([find/3, read/3, save2/4, delete2/4,search/4, aggregation/4]).
 -export([get_links/4, get_linked/4]).
 -export([get_service/3, update_service/4]).
 -export([query/3, query/4]).
@@ -32,6 +32,8 @@
 
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE PGSQL Actors "++Txt, Args)).
+-define(RETURN_NOTHING,  <<" RETURNING NOTHING; ">>).
+
 
 %% ===================================================================
 %% Types
@@ -277,111 +279,200 @@ read(SrvId, PackageId, UID) ->
     end.
 
 
+%%%% @doc Called from actor_save callback
+%%%% Links to invalid objects will not be allowed (foreign key)
+%%save(SrvId, PackageId, Mode, Actor) ->
+%%    #actor{
+%%        uid = UID,
+%%        srv = ActorSrvId,
+%%        class = Class,
+%%        type = Type,
+%%        name = Name,
+%%        vsn = Vsn,
+%%        data = Data,
+%%        metadata = Meta
+%%    } = Actor,
+%%    true = is_binary(UID) andalso UID /= <<>>,
+%%    Path = nkservice_actor_util:make_reversed_srv_id(ActorSrvId),
+%%    {ok, Updated} = nklib_date:to_epoch(maps:get(<<"updateTime">>, Meta), secs),
+%%    Expires = case maps:get(<<"expiresTime">>, Meta, 0) of
+%%        0 ->
+%%            0;
+%%        Exp1 ->
+%%            {ok, Exp2} = nklib_date:to_epoch(Exp1, secs),
+%%            Exp2
+%%    end,
+%%    FTS = maps:get(<<"fts">>, Meta, #{}),
+%%    FtsWords = lists:foldl(
+%%        fun({Key, Values}, Acc1) ->
+%%            lists:foldl(
+%%                fun(Value, Acc2) ->
+%%                    [<<" ">>, to_bin(Key), $:, to_bin(Value) | Acc2]
+%%                end,
+%%                Acc1,
+%%                Values)
+%%        end,
+%%        [],
+%%        maps:to_list(FTS)),
+%%    Fields = quote_list([
+%%        UID,
+%%        ActorSrvId,
+%%        Class,
+%%        Type,
+%%        Name,
+%%        Vsn,
+%%        Data,
+%%        Meta,
+%%        Path,
+%%        Updated,
+%%        Expires,
+%%        [FtsWords, <<" ">>]
+%%    ]),
+%%    Verb = case Mode of
+%%        create ->
+%%            <<"INSERT">>;
+%%        update ->
+%%            <<"UPSERT">>
+%%    end,
+%%    ActorQuery = [
+%%        Verb,
+%%        <<" INTO actors">>,
+%%        <<" (uid,srv,class,actor_type,name,vsn,data,metadata,path,last_update,expires,fts_words)">>,
+%%        <<" VALUES (">>, Fields, <<");">>
+%%    ],
+%%    QUID = quote(UID),
+%%    QPath = quote(Path),
+%%    Labels = maps:get(<<"labels">>, Meta, #{}),
+%%    LabelsQuery1 = [<<"DELETE FROM labels WHERE uid=">>, QUID, <<";">>],
+%%    LabelsQuery2 = lists:map(
+%%        fun({Key, Val}) ->
+%%            [
+%%                <<"UPSERT INTO labels (uid,label_key,label_value,path) VALUES (">>,
+%%                QUID, $,, quote(Key), $,, quote(to_bin(Val)), $,, QPath, <<");">>
+%%            ]
+%%        end,
+%%        maps:to_list(Labels)),
+%%    Links = maps:get(<<"links">>, Meta, #{}),
+%%    LinksQuery1 = [<<"DELETE FROM links WHERE uid=">>, QUID, <<";">>],
+%%    LinksQuery2 = lists:map(
+%%        fun({LinkType, UID2}) ->
+%%            [
+%%                <<"UPSERT INTO links (uid,link_type,link_target,path) VALUES (">>,
+%%                QUID, $,, quote(LinkType), $,, quote(UID2), $,, QPath, <<");">>
+%%            ]
+%%        end,
+%%        maps:to_list(Links)),
+%%    FTSQuery1 = [<<"DELETE FROM fts WHERE uid=">>, QUID, <<";">>],
+%%    FTSQuery2 = lists:map(
+%%        fun({Field, WordList}) ->
+%%            lists:map(
+%%                fun(Word) ->
+%%                    [
+%%                        <<"UPSERT INTO fts (uid,fts_word,fts_field,path) VALUES (">>,
+%%                        QUID, $,, quote(Word), $,, quote(Field), $,, QPath, <<");">>
+%%                    ]
+%%                end,
+%%                WordList)
+%%        end,
+%%        maps:to_list(FTS)),
+%%    Query = [
+%%        <<"BEGIN;">>,
+%%        ActorQuery,
+%%        LabelsQuery1,
+%%        LabelsQuery2,
+%%        LinksQuery1,
+%%        LinksQuery2,
+%%        FTSQuery1,
+%%        FTSQuery2,
+%%        <<"COMMIT;">>
+%%    ],
+%%    case query(SrvId, PackageId, Query, #{auto_rollback=>true}) of
+%%        {ok, _, SaveMeta} ->
+%%            {ok, SaveMeta};
+%%        {error, foreign_key_violation} ->
+%%            {error, linked_actor_unknown};
+%%        {error, Error} ->
+%%            {error, Error}
+%%    end.
+
+
+-record(save_fields, {
+    uids = [],
+    actors = [],
+    labels = [],
+    links = [],
+    fts = []
+}).
+
+
 %% @doc Called from actor_save callback
 %% Links to invalid objects will not be allowed (foreign key)
-save(SrvId, PackageId, Mode, Actor) ->
-    #actor{
-        uid = UID,
-        srv = ActorSrvId,
-        class = Class,
-        type = Type,
-        name = Name,
-        vsn = Vsn,
-        data = Data,
-        metadata = Meta
-    } = Actor,
-    true = is_binary(UID) andalso UID /= <<>>,
-    Path = nkservice_actor_util:make_reversed_srv_id(ActorSrvId),
-    {ok, Updated} = nklib_date:to_epoch(maps:get(<<"updateTime">>, Meta), secs),
-    Expires = case maps:get(<<"expiresTime">>, Meta, 0) of
-        0 ->
-            0;
-        Exp1 ->
-            {ok, Exp2} = nklib_date:to_epoch(Exp1, secs),
-            Exp2
-    end,
-    FTS = maps:get(<<"fts">>, Meta, #{}),
-    FtsWords = lists:foldl(
-        fun({Key, Values}, Acc1) ->
-            lists:foldl(
-                fun(Value, Acc2) ->
-                    [<<" ">>, to_bin(Key), $:, to_bin(Value) | Acc2]
-                end,
-                Acc1,
-                Values)
-        end,
-        [],
-        maps:to_list(FTS)),
-    Fields = quote_list([
-        UID,
-        ActorSrvId,
-        Class,
-        Type,
-        Name,
-        Vsn,
-        Data,
-        Meta,
-        Path,
-        Updated,
-        Expires,
-        [FtsWords, <<" ">>]
-    ]),
+save2(SrvId, PackageId, Mode, #actor{}=Actor) ->
+    save2(SrvId, PackageId, Mode, [Actor]);
+
+save2(SrvId, PackageId, Mode, Actors) ->
+    Fields = populate_fields(Actors, #save_fields{}),
+    #save_fields{
+        uids = UIDs,
+        actors = ActorFields,
+        labels = LabelFields,
+        links = LinkFields,
+        fts = FtsFields
+    } = Fields,
     Verb = case Mode of
         create ->
             <<"INSERT">>;
         update ->
             <<"UPSERT">>
     end,
-    ActorQuery = [
-        Verb,
-        <<" INTO actors">>,
+    ActorsQuery = [
+        Verb, <<" INTO actors">>,
         <<" (uid,srv,class,actor_type,name,vsn,data,metadata,path,last_update,expires,fts_words)">>,
-        <<" VALUES (">>, Fields, <<");">>
+        <<" VALUES ">>, nklib_util:bjoin(ActorFields), ?RETURN_NOTHING
     ],
-    QUID = quote(UID),
-    QPath = quote(Path),
-    Labels = maps:get(<<"labels">>, Meta, #{}),
-    LabelsQuery1 = [<<"DELETE FROM labels WHERE uid=">>, QUID, <<";">>],
-    LabelsQuery2 = lists:map(
-        fun({Key, Val}) ->
-            [
-                <<"UPSERT INTO labels (uid,label_key,label_value,path) VALUES (">>,
-                QUID, $,, quote(Key), $,, quote(to_bin(Val)), $,, QPath, <<");">>
-            ]
-        end,
-        maps:to_list(Labels)),
-    Links = maps:get(<<"links">>, Meta, #{}),
-    LinksQuery1 = [<<"DELETE FROM links WHERE uid=">>, QUID, <<";">>],
-    LinksQuery2 = lists:map(
-        fun({LinkType, UID2}) ->
-            [
-                <<"UPSERT INTO links (uid,link_type,link_target,path) VALUES (">>,
-                QUID, $,, quote(LinkType), $,, quote(UID2), $,, QPath, <<");">>
-            ]
-        end,
-        maps:to_list(Links)),
-    FTSQuery1 = [<<"DELETE FROM fts WHERE uid=">>, QUID, <<";">>],
-    FTSQuery2 = lists:map(
-        fun({Field, WordList}) ->
-            lists:map(
-                fun(Word) ->
-                    [
-                        <<"UPSERT INTO fts (uid,fts_word,fts_field,path) VALUES (">>,
-                        QUID, $,, quote(Word), $,, quote(Field), $,, QPath, <<");">>
-                    ]
-                end,
-                WordList)
-        end,
-        maps:to_list(FTS)),
+    LabelsQuery = [
+        <<"DELETE FROM labels WHERE uid IN ">>, UIDs, ?RETURN_NOTHING,
+        case LabelFields of
+            [] ->
+                [];
+            _ ->
+                [
+                    <<"UPSERT INTO labels (uid,label_key,label_value,path) VALUES ">>,
+                    nklib_util:bjoin(LabelFields), ?RETURN_NOTHING
+                ]
+        end
+    ],
+    LinksQuery = [
+        <<"DELETE FROM links WHERE uid IN ">>, UIDs, ?RETURN_NOTHING,
+        case LinkFields of
+            [] ->
+                [];
+            _ ->
+                [
+                    <<"UPSERT INTO links (uid,link_type,link_target,path) VALUES ">>,
+                    nklib_util:bjoin(LinkFields), ?RETURN_NOTHING
+                ]
+        end
+    ],
+    FtsQuery = [
+        <<"DELETE FROM fts WHERE uid IN ">>, UIDs, ?RETURN_NOTHING,
+        case FtsFields of
+            [] ->
+                [];
+            _ ->
+                [
+                    <<"UPSERT INTO fts (uid,fts_word,fts_field,path) VALUES ">>,
+                    nklib_util:bjoin(FtsFields), ?RETURN_NOTHING
+                ]
+        end
+    ],
+
     Query = [
         <<"BEGIN;">>,
-        ActorQuery,
-        LabelsQuery1,
-        LabelsQuery2,
-        LinksQuery1,
-        LinksQuery2,
-        FTSQuery1,
-        FTSQuery2,
+        ActorsQuery,
+        LabelsQuery,
+        LinksQuery,
+        FtsQuery,
         <<"COMMIT;">>
     ],
     case query(SrvId, PackageId, Query, #{auto_rollback=>true}) of
@@ -394,51 +485,216 @@ save(SrvId, PackageId, Mode, Actor) ->
     end.
 
 
+%% @private
+populate_fields([], #save_fields{uids=UIDs}=SaveFields) ->
+    UIDs2 = list_to_binary([<<"(">>, nklib_util:bjoin(UIDs, $,), <<")">>]),
+    SaveFields#save_fields{uids=UIDs2};
+
+populate_fields([Actor|Rest], SaveFields) ->
+    #save_fields{
+        uids = UIDs,
+        actors = Actors,
+        labels = Labels,
+        links = Links,
+        fts = Fts
+    } = SaveFields,
+    #actor{
+        uid = UID,
+        srv = ActorSrvId,
+        class = Class,
+        type = Type,
+        name = Name,
+        vsn = Vsn,
+        data = Data,
+        metadata = Meta
+    } = Actor,
+    true = is_binary(UID) andalso UID /= <<>>,
+    Path = nkservice_actor_util:make_reversed_srv_id(ActorSrvId),
+    QUID = quote(UID),
+    QPath = quote(Path),
+    {ok, Updated} = nklib_date:to_epoch(maps:get(<<"updateTime">>, Meta), secs),
+    Expires = case maps:get(<<"expiresTime">>, Meta, 0) of
+        0 ->
+            0;
+        Exp1 ->
+            {ok, Exp2} = nklib_date:to_epoch(Exp1, secs),
+            Exp2
+    end,
+    FtsWords1 = maps:get(<<"fts">>, Meta, #{}),
+    FtsWords2 = maps:fold(
+        fun(Key, Values, Acc1) ->
+            lists:foldl(
+                fun(Value, Acc2) ->
+                    [<<" ">>, to_bin(Key), $:, to_bin(Value) | Acc2]
+                end,
+                Acc1,
+                Values)
+        end,
+        [],
+        FtsWords1),
+    ActorFields = quote_list([
+        UID,
+        ActorSrvId,
+        Class,
+        Type,
+        Name,
+        Vsn,
+        Data,
+        Meta,
+        Path,
+        Updated,
+        Expires,
+        [FtsWords2, <<" ">>]
+    ]),
+    Actors2 = [list_to_binary([<<"(">>, ActorFields, <<")">>]) | Actors],
+    Labels2 = maps:fold(
+        fun(Key, Val, Acc) ->
+            L = list_to_binary([
+                <<"(">>, QUID, $,, quote(Key), $,, quote(to_bin(Val)), $,, QPath, <<")">>
+            ]),
+            [L|Acc]
+        end,
+        Labels,
+        maps:get(<<"labels">>, Meta, #{})),
+    Links2 = maps:fold(
+        fun(LinkType, UID2, Acc) ->
+            L = list_to_binary([
+                <<"(">>, QUID, $,, quote(LinkType), $,, quote(UID2), $,, QPath, <<")">>
+            ]),
+            [L|Acc]
+        end,
+        Links,
+        maps:get(<<"links">>, Meta, #{})),
+    Fts2 = maps:fold(
+        fun(Field, WordList, Acc1) ->
+            lists:foldl(
+                fun(Word, Acc2) ->
+                    L = list_to_binary([
+                        <<"(">>, QUID, $,, quote(Word), $,, quote(Field), $,, QPath, <<")">>
+                    ]),
+                    [L|Acc2]
+                end,
+                Acc1,
+                WordList)
+        end,
+        Fts,
+        FtsWords1),
+    SaveFields2 = SaveFields#save_fields{
+        uids = [QUID|UIDs],
+        actors = Actors2,
+        labels = Labels2,
+        links = Links2,
+        fts = Fts2
+    },
+    populate_fields(Rest, SaveFields2).
+
+
+
+%%%% @doc
+%%%% Option 'cascade' to delete all linked
+%%%% Option 'force' to delete even
+%%delete(SrvId, PackageId, UID, Opts) ->
+%%    UID2 = to_bin(UID),
+%%    Debug = nkservice_util:get_debug(SrvId, nkservice_pgsql, PackageId, debug),
+%%    QueryMeta = #{pgsql_debug=>Debug},
+%%    QueryFun = fun(Pid) ->
+%%        do_query(Pid, <<"BEGIN;">>, QueryMeta),
+%%        DelQuery = case Opts of
+%%            #{cascade:=true} ->
+%%                ChildUIDs = delete_find_nested(Pid, [UID2], sets:new()),
+%%                ?LLOG(notice, "DELETE on CASCADE: ~p", [ChildUIDs]),
+%%                lists:foldl(
+%%                    fun(ChildUID, Acc) ->
+%%                        nkservice_actor_srv:actor_deleted(ChildUID),
+%%                        QChildUID = quote(ChildUID),
+%%                        [
+%%                            <<"DELETE FROM actors WHERE uid=">>, QChildUID, <<"; ">>,
+%%                            <<"DELETE FROM labels WHERE uid=">>, QChildUID, <<"; ">>,
+%%                            <<"DELETE FROM links WHERE uid=">>, QChildUID, <<"; ">>,
+%%                            <<"DELETE FROM fts WHERE uid=">>, QChildUID, <<"; ">>
+%%                            | Acc
+%%                        ]
+%%                    end,
+%%                    [],
+%%                    ChildUIDs);
+%%            _ ->
+%%                nkservice_actor_srv:actor_deleted(UID2),
+%%                QUID = quote(UID),
+%%                LinksQ = [<<"SELECT uid FROM links WHERE link_target=">>, QUID, <<";">>],
+%%                case do_query(Pid, LinksQ, QueryMeta) of
+%%                    {ok, [[]], _} ->
+%%                        ok;
+%%                    _ ->
+%%                        throw(actor_has_linked_actors)
+%%                end,
+%%                [
+%%                    <<"DELETE FROM actors WHERE uid=">>, QUID, <<";">>,
+%%                    <<"DELETE FROM labels WHERE uid=">>, QUID, <<";">>,
+%%                    <<"DELETE FROM links WHERE uid=">>, QUID, <<";">>,
+%%                    <<"DELETE FROM fts WHERE uid=">>, QUID, <<";">>
+%%                ]
+%%        end,
+%%        do_query(Pid, DelQuery, QueryMeta),
+%%        do_query(Pid, <<"COMMIT;">>, QueryMeta)
+%%    end,
+%%    case query(SrvId, PackageId, QueryFun, #{}) of
+%%        {ok, _, Meta} ->
+%%            {ok, Meta};
+%%        {error, Error} ->
+%%            {error, Error}
+%%    end.
+
 %% @doc
 %% Option 'cascade' to delete all linked
 %% Option 'force' to delete even
+delete2(SrvId, PackageId, UID, Opts) when is_binary(UID) ->
+    delete2(SrvId, PackageId, [UID], Opts);
 
-
-delete(SrvId, PackageId, UID, Opts) ->
-    UID2 = to_bin(UID),
+delete2(SrvId, PackageId, UIDs, Opts) ->
     Debug = nkservice_util:get_debug(SrvId, nkservice_pgsql, PackageId, debug),
     QueryMeta = #{pgsql_debug=>Debug},
     QueryFun = fun(Pid) ->
         do_query(Pid, <<"BEGIN;">>, QueryMeta),
         DelQuery = case Opts of
             #{cascade:=true} ->
-                ChildUIDs = delete_find_nested(Pid, [UID2], sets:new()),
+                ChildUIDs = delete_find_nested(Pid, UIDs, sets:new()),
                 ?LLOG(notice, "DELETE on CASCADE: ~p", [ChildUIDs]),
                 lists:foldl(
                     fun(ChildUID, Acc) ->
                         nkservice_actor_srv:actor_deleted(ChildUID),
                         QChildUID = quote(ChildUID),
                         [
-                            <<"DELETE FROM actors WHERE uid=">>, QChildUID, <<"; ">>,
-                            <<"DELETE FROM labels WHERE uid=">>, QChildUID, <<"; ">>,
-                            <<"DELETE FROM links WHERE uid=">>, QChildUID, <<"; ">>,
-                            <<"DELETE FROM fts WHERE uid=">>, QChildUID, <<"; ">>
+                            <<"DELETE FROM actors WHERE uid=">>, QChildUID, ?RETURN_NOTHING,
+                            <<"DELETE FROM labels WHERE uid=">>, QChildUID, ?RETURN_NOTHING,
+                            <<"DELETE FROM links WHERE uid=">>, QChildUID, ?RETURN_NOTHING,
+                            <<"DELETE FROM fts WHERE uid=">>, QChildUID, ?RETURN_NOTHING
                             | Acc
                         ]
                     end,
                     [],
                     ChildUIDs);
             _ ->
-                nkservice_actor_srv:actor_deleted(UID2),
-                QUID = quote(UID),
-                LinksQ = [<<"SELECT uid FROM links WHERE link_target=">>, QUID, <<";">>],
-                case do_query(Pid, LinksQ, QueryMeta) of
-                    {ok, [[]], _} ->
-                        ok;
-                    _ ->
-                        throw(actor_has_linked_actors)
-                end,
-                [
-                    <<"DELETE FROM actors WHERE uid=">>, QUID, <<";">>,
-                    <<"DELETE FROM labels WHERE uid=">>, QUID, <<";">>,
-                    <<"DELETE FROM links WHERE uid=">>, QUID, <<";">>,
-                    <<"DELETE FROM fts WHERE uid=">>, QUID, <<";">>
-                ]
+                lists:foldl(
+                    fun(UID, Acc) ->
+                        nkservice_actor_srv:actor_deleted(UID),
+                        QUID = quote(UID),
+                        LinksQ = [<<"SELECT uid FROM links WHERE link_target=">>, QUID, <<";">>],
+                        case do_query(Pid, LinksQ, QueryMeta) of
+                            {ok, [[]], _} ->
+                                ok;
+                            _ ->
+                                throw(actor_has_linked_actors)
+                        end,
+                        [
+                            <<"DELETE FROM actors WHERE uid=">>, QUID, ?RETURN_NOTHING,
+                            <<"DELETE FROM labels WHERE uid=">>, QUID, ?RETURN_NOTHING,
+                            <<"DELETE FROM links WHERE uid=">>, QUID, ?RETURN_NOTHING,
+                            <<"DELETE FROM fts WHERE uid=">>, QUID, ?RETURN_NOTHING
+                            | Acc
+                        ]
+                    end,
+                    [],
+                    UIDs)
         end,
         do_query(Pid, DelQuery, QueryMeta),
         do_query(Pid, <<"COMMIT;">>, QueryMeta)
@@ -449,6 +705,9 @@ delete(SrvId, PackageId, UID, Opts) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+
 
 %% @private Returns the list of UIDs an UID depends on
 delete_find_nested(_Pid, [], Set) ->
@@ -654,7 +913,7 @@ query(SrvId, PackageId, Query, QueryMeta) ->
 
 %% @private
 do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
-    %?LLOG(info, "PreQuery: ~s", [Query]),
+    % ?LLOG(info, "PreQuery: ~s", [Query]),
     case nkservice_pgsql:do_query(Pid, Query) of
         {ok, Ops, PgMeta} ->
             case maps:get(pgsql_debug, QueryMeta, false) of

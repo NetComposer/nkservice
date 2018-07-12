@@ -238,19 +238,13 @@ encode([T], St) ->
 encode(Term, Pretty, St) ->
     try encode_value(Term) of
         Encoded ->
-            case
-                case Pretty of
-                    true ->
-                        nklib_json:encode_pretty(Encoded);
-                    false ->
-                        nklib_json:encode(Encoded)
-                end
-            of
-                error ->
-                    {[nil], St};
-                Result ->
-                    {[Result], St}
-            end
+            Result = case Pretty of
+                true ->
+                    nklib_json:encode_pretty(Encoded);
+                false ->
+                    nklib_json:encode(Encoded)
+            end,
+            {[Result], St}
         catch
             _:_ ->
                 {[nil], St}
@@ -289,8 +283,8 @@ encode_object([{K, V}|Rest], Acc) ->
 
 %% @private
 decode([Bin], St) when is_binary(Bin) ->
-    case nklib_json:decode(Bin) of
-        error ->
+    case catch nklib_json:decode(Bin) of
+        {'EXIT', _} ->
             {[nil], St};
         Result1 ->
             {Result2, St2} = luerl:encode(Result1, St),

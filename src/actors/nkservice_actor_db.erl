@@ -228,17 +228,19 @@ activate(Id, Opts) ->
 %% @doc Creates a brand new actor
 %% It will activate the object, unless indicated
 create(Actor, Opts) ->
-    case nkservice_actor_util:check_create_fields(Actor, Opts) of
+    case nkservice_actor_util:check_create_fields(Actor) of
         {ok, #actor{srv=ActorSrvId}=Actor2} ->
+            ActorId = nkservice_actor_util:actor_to_actor_id(Actor2),
             case maps:get(activate, Opts, true) of
                 true ->
                     % Do we still need to load the object first, now that we
                     % have a consistent database?
                     case ?CALL_SRV(ActorSrvId, actor_activate, [Actor2, Opts#{is_new=>true}]) of
                         {ok, Pid} ->
+                            ActorId2 = ActorId#actor_id{pid=Pid},
                             case nkservice_actor_srv:sync_op(Pid, get_actor) of
                                 {ok, Actor3} ->
-                                    {ok, Actor3};
+                                    {ok, ActorId2, Actor3, #{}};
                                 {error, Error} ->
                                     {error, Error}
                             end;
@@ -249,8 +251,8 @@ create(Actor, Opts) ->
                     end;
                 false ->
                     case ?CALL_SRV(ActorSrvId, actor_db_create, [ActorSrvId, Actor2]) of
-                        {ok, _Meta} ->
-                            {ok, Actor2};
+                        {ok, Meta} ->
+                            {ok, ActorId, Actor2, Meta};
                         {error, Error} ->
                             {error, Error}
                     end
@@ -262,7 +264,7 @@ create(Actor, Opts) ->
 
 %% @doc Deletes an actor
 -spec delete(nkservice_actor:id()) ->
-    ok | {error, actor_not_found|term()}.
+    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
 
 delete(Id) ->
     delete(Id, #{}).
@@ -272,17 +274,17 @@ delete(Id) ->
 %% Uses options srv_db, cascade
 
 -spec delete(nkservice_actor:id(), opts()) ->
-    ok | {error, actor_not_found|term()}.
+    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
 
 delete(Id, Opts) ->
     case find(Id, Opts) of
-        {ok, #actor_id{srv=ActorSrvId, uid=UID}, _Meta} ->
+        {ok, #actor_id{srv=ActorSrvId, uid=UID}=ActorId, _Meta} ->
             SrvId = maps:get(db_srv, Opts, ActorSrvId),
             Opts2 = #{cascade => maps:get(cascade, Opts, false)},
             % Implementation must call nkservice_actor_srv:actor_deleted/1
             case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
                 {ok, DeleteMeta} ->
-                    {ok, DeleteMeta};
+                    {ok, ActorId, DeleteMeta};
                 {error, Error} ->
                     {error, Error}
             end;

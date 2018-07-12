@@ -85,6 +85,7 @@ msg(SrvId, Msg) ->
 
 msg(actor_expired)	                -> "Actor has expired";
 msg(actor_has_linked_actors)	    -> "Actor has linked actors";
+msg(actor_is_not_activable)	        -> "Actor is not activable";
 msg(already_authenticated)	        -> "Already authenticated";
 msg(already_started)	            -> "Already started";
 msg(already_uploaded)   		    -> "Already uploaded";
@@ -389,10 +390,10 @@ actor_event(_Event, State) ->
 
 %% @doc Called when an event is sent, for each registered process to the session
 %% The events are 'erlang' events (tuples usually)
--spec actor_link_event(nklib:link(), nkservice_actor_srv:link_opts(), nkservice_actor_srv:event(), actor_st()) ->
+-spec actor_link_event(nklib:link(), term(), nkservice_actor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_link_event(_Link, _LinkOpts, _Event, State) ->
+actor_link_event(_Link, _LinkData, _Event, State) ->
     {ok, State}.
 
 

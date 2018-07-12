@@ -28,7 +28,7 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
--export([check_create_fields/2, update_meta/4, check_links/1]).
+-export([check_create_fields/1, update_meta/4, check_links/1]).
 -export([is_path/1, actor_id_to_path/1, actor_to_actor_id/1]).
 -export([make_reversed_srv_id/1, gen_srv_id/1]).
 -export([make_plural/1, normalized_name/1]).
@@ -39,18 +39,18 @@
 
 
 %% @doc Creates a new actor from a actor_map()
-check_create_fields(#actor{uid=UID}, _Opts) when UID /= undefined ->
+check_create_fields(#actor{uid=UID}) when UID /= undefined ->
     {error, uid_not_allowed};
 
-check_create_fields(Actor, _Opts) ->
+check_create_fields(Actor) ->
     #actor{type=Type, name=Name1, data=Data, metadata=Meta1} = Actor,
     UID = make_uid(Type),
     %% Add Name if not present
     Name2 = case normalized_name(Name1) of
         <<>> ->
             make_name(UID);
-        Name1 ->
-            Name1
+        NormName ->
+            NormName
     end,
     {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
     Meta2 = Meta1#{<<"creationTime">> => Time},
