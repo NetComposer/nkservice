@@ -278,15 +278,25 @@ delete(Id) ->
 
 delete(Id, Opts) ->
     case find(Id, Opts) of
-        {ok, #actor_id{srv=ActorSrvId, uid=UID}=ActorId, _Meta} ->
-            SrvId = maps:get(db_srv, Opts, ActorSrvId),
-            Opts2 = #{cascade => maps:get(cascade, Opts, false)},
-            % Implementation must call nkservice_actor_srv:actor_deleted/1
-            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
-                {ok, DeleteMeta} ->
-                    {ok, ActorId, DeleteMeta};
-                {error, Error} ->
-                    {error, Error}
+        {ok, #actor_id{srv=ActorSrvId, uid=UID, pid=Pid}=ActorId, _Meta} ->
+            case maps:get(cascade, Opts, false) of
+                false when is_pid(Pid) ->
+                    case nkservice_actor_srv:sync_op(Pid, delete) of
+                        ok ->
+                            {ok, ActorId, #{}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                Cascade ->
+                    SrvId = maps:get(db_srv, Opts, ActorSrvId),
+                    Opts2 = #{cascade => Cascade},
+                    % Implementation must call nkservice_actor_srv:actor_deleted/1
+                    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
+                        {ok, DeleteMeta} ->
+                            {ok, ActorId, DeleteMeta};
+                        {error, Error} ->
+                            {error, Error}
+                    end
             end;
         {error, Error} ->
             {error, Error}

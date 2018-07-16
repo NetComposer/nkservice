@@ -186,6 +186,7 @@ start(SrvId, Spec) ->
         undefined ->
             case nkservice_config:config_service(SrvId, Spec, #{}) of
                 {ok, Service2} ->
+                    % io:format("NKLOG SERV ~p\n", [Service2]),
                     % Master will be started and leader elected,
                     % and it will start service in all nodes
                     nkservice_srv:start(Service2);

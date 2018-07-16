@@ -29,7 +29,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([create/1]).
 -export([get_actor/1, get_path/1, is_enabled/1, enable/2, update/2, delete/1,
-         unload/1, unload/2]).
+         stop/1, stop/2]).
 -export([search_classes/2, search_types/3]).
 -export([search_linked_to/4, search_fts/4, search/2, search_ids/2]).
 -export_type([actor/0, actor_map/0, id/0]).
@@ -80,7 +80,11 @@
         binary() => binary() | integer() | float() | boolean()
     }.
 
--type status() :: map().
+-type status() ::
+    #{
+        is_activated => boolean(),
+        term() => term()
+    }.
 
 
 -type filter_op() ::
@@ -215,19 +219,19 @@ delete(Id) ->
 
 
 %% @doc Unloads the object
--spec unload(id()|pid()) ->
+-spec stop(id()|pid()) ->
     ok | {error, term()}.
 
-unload(Id) ->
-    unload(Id, normal).
+stop(Id) ->
+    stop(Id, normal).
 
 
 %% @doc Unloads the object
--spec unload(id()|pid(), Reason::nkservice:msg()) ->
+-spec stop(id()|pid(), Reason::nkservice:msg()) ->
     ok | {error, term()}.
 
-unload(Id, Reason) ->
-    nkservice_actor_srv:async_op(Id, {unload, Reason}).
+stop(Id, Reason) ->
+    nkservice_actor_srv:async_op(Id, {stop, Reason}).
 
 
 %% @doc

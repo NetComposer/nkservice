@@ -106,6 +106,7 @@ make_cache(#{id:=Id}=Service) ->
 %% @private
 %% Cache functions are service_cache(Class, PackageId, Type)
 get_cache(Service) ->
+    % lager:error("SRV: ~p\n", [Service]),
     Cache1 = maps:fold(
         fun(_PackageId, Package, Acc) ->
             Acc ++ maps:to_list(maps:get(cache_map, Package, #{}))
@@ -114,6 +115,9 @@ get_cache(Service) ->
         maps:get(packages, Service, #{})),
     Cache2 = maps:fold(
         fun(_ModuleId, Module, Acc) ->
+            % io:format("MODULES: ~p ~p ~p\n", [_ModuleId, maps:get(cache_map, Module, #{}), Module]),
+
+
             Acc ++ maps:to_list(maps:get(cache_map, Module, #{}))
         end,
         Cache1,

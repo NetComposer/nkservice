@@ -99,17 +99,16 @@
 
 -type event() ::
     created |
-    loaded |
+    activated |
     saved |
     {updated, nkservice_actor:actor()} |
     deleted |
     {enabled, boolean()} |
     {info, binary(), Meta::map()} |
-    {stopped, Code::binary(), Txt::binary()} |
     {link_added, Type::binary()} |
     {link_removed, Type::binary()} |
     {link_down, Type::binary()} |
-    {unloaded, nkservice:msg()}.
+    {stopped, nkservice:msg()}.
 
 
 -type start_opts() ::
@@ -150,13 +149,13 @@
     {send_info, atom()|binary(), map()} |
     {send_event, event()} |
     save |
-    {unload, Reason::nkservice:msg()} |
+    {stop, Reason::nkservice:msg()} |
     term().
 
 -type state() :: #actor_st{}.
 
 -type save_reason() ::
-    creation | user_op | user_order | pre_delete | unloaded | update | timer.
+    creation | user_op | user_order | unloaded | update | timer.
 
 
 
@@ -238,10 +237,11 @@ async_op(Id, Op) ->
 
 
 %% @private
+%% Only if the object is activated, we wait for it to be deleted
 actor_deleted(Id) ->
     case nkservice_actor_db:is_activated(Id) of
         {true, #actor_id{pid=Pid}} ->
-            sync_op(Pid, actor_deleted);
+            async_op(Pid, actor_deleted);
         false ->
             ok
     end.
@@ -263,7 +263,7 @@ get_all() ->
 %% @private
 unload_all() ->
     lists:foreach(
-        fun(#actor_id{pid=Pid}) -> async_op(Pid, {unload, normal}) end,
+        fun(#actor_id{pid=Pid}) -> async_op(Pid, {stop, normal}) end,
         get_all()).
 
 
@@ -314,7 +314,7 @@ init({Actor, StartOpts}) ->
                         false ->
                             State4
                     end,
-                    State6 = do_event(loaded, State5),
+                    State6 = do_event(activated, State5),
                     State7 = do_check_alarms(State6),
                     % If it is a creation, is_dirty = true
                     case do_save(creation, State7) of
@@ -345,12 +345,12 @@ handle_call({nkservice_sync_op, Op}, From, State) ->
         {reply, Reply, #actor_st{}=State2} ->
             reply(Reply, do_refresh_ttl(State2));
         {reply_and_save, Reply, #actor_st{}=State2} ->
-            {_, State3} = do_save(user_op, State2#actor_st{is_dirty=true}),
+            {_, State3} = do_save(user_op, State2#actor_st{is_dirty2=true}),
             reply(Reply, do_refresh_ttl(State3));
         {noreply, #actor_st{}=State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{}=State2} ->
-            {_, State3} = do_save(user_op, State2#actor_st{is_dirty=true}),
+            {_, State3} = do_save(user_op, State2#actor_st{is_dirty2=true}),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, Reply, #actor_st{}=State2} ->
             gen_server:reply(From, Reply),
@@ -379,7 +379,7 @@ handle_cast({nkservice_async_op, Op}, State) ->
         {noreply, #actor_st{}=State2} ->
             noreply(do_refresh_ttl(State2));
         {noreply_and_save, #actor_st{}=State2} ->
-            {_, State3} = do_save(user_op, State2#actor_st{is_dirty=true}),
+            {_, State3} = do_save(user_op, State2#actor_st{is_dirty2=true}),
             noreply(do_refresh_ttl(State3));
         {stop, Reason, #actor_st{}=State2} ->
             do_stop(Reason, State2);
@@ -416,7 +416,7 @@ handle_info(nkservice_ttl_timeout, State) ->
     do_ttl_timeout(State);
 
 handle_info(nkservice_timer_save, State) ->
-    do_async_op(save, State);
+    do_async_op({save, timer}, State);
 
 handle_info(nkservice_next_status_timer, State) ->
     State2 = State#actor_st{status_timer=undefined},
@@ -499,12 +499,7 @@ do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) -
         _ ->
             {Reply, State2} = do_delete(State),
             gen_server:reply(From, Reply),
-            case Reply of
-                ok ->
-                    do_stop(actor_deleted, State2);
-                _ ->
-                    noreply(State)
-            end
+            do_stop(actor_deleted, State2)
     end;
 
 do_sync_op({enable, Enable}, _From, State) ->
@@ -566,12 +561,6 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
 do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
-do_sync_op(actor_deleted, _From, State) ->
-    {ok, State2} = handle(actor_stop, [deleted], State),
-    State3 = do_event({stopped, deleted, <<"Actor is deleted">>}, State2),
-    State4 = do_event({unloaded, deleted}, State3),
-    {stop, normal, ok, State4};
-
 do_sync_op(Op, _From, State) ->
     ?LLOG(notice, "unknown sync op: ~p", [Op], State),
     reply({error, unknown_op}, State).
@@ -587,16 +576,25 @@ do_async_op({send_info, Info, Meta}, State) ->
 do_async_op({send_event, Event}, State) ->
     noreply(do_event(Event, do_refresh_ttl(State)));
 
-do_async_op({set_dirty, IsDirty}, State) ->
-    noreply(do_refresh_ttl(State#actor_st{is_dirty=IsDirty}));
+do_async_op({set_dirty, IsDirty}, State) when is_boolean(IsDirty)->
+    noreply(do_refresh_ttl(State#actor_st{is_dirty2=IsDirty}));
 
 do_async_op(save, State) ->
-    {_Reply, State2} = do_save(user_order, State),
+    do_async_op({save, user_order}, State);
+
+do_async_op({save, Reason}, State) ->
+    {_Reply, State2} = do_save(Reason, State),
     noreply(do_refresh_ttl(State2));
 
-do_async_op({unload, Reason}, State) ->
-    ?DEBUG("received unload: ~p", [Reason], State),
+do_async_op({stop, Reason}, State) ->
+    ?DEBUG("received stop: ~p", [Reason], State),
     do_stop(Reason, State);
+
+do_async_op(actor_deleted, State) ->
+    ?LLOG(warning, "received actor_deleted", [], State),
+    {ok, State2} = handle(actor_stop, [deleted], State),
+    State3 = do_event({stopped, deleted}, State2),
+    {stop, normal, State3#actor_st{stop_reason=actor_deleted}};
 
 do_async_op(Op, State) ->
     ?LLOG(notice, "unknown async op: ~p", [Op], State),
@@ -637,12 +635,12 @@ do_init(ActorId, Actor, StartOpts) ->
     #actor_st{
         actor_id = ActorId,
         config = Config2,
-        actor = Actor#actor{status=#{}},
+        actor = Actor#actor{status=#{is_activated=>true}},
         links = nklib_links:new(),
-        is_dirty = IsNew,
+        is_dirty2 = IsNew,
         is_enabled = maps:get(<<"isEnabled">>, Meta, true),
         save_timer = undefined,
-        loaded_time = Now,
+        activated_time = Now,
         status_timer = NextStatusTimer,
         unload_policy = permanent           % Updated later
     }.
@@ -741,35 +739,24 @@ do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
 
 
 %% @private
-do_save(_Reason, #actor_st{is_dirty=false}=State) ->
-    {ok, State};
-
-do_save(Reason, #actor_st{save_timer=Timer}=State) ->
+do_save(Reason, #actor_st{is_dirty2=true, save_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
     case handle(actor_save, [Reason], State#actor_st{save_timer=undefined}) of
         {ok, Meta, State2} ->
             ?DEBUG("save (~p) (~p)", [Reason, Meta], State2),
-            State3 = State2#actor_st{is_dirty = false},
+            State3 = State2#actor_st{is_dirty2=false},
             {ok, do_event(saved, State3)};
         {error, not_implemented, State2} ->
             {{error, not_implemented}, State2};
         {error, Error, State2} ->
             ?LLOG(warning, "save error: ~p", [Error], State),
             {{error, Error}, State2}
-    end.
+    end;
+
+do_save(_Reason, State) ->
+    {ok, State}.
 
 
-%% @private
-do_delete(#actor_st{actor=Actor}=State) ->
-    {_, State2} = do_save(pre_delete, State),
-    case handle(actor_delete, [], State2) of
-        {ok, State3} ->
-            ?DEBUG("object deleted", [], State3),
-            {ok, do_event(deleted, State3)};
-        {error, Error, State3} ->
-            ?LLOG(warning, "object could not be deleted: ~p", [Error], State3),
-            {{error, Error}, State3#actor_st{actor=Actor}}
-    end.
 
 
 %% @private Reset TTL
@@ -804,22 +791,36 @@ do_stop(Reason, State) ->
 
 
 %% @private
-do_stop2(Reason, #actor_st{actor_id=#actor_id{srv=SrvId}, stop_reason=false, config=Config}=State) ->
-    {ok, State2} = handle(actor_stop, [Reason], State#actor_st{stop_reason=Reason}),
-    {Code, Txt} = nkservice_msg:msg(SrvId, Reason),
-    State3 = do_event({stopped, Code, Txt}, State2),
-    {_, State4} = do_save(unloaded, State3),
-    State5 = do_event({unloaded, Reason}, State4),
-    case Config of
+do_stop2(Reason, #actor_st{stop_reason=false, config=Config}=State) ->
+    {_, State2} = case Config of
         #{remove_after_stop:=true} ->
-            {_, State6} = do_delete(State5),
-            State6;
+            do_delete(State);
         _ ->
-            State5
-    end;
+            {ok, State}
+    end,
+    State3 = State2#actor_st{stop_reason=Reason},
+    {ok, State4} = handle(actor_stop, [Reason], State3),
+    State5 = do_event({stopped, Reason}, State4),
+    {_, State6} = do_save(unloaded, State5),
+    State6;
 
 do_stop2(_Reason, State) ->
     State.
+
+
+%% @private
+do_delete(#actor_st{is_dirty2=deleted}=State) ->
+    {ok, State};
+
+do_delete(#actor_st{actor=Actor}=State) ->
+    case handle(actor_delete, [], State) of
+        {ok, _Meta, State2} ->
+            ?DEBUG("object deleted", [], State2),
+            {ok, do_event(deleted, State2#actor_st{is_dirty2=deleted})};
+        {error, Error, State2} ->
+            ?LLOG(warning, "object could not be deleted: ~p", [Error], State2),
+            {{error, Error}, State2#actor_st{actor=Actor}}
+    end.
 
 
 %% @private
@@ -888,7 +889,7 @@ do_update(UpdActor, #actor_st{actor_id=Id, actor=Actor}=State) ->
             true ->
                 lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
                 NewActor = Actor#actor{data=UpdData, metadata=NewMeta},
-                State2 = State#actor_st{actor=NewActor, is_dirty=true},
+                State2 = State#actor_st{actor=NewActor, is_dirty2=true},
                 State3 = do_update_version(State2),
                 Enabled = maps:get(<<"isEnabled">>, NewMeta, true),
                 State4 = do_enabled(Enabled, State3),
@@ -918,7 +919,7 @@ do_update_name(Name, #actor_st{actor_id=#actor_id{name=OldName}=Id}=State) ->
             Id2 = Id#actor_id{name=NewName},
             case register_with_leader(State#actor_st{actor_id=Id2}) of
                 {ok, State2} ->
-                    State3 = State2#actor_st{is_dirty=true},
+                    State3 = State2#actor_st{is_dirty2=true},
                     State4 = do_update_version(State3),
                     case do_save(update, State4) of
                         {ok, #actor_st{actor=Actor}=State5} ->
@@ -961,7 +962,7 @@ do_heartbeat(State) ->
 
 
 %% @private
-do_check_save(#actor_st{is_dirty=true, save_timer=undefined, config=Config}=State) ->
+do_check_save(#actor_st{is_dirty2=true, save_timer=undefined, config=Config}=State) ->
     SaveTime = maps:get(save_time, Config, ?DEFAULT_SAVE_TIME),
     Timer = erlang:send_after(SaveTime, self(), nkservice_timer_save),
     State#actor_st{save_timer=Timer};
@@ -1031,10 +1032,11 @@ noreply(#actor_st{}=State) ->
 %% @private
 %% Will call the service's functions
 handle(Fun, Args, #actor_st{actor_id=#actor_id{srv=SrvId}}=State) ->
+    %lager:error("NKLOG CALL ~p:~p:~p", [SrvId, Fun, Args]),
     ?CALL_SRV(SrvId, Fun, Args++[State]).
 
 
-%% @private
+%% @privateF
 safe_handle(Fun, Args, State) ->
     Reply = handle(Fun, Args, State),
     case Reply of

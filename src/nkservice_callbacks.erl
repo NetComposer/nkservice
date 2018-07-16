@@ -444,8 +444,14 @@ actor_save(Reason, #actor_st{actor=Actor}=ActorSt) ->
 -spec actor_delete(actor_st()) ->
     {ok, actor_st()} | {error, term(), actor_st()} | continue().
 
-actor_delete(State) ->
-    {error, not_implemented, State}.
+actor_delete(#actor_st{actor_id=ActorId}=ActorSt) ->
+    #actor_id{srv=SrvId, uid=UID} = ActorId,
+    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
+        {ok, DbMeta} ->
+            {ok, DbMeta, ActorSt};
+        {error, Error} ->
+            {error, Error, ActorSt}
+    end.
 
 
 %% @doc Called when a linked process goes down
