@@ -24,9 +24,10 @@
 -export([get_query/2]).
 -export([pgsql_totals_actors/2, pgsql_actors/2,
          pgsql_totals_actors_id/2, pgsql_actors_id/2]).
--export([make_sort/2, make_filter/2]).
+-export([filter_path/2, make_sort/2, make_filter/2]).
 
 -include("nkservice_actor.hrl").
+
 
 
 %% ===================================================================
@@ -35,6 +36,7 @@
 
 
 %% @private
+%% - deep: boolean()
 get_query({aggregation_service_classes, SrvId, Params}, _Opts) ->
     Query = [
         <<"SELECT class, COUNT(class) FROM actors">>,
@@ -43,6 +45,7 @@ get_query({aggregation_service_classes, SrvId, Params}, _Opts) ->
     ],
     {ok, {pgsql, Query, #{}}};
 
+%% - deep: boolean()
 get_query({aggregation_service_types, SrvId, Class, Params}, _Opts) ->
     Query = [
         <<"SELECT actor_type, COUNT(actor_type) FROM actors">>,
@@ -51,17 +54,19 @@ get_query({aggregation_service_types, SrvId, Class, Params}, _Opts) ->
     ],
     {ok, {pgsql, Query, #{}}};
 
+%% - from, size: integer()
+%% - deep: boolean()
 get_query({search_service_linked, SrvId, UID, LinkType, Params}, _Opts) ->
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Query = [
         <<"SELECT uid,link_type FROM links">>,
         <<" WHERE link_target=">>, quote(to_bin(UID)),
-        case to_bin(LinkType) of
-            <<>> ->
+        case LinkType of
+            any ->
                 <<>>;
-            LinkType2 ->
-                [<<" AND link_type=">>, quote(LinkType2)]
+            _ ->
+                [<<" AND link_type=">>, quote(LinkType)]
         end,
         <<" AND ">>, filter_path(SrvId, Params),
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Limit),
@@ -77,10 +82,12 @@ get_query({search_service_linked, SrvId, UID, LinkType, Params}, _Opts) ->
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
+%% - from, size: integer()
+%% - deep: boolean()
 get_query({search_service_fts, SrvId, Field, Word, Params}, _Opts) ->
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
-    Word2 = to_bin(Word),
+    Word2 = nklib_parse:normalize(Word, #{unrecognized=>keep}),
     Last = byte_size(Word2)-1,
     Filter = case Word2 of
         <<Word3:Last/binary, $*>> ->
@@ -92,7 +99,7 @@ get_query({search_service_fts, SrvId, Field, Word, Params}, _Opts) ->
         <<"SELECT uid FROM fts">>,
         <<" WHERE ">>, Filter, <<" AND ">>, filter_path(SrvId, Params),
         case Field of
-            <<>> ->
+            any ->
                 [];
             _ ->
                 [<<" AND fts_field = ">>, quote(Field)]
@@ -107,15 +114,15 @@ get_query({search_service_fts, SrvId, Field, Word, Params}, _Opts) ->
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
-get_query({search_service_actors, SrvId, Params}, _Opts) ->
-    lager:error("NKLOG PARAMS ~p", [Params]),
-    From = maps:get(from, Params, 0),
-    Limit = maps:get(size, Params, 100),
-    Totals = maps:get(totals, Params, true),
-    Filters1 = maps:get(filters, Params, #{}),
-    Filters2 = add_srv_filter(SrvId, Filters1, Params),
-    SQLFilters = make_filters(Filters2),
-    SQLSort = make_sort(maps:get(sort, Params, [])),
+
+%% Params is nkdomain_search:search_spec()
+get_query({search_service_actors, SearchSpec}, _Opts) ->
+    % lager:error("NKLOG PARAMS ~p", [Params]),
+    From = maps:get(from, SearchSpec, 0),
+    Size = maps:get(size, SearchSpec, 100),
+    Totals = maps:get(totals, SearchSpec, true),
+    SQLFilters = make_sql_filters(SearchSpec),
+    SQLSort = make_sql_sort(SearchSpec),
 
     % We could use SELECT COUNT(*) OVER(),src,uid... but it doesn't work if no
     % rows are returned
@@ -134,7 +141,7 @@ get_query({search_service_actors, SrvId, Params}, _Opts) ->
         <<"SELECT uid,srv,class,actor_type,name,vsn,data,metadata FROM actors">>,
         SQLFilters,
         SQLSort,
-        <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Limit),
+        <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
         <<";">>
     ],
     ResultFun = case Totals of
@@ -145,15 +152,13 @@ get_query({search_service_actors, SrvId, Params}, _Opts) ->
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
-get_query({search_service_actors_id, SrvId, Params}, _Opts) ->
+get_query({search_service_actors_id, SearchSpec}, _Opts) ->
     % lager:error("NKLOG PARAMS ~p", [Params]),
-    From = maps:get(from, Params, 0),
-    Limit = maps:get(size, Params, 100),
-    Totals = maps:get(totals, Params, true),
-    Filters1 = maps:get(filters, Params, #{}),
-    Filters2 = add_srv_filter(SrvId, Filters1, Params),
-    SQLFilters = make_filters(Filters2),
-    SQLSort = make_sort(maps:get(sort, Params, [])),
+    From = maps:get(from, SearchSpec, 0),
+    Limit = maps:get(size, SearchSpec, 100),
+    Totals = maps:get(totals, SearchSpec, true),
+    SQLFilters = make_sql_filters(SearchSpec),
+    SQLSort = make_sql_sort(SearchSpec),
     Query = [
         case Totals of
             true ->
@@ -194,12 +199,14 @@ get_query(QueryType, _Opts) ->
 pgsql_actors([{{select, Size}, Rows, _OpMeta}], Meta) ->
     Actors = [
         #actor{
-            uid = UID,
-            srv = nkservice_actor_util:gen_srv_id(SrvId),
-            class = Class,
-            type = Type,
+            id = #actor_id{
+                uid = UID,
+                srv = nkservice_actor_util:gen_srv_id(SrvId),
+                class = Class,
+                type = Type,
+                name = Name
+            },
             vsn = Vsn,
-            name = Name,
             data = nklib_json:decode(Data),
             metadata = nklib_json:decode(MetaData)
         }
@@ -212,12 +219,14 @@ pgsql_actors([{{select, Size}, Rows, _OpMeta}], Meta) ->
 pgsql_totals_actors([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta}], Meta) ->
     Actors = [
         #actor{
-            uid = UID,
-            srv = nkservice_actor_util:gen_srv_id(SrvId),
-            class = Class,
-            type = Type,
+            id = #actor_id{
+                uid = UID,
+                srv = nkservice_actor_util:gen_srv_id(SrvId),
+                class = Class,
+                type = Type,
+                name = Name
+            },
             vsn = Vsn,
-            name = Name,
             data = nklib_json:decode(Data),
             metadata = nklib_json:decode(MetaData)
         }
@@ -262,39 +271,41 @@ pgsql_totals_actors_id([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpM
 %% Filters
 %% ===================================================================
 
-%%core_list_filters(_Filters) ->
-%%    <<>>.
-%%
-%%
-%%core_list_order(_Filters) ->
-%%    <<>>.
+
+%% @private
+make_sql_filters(#{srv:=SrvId}=Params) ->
+    Filters = maps:get(filter, Params, #{}),
+    AndFilters1 = expand_filter(maps:get('and', Filters, []), []),
+    AndFilters2 = make_filter(AndFilters1, []),
+    OrFilters1 = expand_filter(maps:get('or', Filters, []), []),
+    OrFilters2 = make_filter(OrFilters1, []),
+    OrFilters3 = nklib_util:bjoin(OrFilters2, <<" OR ">>),
+    OrFilters4 = case OrFilters3 of
+        <<>> ->
+            [];
+        _ ->
+            [<<$(, OrFilters3/binary, $)>>]
+    end,
+    NotFilters1 = expand_filter(maps:get('not', Filters, []), []),
+    NotFilters2 = make_filter(NotFilters1, []),
+    NotFilters3 = case NotFilters2 of
+        <<>> ->
+            [];
+        _ ->
+            [<<"(NOT ", F/binary, ")">> || F <- NotFilters2]
+    end,
+    PathFilter = list_to_binary(filter_path(SrvId, Params)),
+    FilterList = [PathFilter | AndFilters2 ++ OrFilters4 ++ NotFilters3],
+    Where = nklib_util:bjoin(FilterList, <<" AND ">>),
+    [<<" WHERE ">>, Where].
 
 
 %% @private
-make_filters(Filters) ->
-    AndFilters1 = make_filter(maps:get('and', Filters, []), []),
-    OrFilters1 = make_filter(maps:get('or', Filters, []), []),
-    OrFilters2 = nklib_util:bjoin(OrFilters1, <<" OR ">>),
-    OrFilters3 = case OrFilters2 of
-        <<>> ->
-            [];
-        _ ->
-            [<<$(, OrFilters2/binary, $)>>]
-    end,
-    NotFilters1 = make_filter(maps:get('not', Filters, []), []),
-    NotFilters2 = case NotFilters1 of
-        <<>> ->
-            [];
-        _ ->
-            [<<"(NOT ", F/binary, ")">> || F <- NotFilters1]
-    end,
-    FilterList = AndFilters1 ++ OrFilters3 ++ NotFilters2,
-    case nklib_util:bjoin(FilterList, <<" AND ">>) of
-        <<>> ->
-            [];
-        Filters3 ->
-            [<<" WHERE ">>, Filters3]
-    end.
+expand_filter([], Acc) ->
+    Acc;
+
+expand_filter([#{field:=Field, op:=Op, value:=Value}|Rest], Acc) ->
+    expand_filter(Rest, [{Field, Op, Value}|Acc]).
 
 
 %% @private
@@ -339,7 +350,6 @@ make_filter([{Field, prefix, Val}|Rest], Acc) ->
     ],
     make_filter(Rest, [list_to_binary(Filter)|Acc]);
 
-
 make_filter([{Field, values, ValList}|Rest], Acc) ->
     Values = nklib_util:bjoin([quote(Val) || Val <- ValList], $,),
     {Field2, Type} = get_type(Field),
@@ -358,27 +368,6 @@ make_filter([{Field, Op, Val} | Rest], Acc) ->
     make_filter(Rest, [list_to_binary(Filter) | Acc]).
 
 
-%% @private
-add_srv_filter(SrvId, Filters, #{deep:=true}) ->
-    Path = nkservice_actor_util:make_reversed_srv_id(SrvId),
-    And1 = maps:get('and', Filters, []),
-    And2 = [{<<"path">>, prefix, Path} | And1],
-    Filters#{'and' => And2};
-
-add_srv_filter(SrvId, Filters, _Opts) ->
-    And1 = maps:get('and', Filters, []),
-    And2 = [{<<"srv">>, eq, SrvId} | And1],
-    Filters#{'and' => And2}.
-
-
-%%%% @private
-%%get_op(eq) -> <<" = ">>;
-%%get_op(ne) -> <<" <> ">>;
-%%get_op(lt) -> <<" < ">>;
-%%get_op(lte) -> <<" <= ">>;
-%%get_op(gt) -> <<" > ">>;
-%%get_op(gte) -> <<" >= ">>.
-
 
 %% @private
 get_op(Field, eq, Value) -> [Field, << "=" >>, quote(Value)];
@@ -387,16 +376,6 @@ get_op(Field, lt, Value) -> [Field, <<" < ">>, quote(Value)];
 get_op(Field, lte, Value) -> [Field, <<" <= ">>, quote(Value)];
 get_op(Field, gt, Value) -> [Field, <<" > ">>, quote(Value)];
 get_op(Field, gte, Value) -> [Field, <<" >= ">>, quote(Value)].
-
-
-%%%% @private
-%%get_prefix_value(Val) ->
-%%    case binary:split(to_bin(Val), <<"*">>) of
-%%        [Val2, <<>>] ->
-%%            [<<" LIKE ">>, quote(<<Val2/binary, $%>>)];
-%%        [Val2] ->
-%%            [<<" = ">>, quote(Val2)]
-%%    end.
 
 
 %% @private
@@ -411,9 +390,22 @@ get_field2(Field) -> Field.
 
 
 
+
+
 %% @private
-make_sort(Fields) ->
-    make_sort(Fields, []).
+make_sql_sort(Params) ->
+    Sort = expand_sort(maps:get(sort, Params, []), []),
+    make_sort(Sort, []).
+
+
+%% @private
+expand_sort([], Acc) ->
+    lists:reverse(Acc);
+
+expand_sort([#{field:=Field}=Term|Rest], Acc) ->
+    Order = maps:get(order, Term, asc),
+    expand_sort(Rest, [{Order, Field}|Acc]).
+
 
 
 %% @private
@@ -432,11 +424,8 @@ make_sort([{Order, Field}|Rest], Acc) ->
     make_sort(Rest, [list_to_binary(Item)|Acc]).
 
 
-%%%% @private
-%%make_json_field(Field) ->
-%%    make_json_field(Field, string).
-
-
+%% @private
+%% Extracts a field inside a JSON,  it and casts it to json, string, integer o boolean
 make_json_field(Field, Type) ->
     make_json_field(Field, Type, []).
 
@@ -448,10 +437,10 @@ make_json_field(Field, Type, Acc) ->
             Single;
         [Last] ->
             case Type of
-                string ->
-                    Acc++[$>, $', Last, $'];    % '>' finishes ->>
                 json ->
                     Acc++[$', Last, $'];
+                string ->
+                    Acc++[$>, $', Last, $'];    % '>' finishes ->>
                 integer ->
                     [$(|Acc] ++ [$>, $', Last, $', <<")::INTEGER">>];
                 boolean ->
@@ -465,6 +454,10 @@ make_json_field(Field, Type, Acc) ->
 
 
 %% @private
+filter_path(SrvId, Opts) when is_list(SrvId) ->
+    Terms = [list_to_binary(filter_path(T, Opts)) || T <- SrvId],
+    [$(, nklib_util:bjoin(Terms, <<" OR ">>), $)];
+
 filter_path(SrvId, Opts) ->
     Path = nkservice_actor_util:make_reversed_srv_id(SrvId),
     case Opts of

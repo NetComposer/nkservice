@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([start/0, stop/0]).
 -export([s1/0, s2/0]).
--export([actor_delete/1, actor_link_event/4]).
+-export([actor_srv_delete/1, actor_srv_link_event/4]).
 
 -define(SRV, test).
 -compile(nowarn_unused_function).
@@ -55,9 +55,9 @@ s2() ->
 
 
 
-actor_delete(State) ->
+actor_srv_delete(State) ->
     {ok, State}.
 
-actor_link_event(Link, Opts, Event, State) ->
+actor_srv_link_event(Link, Opts, Event, State) ->
     lager:notice("Link Event ~p ~p ~p", [Link, Opts, Event]),
     {ok, State}.

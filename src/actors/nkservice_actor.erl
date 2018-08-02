@@ -87,23 +87,6 @@
     }.
 
 
--type filter_op() ::
-    eq | ne | lt | lte | gt | gte | values | prefix | exists.
-
-
--type search_opts() ::
-    #{
-        from => pos_integer(),
-        size => pos_integer(),
-        totals => boolean(),
-        deep => boolean(),
-        filters => #{
-            'and' | 'or' | 'not' => [{Field::binary(), Op::filter_op(), term()}]
-        },
-        sort => [{asc|desc, Field::binary()}]
-    }.
-
-
 %% Recognized metadata
 %% -------------------
 %%
@@ -234,13 +217,12 @@ stop(Id, Reason) ->
     nkservice_actor_srv:async_op(Id, {stop, Reason}).
 
 
-%% @doc
+%% @doc Counts classes and objects of each class
 -spec search_classes(nkservice:id(), #{deep=>boolean()}) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 search_classes(SrvId, Opts) ->
-    Deep = maps:get(deep, Opts, true),
-    nkservice_actor_db:aggregation(SrvId, {aggregation_service_classes, SrvId, #{deep=>Deep}}).
+    nkservice_actor_db:aggregation(SrvId, {aggregation_service_classes, SrvId, Opts}).
 
 
 %% @doc
@@ -248,18 +230,17 @@ search_classes(SrvId, Opts) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 search_types(SrvId, Class, Opts) ->
-    Deep = maps:get(deep, Opts, true),
-    nkservice_actor_db:aggregation(SrvId, {aggregation_service_types, SrvId, Class, #{deep=>Deep}}).
+    nkservice_actor_db:aggregation(SrvId, {aggregation_service_types, SrvId, Class, Opts}).
 
 
 %% @doc Gets objects pointing to another
--spec search_linked_to(nkservice:id(), nkservice_actor:id(), nkservice_actor:class(),
+-spec search_linked_to(nkservice:id(), nkservice_actor:id(), binary()|any,
                        #{from=>pos_integer(), size=>pos_integer()}) ->
     {ok, #{UID::binary() => LinkType::binary()}} | {error, term()}.
 
 search_linked_to(SrvId, Id, LinkType, Params) ->
     case nkservice_actor_db:find(Id) of
-        {ok, #actor_id{srv=ActorSrvId, uid=UID}} ->
+        {ok, #actor_id{srv=ActorSrvId, uid=UID}, _} ->
             nkservice_actor_db:search(ActorSrvId, {search_service_linked, SrvId, UID, LinkType, Params});
         {error, Error} ->
             {error, Error}
@@ -267,7 +248,7 @@ search_linked_to(SrvId, Id, LinkType, Params) ->
 
 
 %% @doc Gets objects under a path, sorted by path
--spec search_fts(nkservce:id(), binary(), binary(),
+-spec search_fts(nkservce:id(), binary()|any, binary(),
     #{from=>pos_integer(), size=>pos_integer()}) ->
     {ok, [UID::binary()], Meta::map()} | {error, term()}.
 
@@ -276,16 +257,26 @@ search_fts(SrvId, Field, Word, Opts) ->
 
 
 %% @doc Generic search returning actors
--spec search(nkservice:id(), search_opts()) ->
+-spec search(nkservice:id(), nkservice_actor_search:search_spec()) ->
     {ok, [actor()], Meta::map()} | {error, term()}.
 
-search(SrvId, Opts) ->
-    nkservice_actor_db:search(SrvId, {search_service_actors, SrvId, Opts}).
+search(SrvId, SearchSpec) ->
+    case nkservice_actor_search:parse(SearchSpec#{srv=>SrvId}) of
+        {ok, SearchSpec2} ->
+            nkservice_actor_db:search(SrvId, {search_service_actors, SearchSpec2});
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Generic search returning actors
--spec search_ids(nkservice:id(), search_opts()) ->
+-spec search_ids(nkservice:id(), nkservice_actor_search:search_spec()) ->
     {ok, [#actor_id{}], Meta::map()} | {error, term()}.
 
-search_ids(SrvId, Opts) ->
-    nkservice_actor_db:search(SrvId, {search_service_actors_id, SrvId, Opts}).
+search_ids(SrvId, SearchSpec) ->
+    case nkservice_actor_search:parse(SearchSpec#{srv=>SrvId}) of
+        {ok, SearchSpec2} ->
+            nkservice_actor_db:search(SrvId, {search_service_actors_id, SearchSpec2});
+        {error, Error} ->
+            {error, Error}
+    end.

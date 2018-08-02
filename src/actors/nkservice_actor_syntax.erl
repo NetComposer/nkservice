@@ -51,11 +51,13 @@ parse(ActorMap, Syntax) ->
                 metadata := Meta
             } = ActorMap2,
             Actor = #actor{
-                uid = maps:get(uid, ActorMap2, undefined),
-                srv = Srv,
-                class = Class,
-                type = Type,
-                name = Name,
+                id = #actor_id{
+                    uid = maps:get(uid, ActorMap2, undefined),
+                    srv = Srv,
+                    class = Class,
+                    type = Type,
+                    name = Name
+                },
                 vsn = Vsn,
                 data = Data,
                 metadata = Meta,

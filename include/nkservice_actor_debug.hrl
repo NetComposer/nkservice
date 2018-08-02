@@ -28,16 +28,16 @@
 -define(LLOG(Type, Txt, Args, State),
     lager:Type(
         [
-            {srv_id, State#actor_st.actor_id#actor_id.srv},
-            {uid, State#actor_st.actor_id#actor_id.uid},
-            {class, State#actor_st.actor_id#actor_id.class}
+            {srv_id, State#actor_st.actor#actor.id#actor_id.srv},
+            {uid, State#actor_st.actor#actor.id#actor_id.uid},
+            {class, State#actor_st.actor#actor.id#actor_id.class}
         ],
         "NkSERVICE ~s Actor ~s (~s, ~s) " ++ Txt,
         [
-            State#actor_st.actor_id#actor_id.srv,
-            State#actor_st.actor_id#actor_id.name,
-            State#actor_st.actor_id#actor_id.class,
-            State#actor_st.actor_id#actor_id.uid | Args
+            State#actor_st.actor#actor.id#actor_id.srv,
+            State#actor_st.actor#actor.id#actor_id.name,
+            State#actor_st.actor#actor.id#actor_id.class,
+            State#actor_st.actor#actor.id#actor_id.uid | Args
         ]
     )).
 

@@ -29,11 +29,13 @@
          service_master_handle_call/3, service_master_handle_cast/2,
          service_master_handle_info/2, service_leader_code_change/3,
          service_master_terminate/2]).
--export([actor_activate/2, actor_config/1, actor_init/1, actor_terminate/2, actor_stop/2,
-         actor_get/2, actor_event/2, actor_link_event/4, actor_sync_op/3, actor_async_op/2,
-         actor_save/2, actor_delete/1, actor_link_down/2, actor_enabled/2, actor_next_status_timer/1,
-         actor_alarms/1, actor_heartbeat/1,
-         actor_handle_call/3, actor_handle_cast/2, actor_handle_info/2, actor_conflict_detected/3]).
+-export([actor_create/2, actor_activate/2, actor_event/3, actor_config/1]).
+-export([actor_srv_init/1, actor_srv_terminate/2,
+         actor_srv_stop/2, actor_srv_get/2, actor_srv_event/2, actor_srv_link_event/4,
+         actor_srv_sync_op/3, actor_srv_async_op/2, actor_srv_link_down/2,
+         actor_srv_enabled/2, actor_srv_next_status_timer/1,
+         actor_srv_alarms/1, actor_srv_heartbeat/1,
+         actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/2, actor_db_create/2, actor_db_read/2,
          actor_db_update/2, actor_db_delete/3, actor_db_search/3,
@@ -83,6 +85,9 @@ msg(SrvId, Msg) ->
     {atom(), Fmt::string(), Vals::string()}.
 
 
+msg(actor_deleted)                      -> "Actor has been deleted";
+msg(actor_not_found)                    -> "Actor not found";
+msg({actor_invalid, _})                 -> "Actor is invalid";
 msg(actor_expired)	                -> "Actor has expired";
 msg(actor_has_linked_actors)	    -> "Actor has linked actors";
 msg(actor_is_not_activable)	        -> "Actor is not activable";
@@ -139,6 +144,7 @@ msg(session_stop) 			        -> "Session stop";
 msg(session_timeout) 		        -> "Session timeout";
 msg({syntax_error, Txt})		    -> {"Syntax error: '~s'", [Txt]};
 msg(timeout) 				        -> "Timeout";
+msg(too_many_records)               -> "Too many records";
 msg(ttl_timeout) 			        -> "TTL Timeout";
 msg(unauthorized) 			        -> "Unauthorized";
 msg(uid_not_allowed) 	            -> "UID is not allowed";
@@ -151,6 +157,7 @@ msg({updated_invalid_field, Txt})   -> {"Tried to update invalid field: '~s'", [
 msg(user_not_found)			        -> "User not found";
 msg({user_not_found, User})	        -> {"User not found: '~s'", [User]};
 msg(user_stop) 				        -> "User stop";
+msg(utf8_error)                     -> "UTF8 error";
 msg(_)   		                    -> continue.
 
 
@@ -329,6 +336,16 @@ service_master_terminate(_Reason, _State) ->
 -type actor_st() :: #actor_st{}.
 -type actor_id() :: #actor_id{}.
 
+%% @doc Called from nkdomain_actor_db:create() when an actor is to be created
+%% Can be used to select a different node, etc()
+%% By default we start it at this node
+-spec actor_create(nkservice:actor(), nkservice_actor_srv:start_opts()) ->
+    {ok, pid()} | {error, term()}.
+
+actor_create(Actor, StartOpts) ->
+    nkservice_actor_srv:create(Actor, StartOpts).
+
+
 %% @doc Called from nkdomain_actor_db:load() when an actor has been read and must be activated
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
@@ -347,188 +364,152 @@ actor_config(_ActorId) ->
     #{}.
 
 
+%% @doc Called from nkservice_actor_db when an operation is performed over
+%% non-activated actors
+-spec actor_event(nkservice:id(), created|deleted|updated, #actor{}|#actor_id{}) ->
+    ok | continue.
+
+actor_event(_SrvId, _Event, _Actor) ->
+    ok.
+
+
 %% @doc Called when a new session starts
--spec actor_init(actor_st()) ->
+-spec actor_srv_init(actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_init(State) ->
+actor_srv_init(State) ->
     {ok, State}.
 
 
 %% @doc Called when the session stops
--spec actor_terminate(Reason::term(), actor_st()) ->
+-spec actor_srv_terminate(Reason::term(), actor_st()) ->
     {ok, actor_st()}.
 
-actor_terminate(_Reason, State) ->
+actor_srv_terminate(_Reason, State) ->
     {ok, State}.
 
 
 %% @private
--spec actor_stop(nkservice:msg(), actor_st()) ->
+-spec actor_srv_stop(nkservice:msg(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_stop(_Reason, State) ->
+actor_srv_stop(_Reason, State) ->
     {ok, State}.
 
 
 %%  @doc Called update an actor with status
--spec actor_get(nkservice_actor:actor(), actor_st()) ->
+-spec actor_srv_get(nkservice_actor:actor(), actor_st()) ->
     {ok, nkservice_actor:actor(), actor_st()} | continue().
 
-actor_get(Actor, State) ->
+actor_srv_get(Actor, State) ->
     {ok, Actor, State}.
 
 
 %%  @doc Called to send an event
--spec actor_event(nkdomain_obj:event(), actor_st()) ->
+-spec actor_srv_event(term(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_event(_Event, State) ->
-    % nkservice_actor_util:send_event(Event)
+actor_srv_event(_Event, State) ->
     {ok, State}.
 
 
 %% @doc Called when an event is sent, for each registered process to the session
 %% The events are 'erlang' events (tuples usually)
--spec actor_link_event(nklib:link(), term(), nkservice_actor_srv:event(), actor_st()) ->
+-spec actor_srv_link_event(nklib:link(), term(), nkservice_actor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_link_event(_Link, _LinkData, _Event, State) ->
+actor_srv_link_event(_Link, _LinkData, _Event, State) ->
     {ok, State}.
 
 
 %% @doc
--spec actor_sync_op(term(), {pid(), reference()}, actor_st()) ->
+-spec actor_srv_sync_op(term(), {pid(), reference()}, actor_st()) ->
     {reply, Reply::term(), session} | {reply_and_save, Reply::term(), session} |
     {noreply, actor_st()} | {noreply_and_save, session} |
     {stop, Reason::term(), Reply::term(), actor_st()} |
     {stop, Reason::term(), actor_st()} |
     continue().
 
-actor_sync_op(_Op, _From, _State) ->
+actor_srv_sync_op(_Op, _From, _State) ->
     continue.
 
 
 %% @doc
--spec actor_async_op(term(), actor_st()) ->
+-spec actor_srv_async_op(term(), actor_st()) ->
     {noreply, actor_st()} | {noreply_and_save, session} |
     {stop, Reason::term(), actor_st()} |
     continue().
 
-actor_async_op(_Op, _State) ->
+actor_srv_async_op(_Op, _State) ->
     continue.
 
 
-%% @doc Called to save the object to disk
--spec actor_save(nkservice_actor_srv:save_reason(), actor_st()) ->
-    {ok, Meta::map(), actor_st()} | {error, term(), actor_st()} | continue().
-
-actor_save(Reason, #actor_st{actor=Actor}=ActorSt) ->
-    #actor{srv=SrvId, uid=UID} = Actor,
-    true = is_binary(UID) andalso UID /= <<>>,
-    Fun = case Reason of
-        creation ->
-            actor_db_create;
-        _ ->
-            actor_db_update
-    end,
-    case ?CALL_SRV(SrvId, Fun, [SrvId, Actor]) of
-        {ok, DbMeta} ->
-            {ok, DbMeta, ActorSt};
-        {error, Error} ->
-            {error, Error, ActorSt}
-    end.
-
-
-%% @doc Called to save the remove the object from disk
--spec actor_delete(actor_st()) ->
-    {ok, actor_st()} | {error, term(), actor_st()} | continue().
-
-actor_delete(#actor_st{actor_id=ActorId}=ActorSt) ->
-    #actor_id{srv=SrvId, uid=UID} = ActorId,
-    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
-        {ok, DbMeta} ->
-            {ok, DbMeta, ActorSt};
-        {error, Error} ->
-            {error, Error, ActorSt}
-    end.
-
-
 %% @doc Called when a linked process goes down
--spec actor_link_down(nklib_links:link(), actor_st()) ->
+-spec actor_srv_link_down(nklib_links:link(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_link_down(_Link, State) ->
+actor_srv_link_down(_Link, State) ->
     {ok, State}.
 
 
 %% @doc Called when an object is enabled/disabled
--spec actor_enabled(boolean(), actor_st()) ->
+-spec actor_srv_enabled(boolean(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_enabled(_Enabled, State) ->
+actor_srv_enabled(_Enabled, State) ->
     {ok, State}.
 
 
 %% @doc Called when an object is enabled/disabled
--spec actor_heartbeat(actor_st()) ->
+-spec actor_srv_heartbeat(actor_st()) ->
     {ok, actor_st()} | {error, nkservice_msg:msg(), actor_st()} | continue().
 
-actor_heartbeat(State) ->
+actor_srv_heartbeat(State) ->
     {ok, State}.
 
 
 %% @doc Called when the timer in next_status_time is fired
--spec actor_next_status_timer(actor_st()) ->
+-spec actor_srv_next_status_timer(actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_next_status_timer(State) ->
+actor_srv_next_status_timer(State) ->
     {ok, State}.
 
 
 %% @doc Called when a object with alarms is loaded
--spec actor_alarms(actor_st()) ->
+-spec actor_srv_alarms(actor_st()) ->
     {ok, actor_st()} | {error, term(), actor_st()} | continue().
 
-actor_alarms(State) ->
+actor_srv_alarms(State) ->
     {ok, State}.
 
 
 %% @doc
--spec actor_handle_call(term(), {pid(), term()}, actor_st()) ->
+-spec actor_srv_handle_call(term(), {pid(), term()}, actor_st()) ->
     {reply, term(), actor_st()} | {noreply, actor_st()} |
     {stop, term(), term(), actor_st()} | {stop, term(), actor_st()} | continue().
 
-actor_handle_call(Msg, _From, State) ->
+actor_srv_handle_call(Msg, _From, State) ->
     lager:error("Module nkdomain_obj received unexpected call: ~p", [Msg]),
     {noreply, State}.
 
 
 %% @doc
--spec actor_handle_cast(term(), actor_st()) ->
+-spec actor_srv_handle_cast(term(), actor_st()) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
-actor_handle_cast(Msg, State) ->
+actor_srv_handle_cast(Msg, State) ->
     lager:error("Module nkdomain_obj received unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 
 %% @doc
--spec actor_handle_info(term(), actor_st()) ->
+-spec actor_srv_handle_info(term(), actor_st()) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
-actor_handle_info(Msg, State) ->
+actor_srv_handle_info(Msg, State) ->
     lager:warning("Module nkdomain_obj received unexpected info: ~p", [Msg]),
     {noreply, State}.
-
-
-%% @doc
--spec actor_conflict_detected(actor_id(), Winner::pid(), actor_st()) ->
-    {ok, actor_st()} | continue().
-
-actor_conflict_detected(_ActorId, _Pid, _State) ->
-    erlang:error(conflict_detected).
-
 
 
 %% ===================================================================
@@ -603,7 +584,7 @@ actor_db_update(_SrvId, _Actor) ->
 %% @doc Called to delete the actor to disk
 %% The implementation must call nkservice_actor_srv:actor_deleted/1 before deletion
 -spec actor_db_delete(nkservice:id(), nkservice_actor:uid(), nkservice_actor_db:delete_opts()) ->
-    {ok, Meta::map()} | {error, term()} | continue().
+    {ok, [#actor_id{}], Meta::map()} | {error, term()} | continue().
 
 actor_db_delete(_SrvId, _UID, _Opts) ->
     {error, not_implemented}.
@@ -676,53 +657,3 @@ nkservice_make_srv_id(_SrvId, _UID) ->
     {error, not_implemented}.
 
 
-
-
-%% ===================================================================
-%% Service API
-%% ===================================================================
-
-%%-type api_id() :: term().
-%%
-%%
-%%%% @doc Called to get the syntax for an external API command
-%%-spec service_api_syntax(api_id(), nklib_syntax:syntax(), req()) ->
-%%    {nklib_syntax:syntax(), req()}.
-%%
-%%service_api_syntax(_Id, SyntaxAcc, Req) ->
-%%    {SyntaxAcc, Req}.
-%%
-%%
-%%%% @doc Called to authorize process a new API command
-%%-spec service_api_allow(api_id(), req()) ->
-%%    boolean() | {true, req(), user_actor_st()}.
-%%
-%%service_api_allow(_Id, _Req) ->
-%%    false.
-%%
-%%
-%%%% @doc Called to process a new authorized API command
-%%%% For slow requests, reply ack, and the ServiceModule:reply/2.
-%%-spec service_api_cmd(api_id(), req()) ->
-%%    {ok, Reply::map()} |
-%%    {ok, Reply::map(), req()} |
-%%    ack |
-%%    {ack, pid()} |
-%%    {ack, pid()|undefined, req()} |
-%%    {error, nkservice:msg()}  |
-%%    {error, nkservice:msg(), req()}.
-%%
-%%service_api_cmd(_Id, _Req) ->
-%%    {error, not_implemented}.
-%%
-%%
-%%%% @doc Called when the service received an event it has subscribed to
-%%%% By default, we forward it to the client
-%%-spec service_api_event(api_id(), req()) ->
-%%    {ok, req()} |  {forward, req()}.
-%%
-%%service_api_event(_Id, Req) ->
-%%    {forward, Req}.
-%%
-%%
-%%

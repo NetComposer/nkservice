@@ -29,7 +29,7 @@
 -include_lib("nkevent/include/nkevent.hrl").
 
 -export([check_create_fields/1, update_meta/4, check_links/1]).
--export([is_path/1, actor_id_to_path/1, actor_to_actor_id/1]).
+-export([is_path/1, actor_id_to_path/1]).
 -export([make_reversed_srv_id/1, gen_srv_id/1]).
 -export([make_plural/1, normalized_name/1]).
 
@@ -38,12 +38,17 @@
 %% ===================================================================
 
 
-%% @doc Creates a new actor from a actor_map()
-check_create_fields(#actor{uid=UID}) when UID /= undefined ->
+%% @doc Prepares an actor for creation
+%% - uuid is added
+%% - name is added (if not present)
+%% - metas creationTime, updateTime, generation and resourceVersion are added
+%% - links are checked to exist
+check_create_fields(#actor{id=#actor_id{uid=UID}}) when UID /= undefined ->
     {error, uid_not_allowed};
 
 check_create_fields(Actor) ->
-    #actor{type=Type, name=Name1, data=Data, metadata=Meta1} = Actor,
+    #actor{id=ActorId, data=Data, metadata=Meta1} = Actor,
+    #actor_id{type=Type, name=Name1} = ActorId,
     UID = make_uid(Type),
     %% Add Name if not present
     Name2 = case normalized_name(Name1) of
@@ -58,8 +63,7 @@ check_create_fields(Actor) ->
     case check_links(Meta3) of
         {ok, Meta4} ->
             Actor2 = Actor#actor{
-                uid = UID,
-                name = Name2,
+                id = ActorId#actor_id{uid = UID, name = Name2},
                 metadata = Meta4
             },
             {ok, Actor2};
@@ -134,24 +138,6 @@ is_path(Path) ->
 %% @doc
 actor_id_to_path(#actor_id{srv=SrvId, class=Class, type=Type, name=Name}) ->
     list_to_binary([$/, to_bin(SrvId), $/, Class, $/, Type, $/, Name]).
-
-
-%% @doc
-actor_to_actor_id(Actor) ->
-    #actor{
-        uid = UID,
-        srv = SrvId,
-        class = Class,
-        type = Type,
-        name = Name
-    } = Actor,
-    #actor_id{
-        uid = UID,
-        srv = SrvId,
-        class = Class,
-        type = Type,
-        name = Name
-    }.
 
 
 %% @private

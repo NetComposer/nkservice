@@ -67,7 +67,7 @@ actor_db_read(SrvId, Id) ->
 actor_db_create(SrvId, Actors) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
-            nkservice_pgsql_actors:save2(SrvId, PackageId, create, Actors);
+            nkservice_pgsql_actors:save(SrvId, PackageId, create, Actors);
         false ->
             continue
     end.
@@ -76,7 +76,7 @@ actor_db_create(SrvId, Actors) ->
 actor_db_update(SrvId, Actors) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
-            nkservice_pgsql_actors:save2(SrvId, PackageId, update, Actors);
+            nkservice_pgsql_actors:save(SrvId, PackageId, update, Actors);
         false ->
             continue
     end.
@@ -85,7 +85,7 @@ actor_db_update(SrvId, Actors) ->
 actor_db_delete(SrvId, UIDs, Opts) ->
     case get_package_id(SrvId) of
         {true, PackageId} ->
-            nkservice_pgsql_actors:delete2(SrvId, PackageId, UIDs, Opts);
+            nkservice_pgsql_actors:delete(SrvId, PackageId, UIDs, Opts);
         false ->
             continue
     end.

@@ -10,19 +10,6 @@
 %% Records
 %% ===================================================================
 
--record(actor, {
-    srv :: nkservice:id(),                    %% Service where it is loaded
-    class :: nkservice_actor:class(),         %% Mandatory
-    type :: nkservice_actor:type(),           %% Mandatory
-    name :: nkservice_actor:name(),           %% Generated if not included
-    uid :: nkservice_actor:uid() | undefined, %%
-    vsn :: nkservice_actor:vsn(),             %% DB version
-    data = #{} :: nkservice_actor:data(),
-    metadata = #{} :: nkservice_actor:metadata(),
-    status :: nkservice_actor:status() | undefined
-}).
-
-
 -record(actor_id, {
     srv :: nkservice:id(),
     class :: nkservice_actor:class(),
@@ -33,10 +20,19 @@
 }).
 
 
+-record(actor, {
+    id :: #actor_id{},
+    vsn :: nkservice_actor:vsn(),             %% DB version
+    data = #{} :: nkservice_actor:data(),
+    metadata = #{} :: nkservice_actor:metadata(),
+    status :: nkservice_actor:status() | undefined
+}).
+
+
+
 -record(actor_st, {
-    actor_id :: #actor_id{},
-    config :: nkservice_actor_srv:config(),
     actor :: #actor{},
+    config :: nkservice_actor_srv:config(),
     leader_pid :: pid() | undefined,
     is_dirty2 :: true | false | deleted,
     save_timer :: reference(),

@@ -23,11 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/1, find/2, is_activated/1, read/1, read/2, activate/1, activate/2]).
--export([create/2, delete/1, delete/2]).
+-export([create/2, delete/1, delete/2, update/1, update/2]).
 -export([search/2, search/3, aggregation/2, aggregation/3]).
 -export([db_read/2]).
 -export([check_service/4]).
-
 %%-export_type([search_obj/0, search_objs_opts/0]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -49,7 +48,7 @@
     db_srv => atom(),               % Service to use for database access
     ttl => integer(),               % For loading, changes default
     activate => boolean(),          % Active object on creation, read
-    activate_srv => atom(),         % Service fto call actor_activate
+    activate_srv => atom(),         % Service fto call actor_create and actor_activate
     cascade => boolean(),           % For deletes, hard deletes, deletes all linked objects
     force => boolean()              % For hard delete, deletes even if linked objects
 }.
@@ -72,6 +71,7 @@
         updated => nklib_date:epoch(secs),
         pid => pid()
     }.
+
 
 
 %% ===================================================================
@@ -198,26 +198,25 @@ activate(Id, Opts) ->
                 {true, ActorId2} ->
                     {ok, ActorId2, #{}};
                 _ ->
-                    case db_read(ActorId, Opts) of
-                        {ok, Actor, Meta2} ->
-                            SrvId = maps:get(activate_srv, Opts, ActorSrvId),
-                            case is_pid(whereis(SrvId)) of
-                                true ->
+                    SrvId = maps:get(activate_srv, Opts, ActorSrvId),
+                    case is_pid(whereis(SrvId)) of
+                        true ->
+                            case db_read(ActorId, Opts#{db_srv=>SrvId}) of
+                                {ok, #actor{id=ActorId2}=Actor2, Meta2} ->
                                     case
-                                        ?CALL_SRV(SrvId, actor_activate, [Actor, Opts])
+                                        ?CALL_SRV(SrvId, actor_activate, [Actor2, Opts])
                                     of
                                         {ok, Pid} ->
-                                            ActorId2 = nkservice_actor_util:actor_to_actor_id(Actor),
                                             {ok, ActorId2#actor_id{pid=Pid}, Meta2};
                                         {error, Error} ->
                                             {error, Error}
                                     end;
-                                false ->
-                                    % ActorSrvId must be running to activate Actor
-                                    {error, {service_not_available, SrvId}}
+                                {error, Error} ->
+                                    {error, Error}
                             end;
-                        {error, Error} ->
-                            {error, Error}
+                        false ->
+                            % ActorSrvId must be running to activate Actor
+                            {error, {service_not_available, SrvId}}
                     end
             end;
         {error, Error} ->
@@ -229,18 +228,19 @@ activate(Id, Opts) ->
 %% It will activate the object, unless indicated
 create(Actor, Opts) ->
     case nkservice_actor_util:check_create_fields(Actor) of
-        {ok, #actor{srv=ActorSrvId}=Actor2} ->
-            ActorId = nkservice_actor_util:actor_to_actor_id(Actor2),
+        {ok, #actor{id=#actor_id{srv=ActorSrvId}}=Actor2} ->
             case maps:get(activate, Opts, true) of
                 true ->
-                    % Do we still need to load the object first, now that we
-                    % have a consistent database?
-                    case ?CALL_SRV(ActorSrvId, actor_activate, [Actor2, Opts#{is_new=>true}]) of
+                    % If we use the activate option, the object is first
+                    % registered with leader, so you cannot have two with same
+                    % name even on non-relational databases
+                    SrvId = maps:get(activate_srv, Opts, ActorSrvId),
+                    % The process will send the 'create' event in-server
+                    case ?CALL_SRV(SrvId, actor_create, [Actor2, Opts]) of
                         {ok, Pid} ->
-                            ActorId2 = ActorId#actor_id{pid=Pid},
                             case nkservice_actor_srv:sync_op(Pid, get_actor) of
                                 {ok, Actor3} ->
-                                    {ok, ActorId2, Actor3, #{}};
+                                    {ok, Actor3, #{}};
                                 {error, Error} ->
                                     {error, Error}
                             end;
@@ -250,15 +250,50 @@ create(Actor, Opts) ->
                             {error, Error}
                     end;
                 false ->
-                    case ?CALL_SRV(ActorSrvId, actor_db_create, [ActorSrvId, Actor2]) of
+                    % Non recommended for non-relational databases, if name is not
+                    % randomly generated
+                    SrvId = maps:get(db_srv, Opts, ActorSrvId),
+                    case ?CALL_SRV(SrvId, actor_db_create, [ActorSrvId, Actor2]) of
                         {ok, Meta} ->
-                            {ok, ActorId, Actor2, Meta};
+                            % Use the alternative method for sending the event
+                            ?CALL_SRV(SrvId, actor_event, [SrvId, created, Actor2]),
+                            {ok, Actor2, Meta};
                         {error, Error} ->
                             {error, Error}
                     end
             end;
         {error, Error} ->
             {error, Error}
+    end.
+
+
+%% @doc Updates an actor
+%% It will activate the object, unless indicated
+update(Actor) ->
+    update(Actor, #{}).
+
+
+%% @doc Updates an actor
+%% It will activate the object, unless indicated
+update(Actor, Opts) ->
+    case maps:get(activate, Opts, true) of
+        true ->
+            case activate(Actor, Opts) of
+                {ok, #actor_id{pid=Pid}, _} ->
+                    case nkservice_actor_srv:sync_op(Pid, {update, Actor}) of
+                        ok ->
+                            {ok, Actor2} = nkservice_actor_srv:sync_op(Pid, get_actor),
+                            {ok, Actor2, #{}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                {error, Error} ->
+                    {error, Error}
+            end;
+        false ->
+            % TODO: perform the manual update?
+            % ?CALL_SRV(SrvId, actor_event, [SrvId, updated, Actor2]),
+            {error, update_not_implemented}
     end.
 
 
@@ -274,7 +309,7 @@ delete(Id) ->
 %% Uses options srv_db, cascade
 
 -spec delete(nkservice_actor:id(), opts()) ->
-    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
+    {ok, [#actor_id{}], map()} | {error, actor_not_found|term()}.
 
 delete(Id, Opts) ->
     case find(Id, Opts) of
@@ -283,17 +318,29 @@ delete(Id, Opts) ->
                 false when is_pid(Pid) ->
                     case nkservice_actor_srv:sync_op(Pid, delete) of
                         ok ->
+                            % The object is loaded, and it will perform the delete
+                            % itself, including sending the event (a full event)
+                            % It will stop, and when the backend calls raw_stop/2
+                            % the actor would not be activated, unless it is
+                            % reactivated in the middle, and would stop without saving
                             {ok, ActorId, #{}};
                         {error, Error} ->
                             {error, Error}
                     end;
                 Cascade ->
+                    % The actor is not activated or we want cascade deletion
                     SrvId = maps:get(db_srv, Opts, ActorSrvId),
                     Opts2 = #{cascade => Cascade},
-                    % Implementation must call nkservice_actor_srv:actor_deleted/1
+                    % Implementation must call nkservice_actor_srv:raw_stop/2
                     case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
-                        {ok, DeleteMeta} ->
-                            {ok, ActorId, DeleteMeta};
+                        {ok, ActorIds, DeleteMeta} ->
+                            % In this case, we must send the deleted events
+                            lists:foreach(
+                                fun(AId) ->
+                                    ?CALL_SRV(SrvId, actor_event, [SrvId, deleted, AId])
+                                end,
+                                ActorIds),
+                            {ok, ActorIds, DeleteMeta};
                         {error, Error} ->
                             {error, Error}
                     end
@@ -408,6 +455,9 @@ check_service_update(SrvId, ActorSrvId, Cluster) ->
 id_to_actor_id(#actor_id{}=ActorId) ->
     {ok, ActorId};
 
+id_to_actor_id(#actor{id=ActorId}) ->
+    {ok, ActorId};
+
 id_to_actor_id(Id) ->
     case nkservice_actor_util:is_path(Id) of
         {true, ActorId} ->
@@ -433,16 +483,13 @@ id_to_actor_id(Id) ->
     end.
 
 
-
-
-
 %% @private
 db_read(Id, Opts) ->
     case id_to_actor_id(Id) of
         {ok, #actor_id{srv=ActorSrvId} = ActorId} ->
             SrvId = maps:get(db_srv, Opts, ActorSrvId),
             case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId]) of
-                {ok, #actor{srv=ActorSrvId, metadata=Meta}=Actor, DbMeta} ->
+                {ok, #actor{id=#actor_id{srv=ActorSrvId}, metadata=Meta}=Actor, DbMeta} ->
                     case check_actor(ActorSrvId, Meta, Actor, Opts) of
                         ok ->
                             {ok, Actor, DbMeta};
