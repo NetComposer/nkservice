@@ -18,48 +18,26 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc
--module(nkservice_webserver_protocol).
+%% @doc NkDomain main module
+-module(nkservice_graphql_execute).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([transports/1, default_port/1]).
--export([http_init/4]).
+-export([execute/4]).
 
+%-include("nkdomain.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
-
-
-%% ===================================================================
-%% Types
-%% ===================================================================
-
-
+-include_lib("nkservice/include/nkservice_actor.hrl").
 
 %% ===================================================================
-%% Public
+%% GraphQL Object callback
 %% ===================================================================
 
-%% Default options for resolve
-transports(_) ->
-    [http, https].
 
-
-%% Default options for resolve
-default_port(http) -> 80;
-default_port(https) -> 443.
-
-
-%% For HTTP-based protocol, function http_init is expected
-%% See nkpacket_protocol
-
-http_init([], _Req, _Env, NkPort) ->
-    {ok, #{index_file:=Index}} = nkpacket:get_user_state(NkPort),
-    {redirect, Index};
-
-http_init([<<>>], Req, Env, NkPort) ->
-    http_init([], Req, Env, NkPort);
-
-http_init(_Paths, _Req, _Env, NkPort) ->
-    {ok, {nkservice_webserver, _SrvId, _Id}} = nkpacket:get_class(NkPort),
-    {ok, #{file_path:=Path}} = nkpacket:get_user_state(NkPort),
-    {cowboy_static, {dir, Path}}.
+%% @doc Called from GraphQL to extract fields on any type
+execute(Ctx, Obj, Field, Args) ->
+    #{nkmeta:=#{srv:=SrvId}} = Ctx,
+    % lager:notice("NKLOG GraphQL Obj Execute: ~p ~p", [Field, Obj]),
+    Res = ?CALL_SRV(SrvId, nkservice_graphql_execute, [SrvId, Field, Obj, Args]),
+    % lager:warning("NKLOG GraphQL Obj Execute: ~p", [Res]),
+    Res.
 

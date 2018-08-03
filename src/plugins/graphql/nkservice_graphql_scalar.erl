@@ -18,10 +18,27 @@
 %%
 %% -------------------------------------------------------------------
 
--module(nkservice_rest).
+%% @doc
+-module(nkservice_graphql_scalar).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+-export([input/2, output/2]).
 
-%% ===================================================================
-%% Types
-%% ===================================================================
+%% @doc
+%%input(<<"UnixTime">>, Input) ->
+%%    case is_integer(Input) andalso Input > 0 of
+%%        true ->
+%%            {ok, Input};
+%%        false ->
+%%            {error, bad_unixtime}
+%%    end;
 
+input(_Type, Val) ->
+    %lager:error("In Val: ~p", [Val]),
+    {ok, Val}.
+
+
+%% @doc
+output(_Type, Val) ->
+    %
+    % lager:error("Out Val: ~p", [Val]),
+    {ok, Val}.

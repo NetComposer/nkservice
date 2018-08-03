@@ -18,7 +18,8 @@
         yamerl,
         jose,
         otter,
-        pgsql
+        pgsql,
+        graphql
     ]},
     {env, [
     ]}
