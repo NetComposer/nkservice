@@ -36,7 +36,7 @@
 -module(nkservice_graphql).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([load_schema/1, request/3, make_error/2]).
--export_type([object/0]).
+-export_type([object/0, error/0]).
 
 % -include("nkdomain.hrl").
 
@@ -53,6 +53,10 @@
     term().
 
 
+-type error() ::
+    #{reason=>binary(), message=>binary()} | nkservice:msg().
+
+
 %% ===================================================================
 %% API
 %% ===================================================================
@@ -64,12 +68,12 @@ load_schema(SrvId) ->
     ok = graphql_schema:reset(),
     Mapping = mapping_rules(),
     Schema = nkservice_graphql_schema:make_schema(SrvId),
-    %% io:format("Schema: ~s\n", [Schema]),
+    % io:format("Schema: ~s\n", [Schema]),
+    LogPath = nkservice_app:get(logPath),
+    file:write_file(filename:join(LogPath, "schema.txt"), Schema),
     ok = graphql:load_schema(Mapping, Schema),
     ok = setup_root(),
     ok = graphql:validate_schema(),
-    LogPath = nkservice_app:get(logPath),
-    file:write_file(filename:join(LogPath, "schema.txt"), Schema),
     ok.
 
 
@@ -239,13 +243,17 @@ operation_name([]) ->
     undefined.
 
 
+make_error(SrvId, Error) ->
+    lager:warning("NKLOG GraphQL error: ~p", [Error]),
+    do_make_error(SrvId, Error).
+
+
 %% @private
-make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
+do_make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
     Path2 = list_to_binary([<<" (">>, nklib_util:bjoin(Path, $.), <<" )">>]),
     case Key of
-%%        {resolver_error, {ErrReason, ErrMsg}} when is_binary(ErrMsg) ->
-%%            % This happens when we return {error, {A, B}}
-%%            {ErrReason, <<ErrMsg/binary, Path2/binary>>};
+        {resolver_error, #{reason:=ErrReason, message:=ErrMsg}} ->
+            {ErrReason, <<ErrMsg/binary, Path2/binary>>};
         {resolver_error, Error} ->
             case nkservice_msg:is_msg(SrvId, Error) of
                 {true, ErrReason, ErrMsg} ->
@@ -256,6 +264,13 @@ make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
         {resolver_crash, ErrReason} ->
             ?LLOG(warning, "resolver crash: ~p", [ErrReason]),
             {<<"internal_error">>, <<Msg/binary, Path2/binary>>};
+        {unknown_argument, Arg} ->
+            {<<"unknown_argument">>, <<"Unknown argument '", Arg/binary, "'", Path2/binary>>};
+
+
+        {excess_fields_in_object, Map} ->
+            {<<"excess_fields_in_object">>, nklib_json:encode(Map)};
+
         ErrReason when is_atom(ErrReason) ->
             % Happens for unknown_field, ...
             {to_bin(ErrReason), <<Msg/binary, Path2/binary>>};
@@ -264,7 +279,7 @@ make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
             {Other, <<Msg/binary, Path2/binary>>}
     end;
 
-make_error(SrvId, {resolver_error, Error}) ->
+do_make_error(SrvId, {resolver_error, Error}) ->
     case nkservice_msg:is_msg(SrvId, Error) of
         {true, ErrReason, ErrMsg} ->
             {ErrReason, ErrMsg};
@@ -272,12 +287,12 @@ make_error(SrvId, {resolver_error, Error}) ->
             {to_bin(Error), <<>>}
     end;
 
-make_error(_SrvId, {parser_error, {Line, graphql_parser, Pos}}) ->
+do_make_error(_SrvId, {parser_error, {Line, graphql_parser, Pos}}) ->
     {<<"parser_error">>, list_to_binary([to_bin(Line), <<": ">>, Pos])};
 
-make_error(_SrvId, Error) ->
+do_make_error(_SrvId, Error) ->
     lager:error("NKLOG Unexpected GRAPHQL Error2 ~p", [Error]),
-    {Error, <<>>}.
+    {to_bin(Error), <<>>}.
 
 
 

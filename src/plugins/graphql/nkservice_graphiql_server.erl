@@ -45,6 +45,9 @@ http(<<"GET">>, [<<"assets">>, Name], Req) ->
     {ok, File} = file:read_file(Path),
     {http, 200, content_type(Path), File, Req};
 
+http(<<"GET">>, _, Req) ->
+    {http, 404, [], <<>>, Req};
+
 http(<<"POST">>, [], #{srv:=SrvId}=Req) ->
     NkMeta = #{
         start => nklib_util:m_timestamp(),

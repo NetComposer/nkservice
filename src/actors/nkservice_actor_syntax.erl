@@ -114,8 +114,8 @@ meta_syntax() ->
 
 
 %% @private
-syntax_parse_fun(Key, Map) when is_map(Map) ->
-    List = [{to_bin(K), make_value(Key, V)} || {K, V} <- maps:to_list(Map)],
+syntax_parse_fun(_Key, Map) when is_map(Map) ->
+    List = [{to_bin(K), to_bin(V)} || {K, V} <- maps:to_list(Map)],
     {ok, maps:from_list(List)};
 
 syntax_parse_fun(_Key, _Val) ->
@@ -123,23 +123,20 @@ syntax_parse_fun(_Key, _Val) ->
 
 
 %% @private
-make_value(<<"labels">>, Val) when is_binary(Val) -> Val;
-make_value(<<"labels">>, Val) when is_integer(Val) -> Val;
-make_value(<<"labels">>, Val) when is_boolean(Val) -> Val;
-make_value(<<"labels">>, Val) -> to_bin(Val);
-make_value(<<"annotations">>, Val) when is_binary(Val) -> Val;
-make_value(<<"annotations">>, Val) when is_integer(Val) -> Val;
-make_value(<<"annotations">>, Val) when is_boolean(Val) -> Val;
-make_value(<<"annotations">>, Val) -> to_bin(Val);
-make_value(<<"links">>, Val) -> to_bin(Val);
-make_value(<<"fts">>, Val) when is_binary(Val) -> normalize_multi(Val);
-make_value(<<"fts">>, Val) when is_integer(Val) -> make_value(<<"fts">>, to_bin(Val));
-make_value(<<"fts">>, Val) when is_list(Val) -> Val.
-
-
-%% @doc
-normalize_multi(Text) ->
-    nklib_parse:normalize_words(Text, #{unrecognized=>keep}).
+%%make_value(<<"labels">>, Val) when is_binary(Val) -> Val;
+%%make_value(<<"labels">>, Val) when is_integer(Val) -> Val;
+%%make_value(<<"labels">>, Val) when is_boolean(Val) -> Val;
+%%make_value(<<"labels">>, Val) -> to_bin(Val);
+%%make_value(<<"annotations">>, Val) when is_binary(Val) -> Val;
+%%make_value(<<"annotations">>, Val) when is_integer(Val) -> Val;
+%%make_value(<<"annotations">>, Val) when is_boolean(Val) -> Val;
+%%make_value(<<"annotations">>, Val) -> to_bin(Val);
+%%make_value(<<"links">>, Val) -> to_bin(Val);
+%%% Saver must normalize, calling nkservice_actor_util:fts_normalize_multi/1
+%%make_value(<<"fts">>, Val) -> to_bin(Val).
+%%%%make_value(<<"fts">>, Val) when is_binary(Val) -> normalize_multi(Val);
+%%%%make_value(<<"fts">>, Val) when is_integer(Val) -> make_value(<<"fts">>, to_bin(Val));
+%%%%make_value(<<"fts">>, Val) when is_list(Val) -> Val.
 
 
 %% @private

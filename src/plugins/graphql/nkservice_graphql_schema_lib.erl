@@ -22,12 +22,12 @@
 
 -module(nkservice_graphql_schema_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([make_schema/1, all_actor_types/1]).
+-export([make_schema/1, all_actor_types/1, all_actor_modules/1]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nkservice/include/nkservice_actor.hrl").
 
-%-compile([export_all, nowarn_export_all]).
+-compile([export_all, nowarn_export_all]).
 %% ===================================================================
 %% API
 %% ===================================================================
@@ -70,15 +70,15 @@ make_schema(SrvId, types) ->
                     parse_fields(maps:get(fields, Data, #{})), "}\n\n"
                 ];
             actor ->
+                % For this type, inputs will also be generated on make_schema(SrvId, inputs)
                 Fields1 = maps:get(fields, Data, #{}),
                 Fields2 = add_type_connections(SrvId, Name, Fields1),
                 [
                     comment(Data#{no_margin=>true}),
                     "type ", to_bin(Name), " implements Node, Actor {\n",
-                    %parse_fields(core_actor_fields(SrvId)), "\n",
                     parse_fields(Fields2), "}\n\n",
                     "type ", to_bin(Name), "SearchResult {\n",
-                    parse_fields(#{actors=>{list_no_null, Name}, totalCount=>{no_null, int}}),
+                    parse_fields(#{actors=>{list_no_null, Name}, totalCount=>{no_null, integer}}),
                     "}\n\n"
                 ];
             connection ->
@@ -87,7 +87,7 @@ make_schema(SrvId, types) ->
                     "type ", Name2, "Connection {\n",
                     parse_fields(#{
                          actors => {list, Name2},
-                         totalCount => int
+                         totalCount => integer
                     }), "}\n\n"
                 ]
         end
@@ -97,12 +97,54 @@ make_schema(SrvId, types) ->
 make_schema(SrvId, inputs) ->
     [
         [
-            comment(Data#{no_margin=>true}),
-            "input ",to_bin(Name), " {\n",
-            parse_fields(Fields),
-            "}\n\n"
+            [
+                comment(Data#{no_margin=>true}),
+                "input ",to_bin(Name), " {\n",
+                parse_fields(Fields),
+                "}\n\n"
+            ]
+            || {Name, #{fields:=Fields}=Data} <- get_schema(SrvId, inputs)
+        ],
+        [
+            case maps:get(class, Data, none) of
+                actor ->
+                    FilterFieldsName = <<(to_bin(Name))/binary, "FilterFields">>,
+                    FilterFields = maps:get(filter_fields, Data),
+                    QueryFilterName = <<(to_bin(Name))/binary, "FilterSpec">>,
+                    QueryFilterFields = #{
+                        'and' => {list, FilterFieldsName},
+                        'or' => {list, FilterFieldsName},
+                        'not' => {list, FilterFieldsName}
+                    },
+                    QuerySortName = <<(to_bin(Name))/binary, "SortFields">>,
+                    SortFields = maps:get(sort_fields, Data),
+                    %% Adds:
+                    %% input NameFilterFields {
+                    %%   ...
+                    %% }
+                    %% input NameQueryFilter {
+                    %%   and : [NameFilterFields]
+                    %%   not : [NameFilterFields]
+                    %%   or : [NameFilterFields]
+                    %% }
+                    %%
+                    %% input NameQuerySort {
+                    %%  ...
+                    %% }
+                    [
+                        "input ", FilterFieldsName, " {\n",
+                        parse_fields(FilterFields), "}\n\n",
+                        "input ", QueryFilterName, " {\n",
+                        parse_fields(QueryFilterFields), "}\n\n",
+                        "input ", QuerySortName, " {\n",
+                        parse_fields(SortFields), "}\n\n"
+                    ];
+                _ ->
+                    []
+            end
+            || {Name, Data} <- get_schema(SrvId, types)
+
         ]
-        || {Name, #{fields:=Fields}=Data} <- get_schema(SrvId, inputs)
     ];
 
 make_schema(SrvId, interfaces) ->
@@ -156,13 +198,17 @@ make_schema(SrvId, mutations) ->
 
 %% @private
 all_actor_types(SrvId) ->
-    Modules = all_modules(SrvId),
-    [Mod:actor_type() || Mod<-Modules].
+    nkservice_graphql_plugin:get_actor_types(SrvId).
 
 
 %% @private
-all_modules(SrvId) ->
-    ?CALL_SRV(SrvId, nkservice_graphql_all_modules, [[]]).
+all_actor_modules(SrvId) ->
+    lists:map(
+        fun(Type) ->
+            #{module:=Module} = nkservice_graphql_plugin:get_actor_config(SrvId, Type),
+            Module
+        end,
+        all_actor_types(SrvId)).
 
 
 
@@ -178,7 +224,7 @@ get_schema(SrvId, SchemaType) ->
     Map = lists:foldl(
         fun(Mod, Acc) -> maps:merge(Acc, Mod:schema(SchemaType)) end,
         CoreSchema,
-        all_modules(SrvId)),
+        all_actor_modules(SrvId)),
     maps:to_list(Map).
 
 
@@ -193,7 +239,7 @@ add_type_connections(SrvId, ActorType, Fields) ->
     lists:foldl(
         fun(Mod, Acc) -> maps:merge(Acc, Mod:connections(ActorType)) end,
         Fields,
-        all_modules(SrvId)).
+        all_actor_modules(SrvId)).
 
 
 %%%% @private
@@ -250,12 +296,12 @@ parse_fields([{Field, Value}|Rest], Acc) ->
 
 
 %% @private
-value(id)      -> <<"ID">>;
-value(int)     -> <<"Int">>;
-value(string)  -> <<"String">>;
-value(actor)  -> <<"Actor">>;
-value(boolean) -> <<"Boolean">>;
-value(Other)   -> to_bin(Other).
+value(id)       -> <<"ID">>;
+value(integer)  -> <<"Int">>;
+value(string)   -> <<"String">>;
+value(actor)    -> <<"Actor">>;
+value(boolean)  -> <<"Boolean">>;
+value(Other)    -> to_bin(Other).
 
 
 %% @private

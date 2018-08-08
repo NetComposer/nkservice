@@ -37,7 +37,7 @@
 
 %% @private
 %% - deep: boolean()
-get_query({aggregation_service_classes, SrvId, Params}, _Opts) ->
+get_query({service_aggregation_classes, SrvId, Params}, _Opts) ->
     Query = [
         <<"SELECT class, COUNT(class) FROM actors">>,
         <<" WHERE ">>, filter_path(SrvId, Params),
@@ -46,7 +46,7 @@ get_query({aggregation_service_classes, SrvId, Params}, _Opts) ->
     {ok, {pgsql, Query, #{}}};
 
 %% - deep: boolean()
-get_query({aggregation_service_types, SrvId, Class, Params}, _Opts) ->
+get_query({service_aggregation_types, SrvId, Class, Params}, _Opts) ->
     Query = [
         <<"SELECT actor_type, COUNT(actor_type) FROM actors">>,
         <<" WHERE class = ">>, quote(Class), <<" AND ">>, filter_path(SrvId, Params),
@@ -56,7 +56,7 @@ get_query({aggregation_service_types, SrvId, Class, Params}, _Opts) ->
 
 %% - from, size: integer()
 %% - deep: boolean()
-get_query({search_service_linked, SrvId, UID, LinkType, Params}, _Opts) ->
+get_query({service_search_linked, SrvId, UID, LinkType, Params}, _Opts) ->
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Query = [
@@ -84,7 +84,7 @@ get_query({search_service_linked, SrvId, UID, LinkType, Params}, _Opts) ->
 
 %% - from, size: integer()
 %% - deep: boolean()
-get_query({search_service_fts, SrvId, Field, Word, Params}, _Opts) ->
+get_query({service_search_fts, SrvId, Field, Word, Params}, _Opts) ->
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Word2 = nklib_parse:normalize(Word, #{unrecognized=>keep}),
@@ -116,8 +116,8 @@ get_query({search_service_fts, SrvId, Field, Word, Params}, _Opts) ->
 
 
 %% Params is nkdomain_search:search_spec()
-get_query({search_service_actors, SearchSpec}, _Opts) ->
-    % lager:error("NKLOG PARAMS ~p", [Params]),
+get_query({service_search_actors, SearchSpec}, _Opts) ->
+    % lager:error("NKLOG PARAMS ~p", [SearchSpec]),
     From = maps:get(from, SearchSpec, 0),
     Size = maps:get(size, SearchSpec, 100),
     Totals = maps:get(totals, SearchSpec, true),
@@ -152,8 +152,8 @@ get_query({search_service_actors, SearchSpec}, _Opts) ->
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
-get_query({search_service_actors_id, SearchSpec}, _Opts) ->
-    % lager:error("NKLOG PARAMS ~p", [Params]),
+get_query({service_search_actors_id, SearchSpec}, _Opts) ->
+    % lager:error("NKLOG PARAMS ~p", [SearchSpec]),
     From = maps:get(from, SearchSpec, 0),
     Limit = maps:get(size, SearchSpec, 100),
     Totals = maps:get(totals, SearchSpec, true),
@@ -183,6 +183,30 @@ get_query({search_service_actors_id, SearchSpec}, _Opts) ->
             fun ?MODULE:pgsql_actors_id/2
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
+
+get_query({service_delete_actors, DoDelete, SearchSpec}, _Opts) ->
+    SQLFilters = make_sql_filters(SearchSpec),
+    Query = [
+        case DoDelete of
+            false ->
+                <<"SELECT COUNT(*) FROM actors">>;
+            true ->
+                <<"DELETE FROM actors">>
+        end,
+        SQLFilters,
+        <<";">>
+    ],
+    {ok, {pgsql, Query, #{result_fun=>fun pgsql_delete/2}}};
+
+get_query({service_delete_old_actors, SrvId, Class, Type, Epoch, Opts}, _Opts) ->
+    Query = [
+        <<"DELETE FROM actors">>,
+        <<" WHERE class=">>, quote(Class), <<" AND actor_type=">>, quote(Type),
+        <<" AND last_update<">>, quote(Epoch),
+        <<" AND ">>, filter_path(SrvId, Opts),
+        <<";">>
+    ],
+    {ok, {pgsql, Query, #{result_fun=>fun pgsql_delete/2}}};
 
 get_query(QueryType, _Opts) ->
     {error, {query_unknown, QueryType}}.
@@ -265,6 +289,13 @@ pgsql_totals_actors_id([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpM
     {ok, Actors, Meta#{size=>Size, total=>Total}}.
 
 
+%% @private
+pgsql_delete([{{delete, Total}, [], _}], Meta) ->
+    {ok, Total, Meta};
+
+pgsql_delete([{{select, _}, [{Total}], _}], Meta) ->
+    {ok, Total, Meta}.
+
 
 
 %% ===================================================================
@@ -304,69 +335,98 @@ make_sql_filters(#{srv:=SrvId}=Params) ->
 expand_filter([], Acc) ->
     Acc;
 
-expand_filter([#{field:=Field, op:=Op, value:=Value}|Rest], Acc) ->
-    expand_filter(Rest, [{Field, Op, Value}|Acc]).
+expand_filter([#{field:=Field, value:=Value}=Term|Rest], Acc) ->
+    Op = maps:get(op, Term, eq),
+    Type = maps:get(type, Term, string),
+    expand_filter(Rest, [{Field, Op, Value, Type}|Acc]).
 
 
 %% @private
 make_filter([], Acc) ->
     Acc;
 
-make_filter([{<<"metadata.fts._all_fields">>, eq, Val} | Rest], Acc) ->
-    Filter = [<<"(fts_words LIKE '%:">>, Val, <<" %')">>],
-    make_filter(Rest, [list_to_binary(Filter) | Acc]);
+make_filter([{<<"metadata.fts.", Field/binary>>, Op, Val, _Type} | Rest], Acc) ->
+    Word = nkservice_actor_util:fts_normalize_word(Val),
+    Filter = case {Field, Op} of
+        {<<"*">>, eq} ->
+            % We search for an specific word in all fields
+            % For example fieldX:valueY, found by LIKE '%:valueY %'
+            % (final space makes sure word has finished)
+            <<"(fts_words LIKE '%:", Word/binary, " %')">>;
+        {<<"*">>, prefix} ->
+            % We search for a prefix word in all fields
+            % For example fieldX:valueYXX, found by LIKE '%:valueY%'
+            <<"(fts_words LIKE '%:", Word/binary, "%')">>;
+        {_, eq} ->
+            % We search for an specific word in an specific fields
+            % For example fieldX:valueYXX, found by LIKE '% FieldX:valueY %'
+            <<"(fts_words LIKE '% ", Field/binary, $:, Word/binary, " %')">>;
+        {_, prefix} ->
+            % We search for a prefix word in an specific fields
+            % For example fieldX:valueYXX, found by LIKE '% FieldX:valueY%'
+            <<"(fts_words LIKE '% ", Field/binary, $:, Word/binary, "%')">>;
+        _ ->
+            <<"(TRUE = FALSE)">>
+    end,
+    make_filter(Rest, [Filter | Acc]);
 
-make_filter([{<<"metadata.fts._all_fields">>, prefix, Val} | Rest], Acc) ->
-    Filter = [<<"(fts_words LIKE '%:">>, Val, <<"%')">>],
-    make_filter(Rest, [list_to_binary(Filter) | Acc]);
+make_filter([{<<"metadata.isEnabled">>, eq, Bool, _}|Rest], Acc) ->
+    Filter = case nklib_util:to_boolean(Bool) of
+        true ->
+            <<"((NOT metadata ? 'isEnabled') OR ((metadata->>'isEnabled')::BOOLEAN=TRUE))">>;
+        false ->
+            <<"((metadata->>'isEnabled')::BOOLEAN=FALSE)">>
+    end,
+    make_filter(Rest, [Filter|Acc]);
 
-make_filter([{<<"metadata.fts.", Field/binary>>, eq, Val} | Rest], Acc) ->
-    Filter = [<<"(fts_words LIKE '% ">>, Field, $:, Val, <<" %')">>],
-    make_filter(Rest, [list_to_binary(Filter) | Acc]);
+make_filter([{Field, exists, Bool, _}|Rest], Acc)
+    when Field==<<"uid">>; Field==<<"srv">>; Field==<<"class">>; Field==<<"type">>;
+         Field==<<"vsn">>; Field==<<"path">>; Field==<<"last_update">>;
+         Field==<<"expires">>; Field==<<"fts_word">> ->
+    Acc2 = case Bool of
+        true ->
+            Acc;
+        false ->
+            % Force no records
+            [<<"(TRUE = FALSE)">>|Acc]
+    end,
+    make_filter(Rest, Acc2);
 
-make_filter([{<<"metadata.fts.", Field/binary>>, prefix, Val} | Rest], Acc) ->
-    Filter = [<<"(fts_words LIKE '% ">>, Field, $:, Val, <<"%')">>],
-    make_filter(Rest, [list_to_binary(Filter) | Acc]);
-
-make_filter([{Field, exists, Bool}|Rest], Acc) ->
+make_filter([{Field, exists, Bool, _Type}|Rest], Acc) ->
     L = binary:split(Field, <<".">>, [global]),
     [Field2|Base1] = lists:reverse(L),
-    Field3 = get_field2(Field2),
+    Field3 = get_field_db_name(Field2),
     Base2 = nklib_util:bjoin(lists:reverse(Base1), $.),
     Filter = [
         case Bool of true -> <<"(">>; false -> <<"(NOT ">> end,
-        make_json_field(Base2, json),
+        json_value(Base2, json),
         <<" ? ">>, quote(Field3), <<")">>
     ],
     make_filter(Rest, [list_to_binary(Filter)|Acc]);
 
-make_filter([{Field, prefix, Val}|Rest], Acc) ->
-    {Field2, string} = get_type(Field),
-    Field3 = get_field2(Field2),
+make_filter([{Field, prefix, Val, string}|Rest], Acc) ->
+    Field2 = get_field_db_name(Field),
     Filter = [
         $(,
-        make_json_field(Field3, string),
+        json_value(Field2, string),
         <<" LIKE ">>, quote(<<Val/binary, $%>>), $)
     ],
     make_filter(Rest, [list_to_binary(Filter)|Acc]);
 
-make_filter([{Field, values, ValList}|Rest], Acc) ->
+make_filter([{Field, values, ValList, Type}|Rest], Acc) ->
     Values = nklib_util:bjoin([quote(Val) || Val <- ValList], $,),
-    {Field2, Type} = get_type(Field),
-    Field3 = get_field2(Field2),
+    Field2 = get_field_db_name(Field),
     Filter = [
         $(,
-        make_json_field(Field3, Type),
+        json_value(Field2, Type),
         <<" IN (">>, Values, <<"))">>
     ],
     make_filter(Rest, [list_to_binary(Filter)|Acc]);
 
-make_filter([{Field, Op, Val} | Rest], Acc) ->
-    {Field2, Type} = get_type(Field),
-    Field3 = get_field2(Field2),
-    Filter = [$(, get_op(make_json_field(Field3, Type), Op, Val), $)],
+make_filter([{Field, Op, Val, Type} | Rest], Acc) ->
+    Field2 = get_field_db_name(Field),
+    Filter = [$(, get_op(json_value(Field2, Type), Op, Val), $)],
     make_filter(Rest, [list_to_binary(Filter) | Acc]).
-
 
 
 %% @private
@@ -379,17 +439,8 @@ get_op(Field, gte, Value) -> [Field, <<" >= ">>, quote(Value)].
 
 
 %% @private
-get_type({Field, Type}) -> {Field, Type};
-get_type(<<"metadata.fts.", _/binary>>=Field) -> {Field, array};
-get_type(Field) -> {Field, string}.
-
-
-%% @private
-get_field2(<<"type">>) -> <<"actor_type">>;
-get_field2(Field) -> Field.
-
-
-
+get_field_db_name(<<"type">>) -> <<"actor_type">>;
+get_field_db_name(Field) -> Field.
 
 
 %% @private
@@ -403,9 +454,15 @@ expand_sort([], Acc) ->
     lists:reverse(Acc);
 
 expand_sort([#{field:=Field}=Term|Rest], Acc) ->
-    Order = maps:get(order, Term, asc),
-    expand_sort(Rest, [{Order, Field}|Acc]).
-
+    case Field of
+        <<"x_class_type">> ->
+            % Special field used in domains
+            expand_sort([Term#{field:=<<"class">>}, Term#{field:=<<"type">>}|Rest], Acc);
+        _ ->
+            Order = maps:get(order, Term, asc),
+            Type = maps:get(type, Term, string),
+            expand_sort(Rest, [{Order, Field, Type}|Acc])
+    end.
 
 
 %% @private
@@ -415,10 +472,9 @@ make_sort([], []) ->
 make_sort([], Acc) ->
     [<<" ORDER BY ">>, nklib_util:bjoin(lists:reverse(Acc), $,)];
 
-make_sort([{Order, Field}|Rest], Acc) ->
-    {Field2, Type} = get_type(Field),
+make_sort([{Order, Field, Type}|Rest], Acc) ->
     Item = [
-        make_json_field(get_field2(Field2), Type),
+        json_value(get_field_db_name(Field), Type),
         case Order of asc -> <<" ASC">>; desc -> <<" DESC">> end
     ],
     make_sort(Rest, [list_to_binary(Item)|Acc]).
@@ -426,12 +482,12 @@ make_sort([{Order, Field}|Rest], Acc) ->
 
 %% @private
 %% Extracts a field inside a JSON,  it and casts it to json, string, integer o boolean
-make_json_field(Field, Type) ->
-    make_json_field(Field, Type, []).
+json_value(Field, Type) ->
+    json_value(Field, Type, []).
 
 
 %% @private
-make_json_field(Field, Type, Acc) ->
+json_value(Field, Type, Acc) ->
     case binary:split(Field, <<".">>) of
         [Single] when Acc==[] ->
             Single;
@@ -447,9 +503,9 @@ make_json_field(Field, Type, Acc) ->
                     [$(|Acc] ++ [$>, $', Last, $', <<")::BOOLEAN">>]
             end;
         [Base, Rest] when Acc==[] ->
-            make_json_field(Rest, Type, [Base, <<"->">>]);
+            json_value(Rest, Type, [Base, <<"->">>]);
         [Base, Rest] ->
-            make_json_field(Rest, Type, Acc++[$', Base, $', <<"->">>])
+            json_value(Rest, Type, Acc++[$', Base, $', <<"->">>])
     end.
 
 

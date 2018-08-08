@@ -23,11 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/5]).
--export([get_filter_field_type/2, get_sort_field/2]).
+-export([get_actor_types/1, get_actor_config/2, get_actor_queries/1, get_actor_query_meta/2]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkDOMAIN GraphQL Plugin: "++Txt, Args)).
 
-%%-include("nkdomain.hrl").
 -include_lib("nkservice/include/nkservice_actor.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
 
@@ -49,44 +48,35 @@ plugin_deps() ->
     [nkservice_rest].
 
 
-%% @doc
-%% We store in cache
-%% - {nkservice_graphql, any, filter_fields}
-%% - {nkservice_graphql, any, sort_fields}
-
-
 plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     Syntax = #{
         makeGraphqlSchema => boolean,
+        graphqlActorModules => {list, binary},
         graphiqlUrl => binary,
         graphiqlUrl_opts => nkpacket_syntax:safe_syntax(),
         graphiql_debug => {list, {atom, [ws, http, nkpacket]}},
         '__allow_unknown' => true
     },
     case nklib_syntax:parse(Config, Syntax) of
-        {ok, Parsed, _} ->
-            CacheMap1 = nkservice_config_util:get_cache_map(Spec),
-            FilterFields1 = get_cache(filter_fields, CacheMap1),
-            FilterFields2 = nkservice_graphql_schema:core_filter_fields(),
-            FilterFields3 = maps:merge(FilterFields1, FilterFields2),
-            CacheMap2 = set_cache(filter_fields, FilterFields3, CacheMap1),
-            SortFields1 = get_cache(sort_fields, CacheMap1),
-            SortFields2 = nkservice_graphql_schema:core_sort_fields(),
-            SortFields3 = maps:merge(SortFields1, SortFields2),
-            CacheMap3 = set_cache(sort_fields, SortFields3, CacheMap2),
-            Spec2 = nkservice_config_util:set_cache_map(CacheMap3, Spec),
-            DebugMap1 = nkservice_config_util:get_debug_map(Spec2),
-            DebugMap2 = lists:foldl(
+        {ok, #{makeGraphqlSchema:=true}=Parsed, _} ->
+            Cache1 = nkservice_config_util:get_cache_map(Spec),
+            Modules = maps:get(graphqlActorModules, Parsed, []),
+            Cache2 = make_type_cache(Modules, Cache1),
+            Spec2 = nkservice_config_util:set_cache_map(Cache2, Spec),
+            Debug1 = nkservice_config_util:get_debug_map(Spec2),
+            Debug2 = lists:foldl(
                 fun(Type, Acc) -> set_debug(Id, Type, Acc) end,
-                DebugMap1,
+                Debug1,
                 maps:get(graphiql_debug, Parsed, [])),
-            Spec3 = nkservice_config_util:set_debug_map(DebugMap2, Spec2),
+            Spec3 = nkservice_config_util:set_debug_map(Debug2, Spec2),
             case make_listen(SrvId, Id, Parsed) of
                 {ok, _Listeners} ->
                     {ok, Spec3#{config := Parsed}};
                 {error, Error} ->
                     {error, Error}
             end;
+        {ok, _Parsed, _} ->
+            {ok, Spec};
         {error, Error} ->
             {error, Error}
     end;
@@ -130,46 +120,101 @@ plugin_update(_Class, _NewSpec, _OldSpec, _Pid, _Service) ->
 %% Cache
 %% ===================================================================
 
+-type cache_key() ::
+    types |
+    {type, Type::atom()} |       % Get config
+    queries |
+    {query_,meta, Name::atom()}.
 
 %% @doc
-get_filter_field_type(SrvId, Field) ->
-    Field2 = to_bin(Field),
-    Fields = nkservice_util:get_cache(SrvId, nkservice_graphql, any, filter_fields),
-    case maps:get(Field2, Fields) of
-        {Type, Field3} ->
-            {Field3, Type};
-        Type ->
-            {Field2, Type}
-    end.
+-spec get_domain_cache(nkservice:id(), cache_key()) ->
+    term().
+
+get_domain_cache(SrvId, CacheKey) ->
+    nkservice_util:get_cache(SrvId, nkservice_graphql, single, CacheKey).
 
 
 %% @doc
-get_sort_field(SrvId, Field) ->
-    Field2 = to_bin(Field),
-    Fields = nkservice_util:get_cache(SrvId, nkservice_graphql, any, sort_fields),
-    case maps:get(Field2, Fields) of
-        {Type, Field3} ->
-            {Field3, Type};
-        Type ->
-            {Field2, Type}
-    end.
+get_actor_types(SrvId) ->
+    get_domain_cache(SrvId, types).
+
+
+%% @doc
+get_actor_config(SrvId, Type) when is_atom(Type) ->
+    get_domain_cache(SrvId, {type_config, Type}).
+
+
+%% @doc Get all queries
+get_actor_queries(SrvId) ->
+    get_domain_cache(SrvId, queries).
+
+
+%% @doc Get query params
+get_actor_query_meta(SrvId, Name) ->
+    Name2 = nklib_util:to_existing_atom(Name),
+    get_domain_cache(SrvId, {query_meta, Name2}).
 
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
-%% @private
-get_cache(Key, Map) ->
-    nkservice_config_util:get_cache_key(nkservice_graphql, any, Key, Map, #{}).
+
 
 %% @private
-set_cache(Key, Val, Map) ->
-    nkservice_config_util:set_cache_key(nkservice_graphql, any, Key, Val, Map).
+get_cache(Key, Cache, Default) ->
+    nkservice_config_util:get_cache_key(nkservice_graphql, single, Key, Cache, Default).
 
 %% @private
-set_debug(Id, Type, Map) ->
-    nkservice_config_util:set_debug_key(nkservice_graphql, Id, Type, true, Map).
+set_cache(Key, Val, Cache) ->
+    nkservice_config_util:set_cache_key(nkservice_graphql, single, Key, Val, Cache).
+
+%% @private
+set_debug(Id, Type, Debug) ->
+    nkservice_config_util:set_debug_key(nkservice_graphql, Id, Type, true, Debug).
+
+
+%% @private
+make_type_cache([], Cache) ->
+    Cache;
+
+make_type_cache([Module|Rest], Cache) ->
+    Module2 = nklib_util:to_atom(Module),
+    code:ensure_loaded(Module2),
+    Config = case Module2:config() of
+        not_exported ->
+            ?LLOG(error, "Invalid graphQL actor callback module '~s'", [Module2]),
+            error({module_unknown, Module2});
+        Config0 ->
+            Config0
+    end,
+    Type = nklib_util:to_atom(maps:get(type, Config)),
+    Config2 = #{
+        module => Module2,
+        type => nklib_util:to_atom(maps:get(type, Config)),
+        actor_class => nklib_util:to_binary(maps:get(actor_class, Config)),
+        actor_type => nklib_util:to_binary(maps:get(actor_type, Config))
+    },
+    Types1 = get_cache(types, Cache, []),
+    Types2 = lists:usort([Type|Types1]),
+    Cache2 = set_cache(types, Types2, Cache),
+    Cache3 = set_cache({type_config, Type}, Config2, Cache2),
+    Cache4 = maps:fold(
+        fun
+            (Name, {_Result, #{meta:=Meta}}, Acc) ->
+                Queries1 = get_cache(queries, Acc, []),
+                Queries2 = lists:usort([Name|Queries1]),
+                Acc2 = set_cache(queries, Queries2, Acc),
+                set_cache({query_meta, Name}, Meta, Acc2);
+            (_Name, _, Acc) ->
+                Acc
+        end,
+        Cache3,
+        Module2:schema(queries)
+    ),
+    make_type_cache(Rest, Cache4).
+
+
 
 
 %% @private
@@ -230,9 +275,9 @@ insert_listeners(Id, Pid, SpecList) ->
     end.
 
 
-%% @private
-to_bin(T) when is_binary(T)-> T;
-to_bin(T) -> nklib_util:to_binary(T).
+%%%% @private
+%%to_bin(T) when is_binary(T)-> T;
+%%to_bin(T) -> nklib_util:to_binary(T).
 
 
 

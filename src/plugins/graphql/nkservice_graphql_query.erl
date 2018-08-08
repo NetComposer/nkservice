@@ -41,8 +41,14 @@ execute(Ctx, _DummyObj, QueryName, Params) ->
             end;
         _ ->
             Params2 = remove_nulls(Params),
-            Res = ?CALL_SRV(SrvId, nkservice_graphql_query, [SrvId, QueryName, Params2, Ctx]),
-            % lager:error("NKLOG RES ~p", [Res]),
+            Params3 = case catch nkservice_graphql_plugin:get_actor_query_meta(SrvId, QueryName) of
+                Meta when is_map(Meta) ->
+                    Params2#{query_meta=>Meta};
+                {'EXIT', _} ->
+                    Params2
+            end,
+            Res = ?CALL_SRV(SrvId, nkservice_graphql_query, [SrvId, QueryName, Params3, Ctx]),
+            %lager:error("NKLOG RES ~p", [Res]),
             lager:info("Query time: ~p", [nklib_util:m_timestamp()-Start]),
             Res
     end.

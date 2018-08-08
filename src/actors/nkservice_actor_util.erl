@@ -32,6 +32,7 @@
 -export([is_path/1, actor_id_to_path/1]).
 -export([make_reversed_srv_id/1, gen_srv_id/1]).
 -export([make_plural/1, normalized_name/1]).
+-export([fts_normalize_word/1, fts_normalize_multi/1]).
 
 %% ===================================================================
 %% Public
@@ -205,6 +206,16 @@ make_plural(Type) ->
         _ ->
             <<Type2/binary, "s">>
     end.
+
+
+%% @private
+fts_normalize_word(Word) ->
+    nklib_parse:normalize(Word, #{unrecognized=>keep}).
+
+
+%% @doc
+fts_normalize_multi(Text) ->
+    nklib_parse:normalize_words(Text, #{unrecognized=>keep}).
 
 
 %% @private

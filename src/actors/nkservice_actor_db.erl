@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([find/1, find/2, is_activated/1, read/1, read/2, activate/1, activate/2]).
--export([create/2, delete/1, delete/2, update/1, update/2]).
+-export([create/2, delete/1, delete/2, delete_multi/2, update/1, update/2]).
 -export([search/2, search/3, aggregation/2, aggregation/3]).
 -export([db_read/2]).
 -export([check_service/4]).
@@ -348,6 +348,25 @@ delete(Id, Opts) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @doc
+%% Deletes a number of UIDs and send events
+%% Loaded objects wil be unloaded
+delete_multi(SrvId, UIDs) ->
+    % Implementation must call nkservice_actor_srv:raw_stop/2
+    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UIDs, #{}]) of
+        {ok, ActorIds, DeleteMeta} ->
+            lists:foreach(
+                fun(AId) ->
+                    ?CALL_SRV(SrvId, actor_event, [SrvId, deleted, AId])
+                end,
+                ActorIds),
+            {ok, ActorIds, DeleteMeta};
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 %% @doc

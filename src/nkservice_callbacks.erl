@@ -86,6 +86,7 @@ msg(SrvId, Msg) ->
 
 
 msg(actor_deleted)                      -> "Actor has been deleted";
+msg({actors_deleted, N})                      -> {"Actors (~p) have been deleted", [N]};
 msg(actor_not_found)                    -> "Actor not found";
 msg({actor_invalid, _})                 -> "Actor is invalid";
 msg(actor_expired)	                -> "Actor has expired";

@@ -22,8 +22,8 @@
 -module(nkservice_graphql_schema).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([actor_query/3]).
 -export([make_schema/1]).
--export([core_filter_fields/0, core_sort_fields/0]).
 -export_type([schema_class/0, schema_type/0]).
 
 
@@ -31,11 +31,19 @@
 %% Types
 %% ===================================================================
 
+-type config() ::
+    #{
+        type => atom(),
+        actor_class => nkservice_actor:class(),
+        actor_type => nkservice_actor:type()
+    }.
+
+
 -type schema_class() ::
     scalars|enums|types|inputs|interfaces|queries|mutations.
 
 -type schema_type() ::
-    id | int | boolean | string | object | time | atom().
+    id | integer | boolean | string | object | time | atom().
 
 -type name() :: atom().
 
@@ -50,7 +58,8 @@
     #{
         params => #{name() => field_value()},
         default => string(),
-        comment => string()
+        comment => string(),
+        meta => map()
     }.
 
 -type schema_fields() ::
@@ -71,14 +80,17 @@
     % - implements Node and Actor
     % - default fields (schema_actor_fields/1) are added
     % - schema is searched for connections for this Type (see connections/2)
-    % - a type 'ActorSeachResult' is added
+    % - a type 'ActorSearchResult' is added
+    % - inputs 'ActorQueryFilter', 'ActorFilterFields' and 'ActorQuerySort' are added
     % For 'connection' class
     % - fields actors => {list, Actor} and totalCount are added
     #{
         name() => #{
             class => none | actor | connection,
             fields => schema_fields(),
-            comment => string()
+            comment => string(),
+            filter_fields => schema_fields(),
+            sort_fields => schema_fields()
         }
     } |
 
@@ -99,6 +111,7 @@
     } |
 
     % Queries
+    % 'meta' is merged to query params
     #{name() => field_value()} |
 
     % Mutations
@@ -116,14 +129,38 @@
 %% ===================================================================
 
 
--callback actor_type() ->
-    name().
+-callback config() ->
+    config().
 
 -callback schema(nkservice:id()) ->
     schema_def().
 
 -callback connections(name()) ->
     #{name() => field_value()}.
+
+
+
+%% ===================================================================
+%% Public
+%% ===================================================================
+
+
+%% @doc
+% Uses ActorSearchResult, ActorQueryFilter, ActorQuerySort
+% ActorSearchResult is created automatically by type if class = actor
+% (nkservice_graphql_schema_lib)
+% ActorQueryFilter and ActorQuerySort
+actor_query(BaseType, Params, Meta) ->
+    Result = nklib_util:to_atom(<<(to_bin(BaseType))/binary, "SearchResult">>),
+    Filter = nklib_util:to_atom(<<(to_bin(BaseType))/binary, "FilterSpec">>),
+    Sort = nklib_util:to_atom(<<(to_bin(BaseType))/binary, "SortFields">>),
+    {Result, #{
+        params => Params#{
+            filter => Filter,
+            sort => {list, Sort}
+        },
+        meta => Meta
+    }}.
 
 
 %% ===================================================================
@@ -136,30 +173,6 @@ make_schema(SrvId) ->
     nkservice_graphql_schema_lib:make_schema(SrvId).
 
 
-
-%% @doc Used by queries
-core_filter_fields() ->
-    #{
-        <<"type">> => {string, <<"kind">>},
-        <<"name">> => string,
-        <<"id">> => {string, <<"uid">>},
-        <<"domain">> => {string, <<"srv">>},
-        <<"metadata.createdTime">> => integer,
-        <<"metadata.description">> => string,
-        <<"metadata.isEnabled">> => boolean,
-        <<"metadata.expiresTime">> => integer
-    }.
-
-
-%% @doc Used by queries
-core_sort_fields() ->
-    #{
-        <<"type">> => {string, <<"kind">>},
-        <<"name">> => string,
-        <<"domain">> => {string, <<"srv">>},
-        <<"metadata">> => string,
-        <<"metadata.createdTime">> => integer,
-        <<"metadata.expiresTime">> => integer,
-        <<"metadata.isEnabled">> => boolean
-    }.
-
+%% @private
+to_bin(Term) when is_binary(Term) -> Term;
+to_bin(Term) -> nklib_util:to_binary(Term).

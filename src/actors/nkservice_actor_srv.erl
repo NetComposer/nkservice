@@ -496,12 +496,21 @@ do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) -
             do_stop(actor_deleted, State2)
     end;
 
-do_sync_op({enable, Enable}, _From, State) ->
-    case do_update(#{metadata=>#{<<"isEnabled">>=>Enable}}, State) of
-        {ok, State2} ->
-            reply(ok, do_refresh_ttl(State2));
-        {error, Error, State2} ->
-            reply({error, Error}, State2)
+do_sync_op({enable, Enable}, _From, State) when is_boolean(Enable)->
+    #actor_st{actor = Actor} = State,
+    #actor{metadata = Meta} = Actor,
+    case maps:get(<<"isEnabled">>, Meta, true) of
+        Enable ->
+            reply(ok, do_refresh_ttl(State));
+        _ ->
+            Meta2 = Meta#{<<"isEnabled">> => Enable},
+            UpdActor = Actor#actor{metadata = Meta2},
+            case do_update(UpdActor, State) of
+                {ok, State2} ->
+                    reply(ok, do_refresh_ttl(State2));
+                {error, Error, State2} ->
+                    reply({error, Error}, State2)
+            end
     end;
 
 do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
@@ -517,7 +526,7 @@ do_sync_op({link, Link, Opts}, _From, State) ->
     ?DEBUG("link ~p added (~p)", [Link, LinkData], State),
     {reply, ok, add_link(Link, LinkData, do_refresh_ttl(State))};
 
-do_sync_op({update, Actor}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
+do_sync_op({update, #actor{}=Actor}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_update_on_disabled:=true}} ->
             reply({error, object_is_disabled}, State);
@@ -644,7 +653,6 @@ do_pre_init(Actor, StartOpts, LeaderPid) ->
     set_unload_policy(State).
 
 
-
 %% @private
 do_post_init(State) ->
     case handle(actor_srv_init, [], State) of
@@ -657,7 +665,6 @@ do_post_init(State) ->
         {error, Error} ->
             {stop, Error}
     end.
-
 
 
 %% @private
@@ -690,8 +697,8 @@ set_unload_policy(#actor_st{config=Config}=State) ->
             permanent;
         false ->
             #actor_st{actor=#actor{metadata=Meta}} = State,
-            case maps:get(<<"expiresTime">>, Meta, 0) of
-                0 ->
+            case maps:get(<<"expiresTime">>, Meta, <<>>) of
+                <<>> ->
                     % A TTL reseated after each operation
                     TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
                     ?DEBUG("TTL is ~p", [TTL], State),
@@ -868,17 +875,10 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
         UpdData = UpdActor#actor.data,
         IsDataUpdated = UpdData /= Data,
         UpdMeta = UpdActor#actor.metadata,
-        ForbiddenFields = [
-            <<"resourceVersion">>,
-            <<"generation">>,
-            <<"creationTime">>,
-            <<"expiresTime">>
-        ],
-        case maps:with(ForbiddenFields, UpdMeta) of
-            M when map_size(M)==0 ->
-                ok;
-            M ->
-                throw({updated_invalid_field, hd(maps:keys(M))})
+        CT = maps:get(<<"creationTime">>, Meta),
+        case maps:get(<<"creationTime">>, UpdMeta, CT) of
+            CT -> ok;
+            _ -> throw({updated_invalid_field, metadata})
         end,
         Links = maps:get(<<"links">>, Meta, #{}),
         UpdLinks = maps:get(<<"links">>, UpdMeta, Links),
@@ -893,30 +893,38 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
                         throw(Error)
                 end
         end,
-        UpdMeta3 = case UpdMeta2 of
-            #{<<"isEnabled">>:=true} ->
+        Enabled = maps:get(<<"isEnabled">>, Meta, true),
+        UpdEnabled = maps:get(<<"isEnabled">>, UpdMeta2, true),
+        UpdMeta3 = case maps:get(<<"isEnabled">>, UpdMeta2, true) of
+            true ->
                 maps:remove(<<"isEnabled">>, UpdMeta2);
-            _ ->
+            false ->
                 UpdMeta2
         end,
         NewMeta = maps:merge(Meta, UpdMeta3),
-        IsMetaUpdated = Meta /= NewMeta,
+        IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
         case IsDataUpdated orelse IsMetaUpdated of
             true ->
                 %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
-                NewActor = Actor#actor{data=UpdData, metadata=NewMeta},
+                NewMeta2 = case UpdEnabled of
+                    true ->
+                        maps:remove(<<"isEnabled">>, NewMeta);
+                    false ->
+                        NewMeta#{<<"isEnabled">>=>false}
+                end,
+                NewActor = Actor#actor{data=UpdData, metadata=NewMeta2},
                 State2 = State#actor_st{actor=NewActor, is_dirty2=true},
                 State3 = do_update_version(State2),
-                Enabled = maps:get(<<"isEnabled">>, NewMeta, true),
-                State4 = do_enabled(Enabled, State3),
-                case do_save(update, State4) of
-                    {ok, State5} ->
-                        {ok, do_event({updated, UpdActor}, State5)};
+                State4 = do_enabled(UpdEnabled, State3),
+                State5 = set_unload_policy(State4),
+                case do_save(update, State5) of
+                    {ok, State6} ->
+                        {ok, do_event({updated, UpdActor}, State6)};
                     {{error, SaveError}, State5} ->
                         {error, SaveError, State5}
                 end;
             false ->
-                %lager:error("NKLOG NO UPDATE"),
+                % lager:error("NKLOG NO UPDATE"),
                 {ok, State}
         end
     catch

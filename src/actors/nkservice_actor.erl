@@ -28,10 +28,11 @@
 -module(nkservice_actor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([create/1]).
--export([get_actor/1, get_path/1, is_enabled/1, enable/2, update/2, delete/1,
+-export([get_actor/1, get_path/1, is_enabled/1, enable/2, update/2, remove/1,
          stop/1, stop/2]).
 -export([search_classes/2, search_types/3]).
--export([search_linked_to/4, search_fts/4, search/2, search_ids/2]).
+-export([search_linked_to/4, search_fts/4, search/3, search_ids/3,
+         delete_all/3, delete_old/5]).
 -export_type([actor/0, actor_map/0, id/0]).
 
 
@@ -194,10 +195,10 @@ update(Id, Update) ->
 
 
 %% @doc Remove an object
--spec delete(id()|pid()) ->
+-spec remove(id()|pid()) ->
     ok | {error, term()}.
 
-delete(Id) ->
+remove(Id) ->
     nkservice_actor_srv:sync_op(Id, delete).
 
 
@@ -218,30 +219,33 @@ stop(Id, Reason) ->
 
 
 %% @doc Counts classes and objects of each class
--spec search_classes(nkservice:id(), #{deep=>boolean()}) ->
+-spec search_classes(nkservice:id(), #{deep=>boolean(), srv=>nksevice:id()}) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 search_classes(SrvId, Opts) ->
-    nkservice_actor_db:aggregation(SrvId, {aggregation_service_classes, SrvId, Opts}).
+    QuerySrvId = maps:get(srv, Opts, SrvId),
+    nkservice_actor_db:aggregation(SrvId, {service_aggregation_classes, QuerySrvId, Opts}).
 
 
 %% @doc
--spec search_types(nkservice:id(), class(), #{deep=>boolean()}) ->
+-spec search_types(nkservice:id(), class(), #{deep=>boolean(), srv=>nksevice:id()}) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
 search_types(SrvId, Class, Opts) ->
-    nkservice_actor_db:aggregation(SrvId, {aggregation_service_types, SrvId, Class, Opts}).
+    QuerySrvId = maps:get(srv, Opts, SrvId),
+    nkservice_actor_db:aggregation(SrvId, {service_aggregation_types, QuerySrvId, Class, Opts}).
 
 
 %% @doc Gets objects pointing to another
 -spec search_linked_to(nkservice:id(), nkservice_actor:id(), binary()|any,
-                       #{from=>pos_integer(), size=>pos_integer()}) ->
+                       #{from=>pos_integer(), size=>pos_integer(),srv=>nksevice:id()}) ->
     {ok, #{UID::binary() => LinkType::binary()}} | {error, term()}.
 
-search_linked_to(SrvId, Id, LinkType, Params) ->
+search_linked_to(SrvId, Id, LinkType, Opts) ->
     case nkservice_actor_db:find(Id) of
-        {ok, #actor_id{srv=ActorSrvId, uid=UID}, _} ->
-            nkservice_actor_db:search(ActorSrvId, {search_service_linked, SrvId, UID, LinkType, Params});
+        {ok, #actor_id{uid=UID}, _} ->
+            QuerySrvId = maps:get(srv, Opts, SrvId),
+            nkservice_actor_db:search(SrvId, {service_search_linked, QuerySrvId, UID, LinkType, Opts});
         {error, Error} ->
             {error, Error}
     end.
@@ -249,34 +253,82 @@ search_linked_to(SrvId, Id, LinkType, Params) ->
 
 %% @doc Gets objects under a path, sorted by path
 -spec search_fts(nkservce:id(), binary()|any, binary(),
-    #{from=>pos_integer(), size=>pos_integer()}) ->
+    #{from=>pos_integer(), size=>pos_integer(), srv=>nksevice:id()}) ->
     {ok, [UID::binary()], Meta::map()} | {error, term()}.
 
 search_fts(SrvId, Field, Word, Opts) ->
-    nkservice_actor_db:search(SrvId, {search_service_fts, SrvId, Field, Word, Opts}).
+    QuerySrvId = maps:get(srv, Opts, SrvId),
+    nkservice_actor_db:search(SrvId, {service_search_fts, QuerySrvId, Field, Word, Opts}).
 
 
 %% @doc Generic search returning actors
--spec search(nkservice:id(), nkservice_actor_search:search_spec()) ->
+-spec search(nkservice:id(), nkservice_actor_search:search_spec(),
+             nkservice_actor_search:search_opts()) ->
     {ok, [actor()], Meta::map()} | {error, term()}.
 
-search(SrvId, SearchSpec) ->
-    case nkservice_actor_search:parse(SearchSpec#{srv=>SrvId}) of
-        {ok, SearchSpec2} ->
-            nkservice_actor_db:search(SrvId, {search_service_actors, SearchSpec2});
+search(SrvId, SearchSpec, SearchOpts) ->
+    SearchSpec2 = maps:merge(#{srv=>SrvId}, SearchSpec),
+    case nkservice_actor_search:parse(SearchSpec2, SearchOpts) of
+        {ok, SearchSpec3} ->
+            nkservice_actor_db:search(SrvId, {service_search_actors, SearchSpec3});
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc Generic search returning actors
--spec search_ids(nkservice:id(), nkservice_actor_search:search_spec()) ->
+-spec search_ids(nkservice:id(), nkservice_actor_search:search_spec(),
+    nkservice_actor_search:search_opts()) ->
     {ok, [#actor_id{}], Meta::map()} | {error, term()}.
 
-search_ids(SrvId, SearchSpec) ->
-    case nkservice_actor_search:parse(SearchSpec#{srv=>SrvId}) of
-        {ok, SearchSpec2} ->
-            nkservice_actor_db:search(SrvId, {search_service_actors_id, SearchSpec2});
+search_ids(SrvId, SearchSpec, SearchOpts) ->
+    SearchSpec2 = maps:merge(#{srv=>SrvId}, SearchSpec),
+    case nkservice_actor_search:parse(SearchSpec2, SearchOpts) of
+        {ok, SearchSpec3} ->
+            nkservice_actor_db:search(SrvId, {service_search_actors_id, SearchSpec3});
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @doc Deletes actors older than Epoch (secs)
+-spec delete_old(nkservice:id(), class(), type(), binary(),
+                        #{deep=>boolean(), srv=>nksevice:id()}) ->
+    {ok, integer(), Meta::map()}.
+
+delete_old(SrvId, Class, Type, RFC3339, Opts) ->
+    QuerySrvId = maps:get(srv, Opts, SrvId),
+    nkservice_actor_db:search(SrvId, {service_delete_old_actors, QuerySrvId, Class, Type, RFC3339, Opts}).
+
+
+%% @doc Generic deletion of objects
+%% Can use field last_update. Use field 'test' = false for real deletion
+%% @doc Generic search returning actors
+-spec delete_all(nkservice:id(), nkservice_actor_search:search_spec()|#{delete=>boolean()},
+                 nkservice_actor_search:search_opts()) ->
+    {ok|deleted, integer(), Meta::map()}.
+
+delete_all(SrvId, SearchSpec, SearchOpts) ->
+    {Delete, SearchSpec2} = case maps:take(delete, SearchSpec) of
+        error ->
+            {false, SearchSpec};
+        {Test0, SearchSpec0} ->
+            {Test0, SearchSpec0}
+    end,
+    SearchSpec3 = maps:merge(#{srv=>SrvId}, SearchSpec2),
+    case nkservice_actor_search:parse(SearchSpec3, SearchOpts) of
+        {ok, SearchSpec4} ->
+            case nkservice_actor_db:search(SrvId, {service_delete_actors, Delete, SearchSpec4}) of
+                {ok, Total, Meta} when Delete ->
+                    {deleted, Total, Meta};
+                {ok, Total, Meta} ->
+                    {ok, Total, Meta};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+
