@@ -30,7 +30,7 @@
 %% to find its type
 %% Called from graphql_execute:514 (others from :778)
 
-execute({actor, Type, _Actor}) ->
+execute({nkdomain, {actor, Type, _Actor}}) ->
     % lager:warning("NKLOG Resolving type ~p", [Type]),
     {ok, Type};
 

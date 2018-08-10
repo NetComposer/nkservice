@@ -23,7 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/5]).
--export([get_actor_types/1, get_actor_config/2, get_actor_queries/1, get_actor_query_meta/2]).
+-export([get_actor_types/1, get_actor_config/2,
+         get_actor_queries/1, get_actor_query_meta/2,
+         get_actor_connections/1, get_actor_connection_meta/2,
+         get_actor_mutations/1, get_actor_mutation_meta/2]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkDOMAIN GraphQL Plugin: "++Txt, Args)).
 
@@ -62,7 +65,10 @@ plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
             Cache1 = nkservice_config_util:get_cache_map(Spec),
             Modules = maps:get(graphqlActorModules, Parsed, []),
             Cache2 = make_type_cache(Modules, Cache1),
-            Spec2 = nkservice_config_util:set_cache_map(Cache2, Spec),
+            Cache3 = make_queries_cache(Modules, Cache2),
+            Cache4 = make_connections_cache(Modules, Cache3),
+            Cache5 = make_mutations_cache(Modules, Cache4),
+            Spec2 = nkservice_config_util:set_cache_map(Cache5, Spec),
             Debug1 = nkservice_config_util:get_debug_map(Spec2),
             Debug2 = lists:foldl(
                 fun(Type, Acc) -> set_debug(Id, Type, Acc) end,
@@ -122,9 +128,14 @@ plugin_update(_Class, _NewSpec, _OldSpec, _Pid, _Service) ->
 
 -type cache_key() ::
     types |
-    {type, Type::atom()} |       % Get config
+    {type, Type::binary()} |       % Get config
     queries |
-    {query_,meta, Name::atom()}.
+    {query_meta, Name::binary()} |
+    connections |
+    {connection_meta, Name::binary()} |
+    mutations |
+    {mutation_meta, Name::binary()}.
+
 
 %% @doc
 -spec get_domain_cache(nkservice:id(), cache_key()) ->
@@ -140,7 +151,7 @@ get_actor_types(SrvId) ->
 
 
 %% @doc
-get_actor_config(SrvId, Type) when is_atom(Type) ->
+get_actor_config(SrvId, Type) when is_binary(Type) ->
     get_domain_cache(SrvId, {type_config, Type}).
 
 
@@ -150,9 +161,28 @@ get_actor_queries(SrvId) ->
 
 
 %% @doc Get query params
-get_actor_query_meta(SrvId, Name) ->
-    Name2 = nklib_util:to_existing_atom(Name),
-    get_domain_cache(SrvId, {query_meta, Name2}).
+get_actor_query_meta(SrvId, Name) when is_binary(Name) ->
+    get_domain_cache(SrvId, {query_meta, Name}).
+
+
+%% @doc Get all connections
+get_actor_connections(SrvId) ->
+    get_domain_cache(SrvId, connections).
+
+
+%% @doc Get connection params
+get_actor_connection_meta(SrvId, Name) when is_binary(Name) ->
+    get_domain_cache(SrvId, {connection_meta, Name}).
+
+
+%% @doc Get all mutations
+get_actor_mutations(SrvId) ->
+    get_domain_cache(SrvId, mutation).
+
+
+%% @doc Get mutation params
+get_actor_mutation_meta(SrvId, Name) when is_binary(Name) ->
+    get_domain_cache(SrvId, {mutation_meta, Name}).
 
 
 %% ===================================================================
@@ -188,10 +218,10 @@ make_type_cache([Module|Rest], Cache) ->
         Config0 ->
             Config0
     end,
-    Type = nklib_util:to_atom(maps:get(type, Config)),
+    Type = to_bin(maps:get(type, Config)),
     Config2 = #{
         module => Module2,
-        type => nklib_util:to_atom(maps:get(type, Config)),
+        type => Type,
         actor_class => nklib_util:to_binary(maps:get(actor_class, Config)),
         actor_type => nklib_util:to_binary(maps:get(actor_type, Config))
     },
@@ -199,21 +229,93 @@ make_type_cache([Module|Rest], Cache) ->
     Types2 = lists:usort([Type|Types1]),
     Cache2 = set_cache(types, Types2, Cache),
     Cache3 = set_cache({type_config, Type}, Config2, Cache2),
-    Cache4 = maps:fold(
+    make_type_cache(Rest, Cache3).
+
+
+%% @private
+make_queries_cache([], Cache) ->
+    Cache;
+
+make_queries_cache([Module|Rest], Cache) ->
+    Module2 = nklib_util:to_atom(Module),
+    Cache2 = maps:fold(
         fun
-            (Name, {_Result, #{meta:=Meta}}, Acc) ->
+            (Name, {_Result, Opts}, Acc) ->
+                Name2 = to_bin(Name),
                 Queries1 = get_cache(queries, Acc, []),
-                Queries2 = lists:usort([Name|Queries1]),
+                Queries2 = lists:usort([Name2|Queries1]),
                 Acc2 = set_cache(queries, Queries2, Acc),
-                set_cache({query_meta, Name}, Meta, Acc2);
+                Meta1 = maps:get(meta, Opts, #{}),
+                Meta2 = Meta1#{module => Module2},
+                set_cache({query_meta, Name2}, Meta2, Acc2);
             (_Name, _, Acc) ->
                 Acc
         end,
-        Cache3,
+        Cache,
         Module2:schema(queries)
     ),
-    make_type_cache(Rest, Cache4).
+    make_queries_cache(Rest, Cache2).
 
+
+%% @private
+make_connections_cache([], Cache) ->
+    Cache;
+
+make_connections_cache([Module|Rest], Cache) ->
+    Module2 = nklib_util:to_atom(Module),
+    Cache2 = case erlang:function_exported(Module2, connections, 1) of
+        true ->
+            Types = get_cache(types, Cache, []),
+            lists:foldl(
+                fun(Type, Acc1) ->
+                    maps:fold(
+                        fun
+                            (Name, {_Result, Opts}, Acc2) ->
+                                Name2 = to_bin(Name),
+                                Connection1 = get_cache(connections, Acc2, []),
+                                Connection2 = lists:usort([Name2|Connection1]),
+                                Acc3 = set_cache(connections, Connection2, Acc2),
+                                Meta1 = maps:get(meta, Opts, #{}),
+                                Meta2 = Meta1#{module => Module2},
+                                set_cache({connection_meta, Name2}, Meta2, Acc3);
+                            (_Name, _, Acc2) ->
+                                Acc2
+                        end,
+                        Acc1,
+                        Module2:connections(Type))
+                end,
+                Cache,
+                Types
+            );
+        false ->
+            Cache
+    end,
+    make_connections_cache(Rest, Cache2).
+
+
+%% @private
+make_mutations_cache([], Cache) ->
+    Cache;
+
+make_mutations_cache([Module|Rest], Cache) ->
+    Module2 = nklib_util:to_atom(Module),
+    Cache2 = maps:fold(
+        fun
+            (Name, {_Result, Opts}, Acc) ->
+                Name2 = to_bin(Name),
+                Queries1 = get_cache(mutations, Acc, []),
+                Queries2 = lists:usort([Name2|Queries1]),
+                Acc2 = set_cache(mutations, Queries2, Acc),
+                Meta1 = maps:get(meta, Opts, #{}),
+                Meta2 = Meta1#{module => Module2},
+                set_cache({mutation_meta, Name2}, Meta2, Acc2);
+            (_Name, _, Acc) ->
+                Acc
+        end,
+        Cache,
+        Module2:schema(mutations)
+    ),
+    make_mutations_cache(Rest, Cache2).
 
 
 
@@ -275,9 +377,9 @@ insert_listeners(Id, Pid, SpecList) ->
     end.
 
 
-%%%% @private
-%%to_bin(T) when is_binary(T)-> T;
-%%to_bin(T) -> nklib_util:to_binary(T).
+%% @private
+to_bin(T) when is_binary(T)-> T;
+to_bin(T) -> nklib_util:to_binary(T).
 
 
 

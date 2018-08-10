@@ -26,27 +26,62 @@
 
 -include("nkservice.hrl").
 
-
-%% @doc Called at the beginning of the mutation process
-execute(Ctx, _, MutationName, #{<<"input">>:=Params}) ->
+%% @doc Called at the beginning of the query processing
+%% Must reply with {ok, ActorObj} or {error, term()} or {error, {term(), term()}}.
+execute(Ctx, _DummyObj, MutationName, Params) ->
     #{nkmeta:=#{start:=Start, srv:=SrvId}} = Ctx,
-    % Find who is in charge of this query
-    case nklib_types:get_module(nkdomain_mutation, MutationName) of
-        undefined ->
-            {error, unknown_mutation};
-        Module ->
+    case MutationName of
+        <<"node">> ->
+            #{<<"id">>:=UID} = Params,
+            case ?CALL_SRV(SrvId, nkservice_graphql_get_uid, [SrvId, UID]) of
+                {ok, ActorObj} ->
+                    {ok, ActorObj};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        _ ->
             Params2 = remove_nulls(Params),
-            try
-                Res = ?CALL_SRV(SrvId, nkservice_graphql_mutation, [MutationName, Module, Params2, Ctx]),
-                lager:info("Mutation time: ~p", [nklib_util:m_timestamp()-Start]),
-                Res
-            catch
-                throw:Throw ->
-                    {error, Throw}
-            end
+            Res = case call_core_mutation(SrvId, MutationName, Params2, Ctx) of
+                continue ->
+                    case call_actor_mutation(SrvId, MutationName, Params2, Ctx) of
+                        continue ->
+                            {error, {mutation_unknown, MutationName}};
+                        {ok, Obj} ->
+                            {ok, Obj};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                {ok, Obj} ->
+                    {ok, Obj};
+                {error, Error} ->
+                    {error, Error}
+            end,
+            lager:info("Mutation time: ~p", [nklib_util:m_timestamp()-Start]),
+            lager:error("NKLOG Mutation Result ~p", [Res]),
+            Res
     end.
 
 
 %% @private
 remove_nulls(Map) ->
     maps:filter(fun(_K, V) -> V /= null end, Map).
+
+
+%% @private
+call_actor_mutation(SrvId, Name, Params, Ctx) ->
+    case catch nkservice_graphql_plugin:get_actor_query_meta(SrvId, Name) of
+        #{module:=Module}=Meta ->
+            case erlang:function_exported(Module, mutation, 5) of
+                true ->
+                    Module:mutation(SrvId, Name, Params, Meta, Ctx);
+                false ->
+                    continue
+            end;
+        _ ->
+            continue
+    end.
+
+
+%% @private
+call_core_mutation(SrvId, Name, Params, Ctx) ->
+    ?CALL_SRV(SrvId, nkservice_graphql_mutation, [SrvId, Name, Params, #{}, Ctx]).

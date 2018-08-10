@@ -118,11 +118,10 @@ get_query({service_search_fts, SrvId, Field, Word, Params}, _Opts) ->
 %% Params is nkdomain_search:search_spec()
 get_query({service_search_actors, SearchSpec}, _Opts) ->
     % lager:error("NKLOG PARAMS ~p", [SearchSpec]),
-    From = maps:get(from, SearchSpec, 0),
-    Size = maps:get(size, SearchSpec, 100),
+    {From, Size, BaseSort} = get_pagination(SearchSpec),
     Totals = maps:get(totals, SearchSpec, true),
     SQLFilters = make_sql_filters(SearchSpec),
-    SQLSort = make_sql_sort(SearchSpec),
+    SQLSort = make_sql_sort(SearchSpec, BaseSort),
 
     % We could use SELECT COUNT(*) OVER(),src,uid... but it doesn't work if no
     % rows are returned
@@ -154,11 +153,10 @@ get_query({service_search_actors, SearchSpec}, _Opts) ->
 
 get_query({service_search_actors_id, SearchSpec}, _Opts) ->
     % lager:error("NKLOG PARAMS ~p", [SearchSpec]),
-    From = maps:get(from, SearchSpec, 0),
-    Limit = maps:get(size, SearchSpec, 100),
+    {From, Size, BaseSort} = get_pagination(SearchSpec),
     Totals = maps:get(totals, SearchSpec, true),
     SQLFilters = make_sql_filters(SearchSpec),
-    SQLSort = make_sql_sort(SearchSpec),
+    SQLSort = make_sql_sort(SearchSpec, BaseSort),
     Query = [
         case Totals of
             true ->
@@ -173,7 +171,7 @@ get_query({service_search_actors_id, SearchSpec}, _Opts) ->
         <<"SELECT uid,srv,class,actor_type,name FROM actors">>,
         SQLFilters,
         SQLSort,
-        <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Limit),
+        <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
         <<";">>
     ],
     ResultFun = case Totals of
@@ -299,9 +297,30 @@ pgsql_delete([{{select, _}, [{Total}], _}], Meta) ->
 
 
 %% ===================================================================
-%% Filters
+%% Pagination
 %% ===================================================================
 
+%% @private
+get_pagination(SearchSpec) ->
+    case maps:find(first, SearchSpec) of
+        error ->
+            case maps:find(last, SearchSpec) of
+                error ->
+                    From0 = maps:get(from, SearchSpec, 0),
+                    Size0 = maps:get(size, SearchSpec, 10),
+                    {From0, Size0, []};
+                {ok, Last} ->
+                    {0, Last, [{desc, <<"last_update">>, string}]}
+            end;
+        {ok, First} ->
+            {0, First, [{asc, <<"last_update">>, string}]}
+    end.
+
+
+
+%% ===================================================================
+%% Filters
+%% ===================================================================
 
 %% @private
 make_sql_filters(#{srv:=SrvId}=Params) ->
@@ -439,13 +458,25 @@ get_op(Field, gte, Value) -> [Field, <<" >= ">>, quote(Value)].
 
 
 %% @private
+
+get_field_db_name(<<"uid">>) -> <<"uid">>;
+get_field_db_name(<<"srv">>) -> <<"srv">>;
+get_field_db_name(<<"class">>) -> <<"class">>;
 get_field_db_name(<<"type">>) -> <<"actor_type">>;
-get_field_db_name(Field) -> Field.
+get_field_db_name(<<"vsn">>) -> <<"vsn">>;
+get_field_db_name(<<"path">>) -> <<"path">>;
+get_field_db_name(<<"last_update">>) -> <<"last_update">>;
+get_field_db_name(<<"expires">>) -> <<"expires">>;
+get_field_db_name(<<"fts_word">>) -> <<"fts_word">>;
+get_field_db_name(<<"data.", _/binary>>=Field) -> Field;
+get_field_db_name(<<"metadata.", _/binary>>=Field) -> Field;
+% Any other field should be inside data in this implementation
+get_field_db_name(Field) -> <<"data.", Field/binary>>.
 
 
 %% @private
-make_sql_sort(Params) ->
-    Sort = expand_sort(maps:get(sort, Params, []), []),
+make_sql_sort(Params, BaseFilter) ->
+    Sort = expand_sort(maps:get(sort, Params, []), BaseFilter),
     make_sort(Sort, []).
 
 
@@ -518,9 +549,9 @@ filter_path(SrvId, Opts) ->
     Path = nkservice_actor_util:make_reversed_srv_id(SrvId),
     case Opts of
         #{deep:=true} ->
-            [<<"path LIKE ">>, quote(<<Path/binary, $%>>)];
+            [<<"(path LIKE ">>, quote(<<Path/binary, $%>>), <<")">>];
         _ ->
-            [<<"path = ">>, quote(Path)]
+            [<<"(path = ">>, quote(Path), <<")">>]
     end.
 
 

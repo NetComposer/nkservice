@@ -37,7 +37,40 @@
 execute(Ctx, Obj, Field, Args) ->
     #{nkmeta:=#{srv:=SrvId}} = Ctx,
     % lager:notice("NKLOG GraphQL Obj Execute: ~p ~p", [Field, Obj]),
-    Res = ?CALL_SRV(SrvId, nkservice_graphql_execute, [SrvId, Field, Obj, Args]),
-    % lager:warning("NKLOG GraphQL Obj Execute: ~p", [Res]),
+    Res = case call_core_execute(SrvId, Field, Obj, Args) of
+        continue ->
+            case call_actor_execute(SrvId, Field, Obj, Args) of
+                continue ->
+                    {error, {field_unknown, Field}};
+                {ok, Obj2} ->
+                    {ok, Obj2};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {ok, Obj2} ->
+            {ok, Obj2};
+        {error, Error} ->
+            {error, Error}
+    end,
+    % lager:error("NKLOG Execute Result ~p", [Res]),
     Res.
 
+
+%% @private
+call_actor_execute(SrvId, Field, Obj, Args) ->
+    case catch nkservice_graphql_plugin:get_actor_connection_meta(SrvId, Field) of
+        #{module:=Module}=Meta ->
+            case erlang:function_exported(Module, execute, 5) of
+                true ->
+                    Module:execute(SrvId, Field, Obj, Meta, Args);
+                false ->
+                    continue
+            end;
+        _ ->
+            continue
+    end.
+
+
+%% @private
+call_core_execute(SrvId, Field, Obj, Args) ->
+    ?CALL_SRV(SrvId, nkservice_graphql_execute, [SrvId, Field, Obj, #{}, Args]).

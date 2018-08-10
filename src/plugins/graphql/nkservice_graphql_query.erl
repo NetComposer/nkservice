@@ -27,7 +27,6 @@
 
 %% @doc Called at the beginning of the query processing
 %% Must reply with {ok, ActorObj} or {error, term()} or {error, {term(), term()}}.
-
 execute(Ctx, _DummyObj, QueryName, Params) ->
     #{nkmeta:=#{start:=Start, srv:=SrvId}} = Ctx,
     case QueryName of
@@ -41,15 +40,23 @@ execute(Ctx, _DummyObj, QueryName, Params) ->
             end;
         _ ->
             Params2 = remove_nulls(Params),
-            Params3 = case catch nkservice_graphql_plugin:get_actor_query_meta(SrvId, QueryName) of
-                Meta when is_map(Meta) ->
-                    Params2#{query_meta=>Meta};
-                {'EXIT', _} ->
-                    Params2
+            Res = case call_core_query(SrvId, QueryName, Params2, Ctx) of
+                continue ->
+                    case call_actor_query(SrvId, QueryName, Params2, Ctx) of
+                        continue ->
+                            {error, {query_unknown, QueryName}};
+                        {ok, Obj} ->
+                            {ok, Obj};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                {ok, Obj} ->
+                    {ok, Obj};
+                {error, Error} ->
+                    {error, Error}
             end,
-            Res = ?CALL_SRV(SrvId, nkservice_graphql_query, [SrvId, QueryName, Params3, Ctx]),
-            %lager:error("NKLOG RES ~p", [Res]),
             lager:info("Query time: ~p", [nklib_util:m_timestamp()-Start]),
+            %lager:error("NKLOG Query Result ~p", [Res]),
             Res
     end.
 
@@ -59,3 +66,21 @@ remove_nulls(Map) ->
     maps:filter(fun(_K, V) -> V /= null end, Map).
 
 
+%% @private
+call_actor_query(SrvId, Name, Params, Ctx) ->
+    case catch nkservice_graphql_plugin:get_actor_query_meta(SrvId, Name) of
+        #{module:=Module}=Meta ->
+            case erlang:function_exported(Module, query, 5) of
+                true ->
+                    Module:query(SrvId, Name, Params, Meta, Ctx);
+                false ->
+                    continue
+            end;
+        _ ->
+            continue
+    end.
+
+
+%% @private
+call_core_query(SrvId, Name, Params, Ctx) ->
+    ?CALL_SRV(SrvId, nkservice_graphql_query, [SrvId, Name, Params, #{}, Ctx]).

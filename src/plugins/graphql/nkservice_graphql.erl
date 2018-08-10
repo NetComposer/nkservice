@@ -249,6 +249,9 @@ make_error(SrvId, Error) ->
 
 
 %% @private
+do_make_error(SrvId, #{key:={resolver_error, {resolver_error, _}=Key}}=Error) ->
+    do_make_error(SrvId, Error#{key:=Key});
+
 do_make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
     Path2 = list_to_binary([<<" (">>, nklib_util:bjoin(Path, $.), <<" )">>]),
     case Key of
@@ -266,11 +269,10 @@ do_make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
             {<<"internal_error">>, <<Msg/binary, Path2/binary>>};
         {unknown_argument, Arg} ->
             {<<"unknown_argument">>, <<"Unknown argument '", Arg/binary, "'", Path2/binary>>};
-
-
+        {operation_not_found, _} ->
+            {<<"operation_not_found">>, <<Msg/binary, Path2/binary>>};
         {excess_fields_in_object, Map} ->
             {<<"excess_fields_in_object">>, nklib_json:encode(Map)};
-
         ErrReason when is_atom(ErrReason) ->
             % Happens for unknown_field, ...
             {to_bin(ErrReason), <<Msg/binary, Path2/binary>>};

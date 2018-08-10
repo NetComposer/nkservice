@@ -78,7 +78,7 @@ make_schema(SrvId, types) ->
                     "type ", to_bin(Name), " implements Node, Actor {\n",
                     parse_fields(Fields2), "}\n\n",
                     "type ", to_bin(Name), "SearchResult {\n",
-                    parse_fields(#{actors=>{list_no_null, Name}, totalCount=>{no_null, integer}}),
+                    parse_fields(#{actors=>{list, Name}, totalCount=>integer}),
                     "}\n\n"
                 ];
             connection ->
@@ -237,7 +237,14 @@ get_base_type(Name, Bin) ->
 %% @private
 add_type_connections(SrvId, ActorType, Fields) ->
     lists:foldl(
-        fun(Mod, Acc) -> maps:merge(Acc, Mod:connections(ActorType)) end,
+        fun(Mod, Acc) ->
+            case erlang:function_exported(Mod, connections, 1) of
+                true ->
+                    maps:merge(Acc, Mod:connections(ActorType));
+                false ->
+                    Acc
+            end
+        end,
         Fields,
         all_actor_modules(SrvId)).
 

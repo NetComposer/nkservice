@@ -22,7 +22,7 @@
 -module(nkservice_graphql_schema).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([actor_query/3]).
+-export([actor_query/2]).
 -export([make_schema/1]).
 -export_type([schema_class/0, schema_type/0]).
 
@@ -135,9 +135,27 @@
 -callback schema(nkservice:id()) ->
     schema_def().
 
+
+%% Called when creating schema, for a type with class=actor
+%% (nkservice_graphql_schema_lib)
 -callback connections(name()) ->
     #{name() => field_value()}.
 
+
+%% @doc Called when a query, connection or mutation are defined in the callback module
+-callback query(nkservice:id(), Name::binary(), Params::map(), Meta::map(), Ctx::map()) ->
+    {ok, nkservice_graphql:object()} | {error, term()} |  continue.
+
+
+-callback mutation(nkservice:id(), Name::binary(), Params::map(), Meta::map(), Ctx::map()) ->
+    {ok, nkservice_graphql:object()} | {error, term()} |  continue.
+
+
+-callback execute(nkservice:id(), Field::binary(), nkservice_graphql:object(), Meta::map(), Args::map()) ->
+    {ok, nkservice_graphql:object()} | {error, term()} |  continue.
+
+
+-optional_callbacks([connections/1, query/5, mutation/5, execute/5]).
 
 
 %% ===================================================================
@@ -146,20 +164,19 @@
 
 
 %% @doc
-% Uses ActorSearchResult, ActorQueryFilter, ActorQuerySort
-% ActorSearchResult is created automatically by type if class = actor
+% Refers to ActorSearchResult, ActorQueryFilter, ActorQuerySort
+% They are created automatically by type if class = actor
 % (nkservice_graphql_schema_lib)
-% ActorQueryFilter and ActorQuerySort
-actor_query(BaseType, Params, Meta) ->
-    Result = nklib_util:to_atom(<<(to_bin(BaseType))/binary, "SearchResult">>),
-    Filter = nklib_util:to_atom(<<(to_bin(BaseType))/binary, "FilterSpec">>),
-    Sort = nklib_util:to_atom(<<(to_bin(BaseType))/binary, "SortFields">>),
-    {Result, #{
+actor_query(BaseType, Opts) ->
+    Result = <<(to_bin(BaseType))/binary, "SearchResult">>,
+    Filter = <<(to_bin(BaseType))/binary, "FilterSpec">>,
+    Sort = <<(to_bin(BaseType))/binary, "SortFields">>,
+    Params = maps:get(params, Opts, #{}),
+    {Result, Opts#{
         params => Params#{
             filter => Filter,
             sort => {list, Sort}
-        },
-        meta => Meta
+        }
     }}.
 
 

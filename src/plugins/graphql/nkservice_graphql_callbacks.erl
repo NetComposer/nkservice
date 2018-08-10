@@ -25,9 +25,9 @@
 -export([msg/1]).
 -export([nkservice_graphql_core_schema/3,
          nkservice_graphql_get_uid/2,
-         nkservice_graphql_query/4,
-         nkservice_graphql_mutation/4,
-         nkservice_graphql_execute/4]).
+         nkservice_graphql_query/5,
+         nkservice_graphql_mutation/5,
+         nkservice_graphql_execute/5]).
 -export([nkservice_rest_http/4]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkDOMAIN GraphQL Callbacks: "++Txt, Args)).
@@ -51,6 +51,8 @@
 
 
 %% @doc
+msg({query_unknown, Query}) ->          {"Query '~s' unknown", [Query]};
+msg({mutation_unknown, Query}) ->       {"Mutation '~s' unknown", [Query]};
 msg(_)   		                        -> continue.
 
 
@@ -79,31 +81,30 @@ nkservice_graphql_get_uid(_SrvId, _UID) ->
 
 %% @doc Process an incoming graphql query
 %% Can retry any object, later used in execute, etc.
--spec nkservice_graphql_query(binary(), module(), map(), map()) ->
-    {ok, nkservice_graphql:object()} | {error, term()} |  continue().
+-spec nkservice_graphql_query(nkservice:id(), binary(), map(), map(), map()) ->
+    {ok, nkservice_graphql:object()} | {error, nkservice_graphql:error()} |  continue().
 
-nkservice_graphql_query(_SrvId, _Query, _Params, _Ctx) ->
-    {error, query_not_found}.
+nkservice_graphql_query(_SrvId, _Name, _Params, _Meta, _Ctx) ->
+    continue.
 
 
 %% @doc Process an incoming graphql mutation
--spec nkservice_graphql_mutation(binary(), module(), map(), map()) ->
+-spec nkservice_graphql_mutation(nkservice:id(), binary(), map(), map(), map()) ->
     {ok, nkservice_graphql:object()} | {error, nkservice_graphql:error()} | continue().
 
-nkservice_graphql_mutation(QueryName, Module, Params, Ctx) ->
-    Module:object_mutation(QueryName, Params, Ctx).
+nkservice_graphql_mutation(_SrvId, _Name, _Params, _Meta, _Ctx) ->
+    continue.
 
 
 %% @doc Process an execute on a field
--spec nkservice_graphql_execute(binary(), module(), map(), map()) ->
+-spec nkservice_graphql_execute(nkservice:id(), binary(), nkservice_graphql:object(), map(), map()) ->
     {ok, term()} | null | {error, nkservice_graphql:error()} | continue().
 
-nkservice_graphql_execute(_SrvId, Field, Obj, _Args) when is_map(Obj) ->
+nkservice_graphql_execute(_SrvId, Field, Obj, _Meta, _Args) when is_map(Obj) ->
     {ok, maps:get(Field, Obj, null)};
 
-nkservice_graphql_execute(_SrvId, Field, Object, _Args) ->
-    lager:error("NKLOG UNKNOWN OBJECT ~p ~p", [Field, Object]),
-    {error, unknown_object}.
+nkservice_graphql_execute(_SrvId, _Field, _Obj, _Meta, _Args) ->
+    continue.
 
 
 

@@ -22,7 +22,7 @@
 -module(nkservice_actor_search).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([parse/1, parse/2]).
--export_type([search_spec/0]).
+-export_type([search_spec/0, filter/0]).
 
 -include("nkservice_actor.hrl").
 
@@ -33,6 +33,7 @@
 %% ===================================================================
 
 
+
 -type search_spec() ::
     #{
         srv => nkservice:id(),
@@ -40,14 +41,19 @@
         from => pos_integer(),
         size => pos_integer(),
         totals => boolean(),
-        filter => #{
-            'and' => [filter_spec()],
-            'or' => [filter_spec()],
-            'not' => [filter_spec()]
-        },
-        sort => [sort_spec()]
+        filter => filter(),
+        sort => [sort_spec()],
+        last => pos_integer(),
+        first => pos_integer()
     }.
 
+
+-type filter() ::
+    #{
+        'and' => [filter_spec()],
+        'or' => [filter_spec()],
+        'not' => [filter_spec()]
+    }.
 
 % '.' used to separate levels in JSON
 -type field_name() :: binary().
@@ -129,6 +135,8 @@ search_spec_syntax() ->
             'not' => {list, search_spec_syntax_filter()}
         },
         sort => {list, search_spec_syntax_sort()},
+        last => pos_integer,
+        first => pos_integer,
         '__mandatory' => [srv]
     }.
 
