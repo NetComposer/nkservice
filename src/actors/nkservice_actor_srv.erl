@@ -311,7 +311,7 @@ init({create, Actor, StartOpts}) ->
                     State2 = do_event(created, State),
                     do_post_init(State2);
                 {error, Error} ->
-                    {error, Error}
+                    {stop, Error}
             end;
         {error, Error} ->
             {stop, Error}
@@ -882,6 +882,7 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
         end,
         Links = maps:get(<<"links">>, Meta, #{}),
         UpdLinks = maps:get(<<"links">>, UpdMeta, Links),
+
         UpdMeta2 = case UpdLinks == Links of
             true ->
                 UpdMeta;

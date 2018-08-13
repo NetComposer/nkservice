@@ -45,7 +45,7 @@
 -type schema_type() ::
     id | integer | boolean | string | object | time | atom().
 
--type name() :: atom().
+-type name() :: binary() | atom().  % Inputs from nc always binary
 
 -type field_value() ::
     schema_type() | {schema_type(), field_opts()} |
@@ -138,7 +138,7 @@
 
 %% Called when creating schema, for a type with class=actor
 %% (nkservice_graphql_schema_lib)
--callback connections(name()) ->
+-callback connections(Name::binary()) ->
     #{name() => field_value()}.
 
 

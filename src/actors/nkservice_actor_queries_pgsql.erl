@@ -117,11 +117,12 @@ get_query({service_search_fts, SrvId, Field, Word, Params}, _Opts) ->
 
 %% Params is nkdomain_search:search_spec()
 get_query({service_search_actors, SearchSpec}, _Opts) ->
-    % lager:error("NKLOG PARAMS ~p", [SearchSpec]),
-    {From, Size, BaseSort} = get_pagination(SearchSpec),
+    % lager:error("NKLOG SEARCH SPEC ~p", [SearchSpec]),
+    From = maps:get(from, SearchSpec, 0),
+    Size = maps:get(size, SearchSpec, 10),
     Totals = maps:get(totals, SearchSpec, true),
     SQLFilters = make_sql_filters(SearchSpec),
-    SQLSort = make_sql_sort(SearchSpec, BaseSort),
+    SQLSort = make_sql_sort(SearchSpec),
 
     % We could use SELECT COUNT(*) OVER(),src,uid... but it doesn't work if no
     % rows are returned
@@ -152,11 +153,12 @@ get_query({service_search_actors, SearchSpec}, _Opts) ->
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
 get_query({service_search_actors_id, SearchSpec}, _Opts) ->
-    % lager:error("NKLOG PARAMS ~p", [SearchSpec]),
-    {From, Size, BaseSort} = get_pagination(SearchSpec),
+    % lager:error("NKLOG SEARCH SPEC ~p", [SearchSpec]),
+    From = maps:get(from, SearchSpec, 0),
+    Size = maps:get(size, SearchSpec, 10),
     Totals = maps:get(totals, SearchSpec, true),
     SQLFilters = make_sql_filters(SearchSpec),
-    SQLSort = make_sql_sort(SearchSpec, BaseSort),
+    SQLSort = make_sql_sort(SearchSpec),
     Query = [
         case Totals of
             true ->
@@ -297,28 +299,6 @@ pgsql_delete([{{select, _}, [{Total}], _}], Meta) ->
 
 
 %% ===================================================================
-%% Pagination
-%% ===================================================================
-
-%% @private
-get_pagination(SearchSpec) ->
-    case maps:find(first, SearchSpec) of
-        error ->
-            case maps:find(last, SearchSpec) of
-                error ->
-                    From0 = maps:get(from, SearchSpec, 0),
-                    Size0 = maps:get(size, SearchSpec, 10),
-                    {From0, Size0, []};
-                {ok, Last} ->
-                    {0, Last, [{desc, <<"last_update">>, string}]}
-            end;
-        {ok, First} ->
-            {0, First, [{asc, <<"last_update">>, string}]}
-    end.
-
-
-
-%% ===================================================================
 %% Filters
 %% ===================================================================
 
@@ -412,9 +392,9 @@ make_filter([{Field, exists, Bool, _}|Rest], Acc)
     make_filter(Rest, Acc2);
 
 make_filter([{Field, exists, Bool, _Type}|Rest], Acc) ->
-    L = binary:split(Field, <<".">>, [global]),
-    [Field2|Base1] = lists:reverse(L),
-    Field3 = get_field_db_name(Field2),
+    Field2 = get_field_db_name(Field),
+    L = binary:split(Field2, <<".">>, [global]),
+    [Field3|Base1] = lists:reverse(L),
     Base2 = nklib_util:bjoin(lists:reverse(Base1), $.),
     Filter = [
         case Bool of true -> <<"(">>; false -> <<"(NOT ">> end,
@@ -458,25 +438,26 @@ get_op(Field, gte, Value) -> [Field, <<" >= ">>, quote(Value)].
 
 
 %% @private
-
 get_field_db_name(<<"uid">>) -> <<"uid">>;
 get_field_db_name(<<"srv">>) -> <<"srv">>;
 get_field_db_name(<<"class">>) -> <<"class">>;
 get_field_db_name(<<"type">>) -> <<"actor_type">>;
+get_field_db_name(<<"name">>) -> <<"name">>;
 get_field_db_name(<<"vsn">>) -> <<"vsn">>;
 get_field_db_name(<<"path">>) -> <<"path">>;
 get_field_db_name(<<"last_update">>) -> <<"last_update">>;
 get_field_db_name(<<"expires">>) -> <<"expires">>;
 get_field_db_name(<<"fts_word">>) -> <<"fts_word">>;
 get_field_db_name(<<"data.", _/binary>>=Field) -> Field;
+get_field_db_name(<<"metadata.updateTime">>) -> <<"last_update">>;
 get_field_db_name(<<"metadata.", _/binary>>=Field) -> Field;
 % Any other field should be inside data in this implementation
 get_field_db_name(Field) -> <<"data.", Field/binary>>.
 
 
 %% @private
-make_sql_sort(Params, BaseFilter) ->
-    Sort = expand_sort(maps:get(sort, Params, []), BaseFilter),
+make_sql_sort(Params) ->
+    Sort = expand_sort(maps:get(sort, Params, []), []),
     make_sort(Sort, []).
 
 

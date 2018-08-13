@@ -240,28 +240,13 @@ add_type_connections(SrvId, ActorType, Fields) ->
         fun(Mod, Acc) ->
             case erlang:function_exported(Mod, connections, 1) of
                 true ->
-                    maps:merge(Acc, Mod:connections(ActorType));
+                    maps:merge(Acc, Mod:connections(to_bin(ActorType)));
                 false ->
                     Acc
             end
         end,
         Fields,
         all_actor_modules(SrvId)).
-
-
-%%%% @private
-%%core_actor_fields(SrvId) ->
-%%    ?CALL_SRV(SrvId, nkservice_graphql_core_actor_fields, [#{}]).
-%%
-%%
-%%%% @private
-%%core_actor_filter_fields(SrvId) ->
-%%    ?CALL_SRV(SrvId, nkservice_graphql_core_actor_filter_fields, [#{}]).
-%%
-%%
-%%%% @private
-%%core_actor_sort_fields(SrvId) ->
-%%    ?CALL_SRV(SrvId, nkservice_graphql_core_actor_sort_fields, [#{}]).
 
 
 %% @private

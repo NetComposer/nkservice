@@ -42,9 +42,7 @@
         size => pos_integer(),
         totals => boolean(),
         filter => filter(),
-        sort => [sort_spec()],
-        last => pos_integer(),
-        first => pos_integer()
+        sort => [sort_spec()]
     }.
 
 
@@ -135,8 +133,6 @@ search_spec_syntax() ->
             'not' => {list, search_spec_syntax_filter()}
         },
         sort => {list, search_spec_syntax_sort()},
-        last => pos_integer,
-        first => pos_integer,
         '__mandatory' => [srv]
     }.
 

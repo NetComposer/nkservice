@@ -788,7 +788,7 @@ do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
         {error, {pgsql_error, #{code := <<"23503">>}}} ->
             throw(foreign_key_violation);
         {error, {pgsql_error, #{code := <<"XX000">>}}=Error} ->
-            ?LLOG(warning, "no_transaction PGSQL error: ~p\n~s", [Error, list_to_binary([Query])]),
+            ?LLOG(notice, "no_transaction PGSQL error: ~p\n~s", [Error, list_to_binary([Query])]),
             throw(no_transaction);
         {error, {pgsql_error, #{code := <<"42P01">>}}} ->
             throw(relation_unknown);
