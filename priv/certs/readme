@@ -1,0 +1,8 @@
+# RSA Private Key
+openssl genrsa -out rsa-2048.pem 2048
+
+# EC Private Key (Alice)
+openssl ecparam -name secp256r1 -genkey -noout -out ec-secp256r1-alice.pem
+
+# EC Private Key (Bob)
+openssl ecparam -name secp256r1 -genkey -noout -out ec-secp256r1-bob.pem

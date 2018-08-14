@@ -22,7 +22,7 @@
 
 -record(actor, {
     id :: #actor_id{},
-    vsn :: nkservice_actor:vsn(),             %% DB version
+    vsn :: nkservice_actor:vsn(),
     data = #{} :: nkservice_actor:data(),
     metadata = #{} :: nkservice_actor:metadata(),
     status :: nkservice_actor:status() | undefined
