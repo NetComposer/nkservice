@@ -94,8 +94,7 @@ compile_module(ModuleId, ModSpec, Bin, #{id:=SrvId}=Service) ->
     catch
         error:{lua_error, Reason, Trace} ->
             throw({lua_error, {Reason, Trace}});
-        Class:Error ->
-            Trace = erlang:get_stacktrace(),
+        Class:Error:Trace ->
             throw({error, {Class, {Error, Trace}}})
     end.
 

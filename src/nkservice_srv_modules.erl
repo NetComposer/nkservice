@@ -257,8 +257,8 @@ call_module(ModuleId, Fun, Args, #state{id=SrvId}) ->
                 {error, Error}
         end
     catch
-        Class:CError ->
-            {error, {Class, {CError, erlang:get_stacktrace()}}}
+        Class:CError:Trace ->
+            {error, {Class, {CError, Trace}}}
     end.
 
 

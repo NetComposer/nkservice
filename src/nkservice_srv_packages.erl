@@ -318,8 +318,8 @@ safe_call(Fun) ->
         Res ->
             Res
     catch
-        Class:CError ->
-            {error, {Class, {CError, erlang:get_stacktrace()}}}
+        Class:CError:Trace ->
+            {error, {Class, {CError, Trace}}}
     end.
 
 

@@ -314,8 +314,7 @@ handle_call({call, Fun, Args}, _From, #state{luerl=LuaState1}=State) ->
     catch
         error:{lua_error, Reason, _} ->
             {reply, {error, {lua_error, Reason}}, State};
-        error:Error ->
-            Trace = erlang:get_stacktrace(),
+        error:Error:Trace ->
             {reply, {error, {lua_error, {Error, Trace}}}, State}
     end;
 
@@ -326,8 +325,7 @@ handle_call({get_table, Name}, _From, #state{luerl=LuaState1}=State) ->
     catch
         error:{lua_error, Reason, _} ->
             {reply, {error, {lua_error, Reason}}, State};
-        error:Error ->
-            Trace = erlang:get_stacktrace(),
+        error:Error:Trace ->
             {reply, {error, {lua_error, {Error, Trace}}}, State}
     end;
 
@@ -338,8 +336,7 @@ handle_call({set_table, Name, Value}, _From, #state{luerl=LuaState1}=State) ->
     catch
         error:{lua_error, Reason, _} ->
             {reply, {error, {lua_error, Reason}}, State};
-        error:Error ->
-            Trace = erlang:get_stacktrace(),
+        error:Error:Trace ->
             {reply, {error, {lua_error, {Error, Trace}}}, State}
     end;
 

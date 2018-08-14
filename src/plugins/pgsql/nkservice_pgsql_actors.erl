@@ -750,9 +750,9 @@ query(SrvId, PackageId, Query, QueryMeta) ->
                             end
                     end,
                     {error, Throw};
-                Class:CError ->
+                Class:CError:Trace ->
                     % For other errors, we better close the connection
-                    ?LLOG(warning, "error in query: ~p, ~p, ~p", [Class, CError, erlang:get_stacktrace()]),
+                    ?LLOG(warning, "error in query: ~p, ~p, ~p", [Class, CError, Trace]),
                     nkservice_pgsql:stop_connection(Pid),
                     {error, internal_error}
             after

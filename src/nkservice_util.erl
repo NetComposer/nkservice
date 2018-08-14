@@ -142,8 +142,7 @@ luerl_api(SrvId, PackageId, Mod, Fun, Args, St) ->
         end,
         {Res, St}
     catch
-        Class:CError  ->
-            Trace = erlang:get_stacktrace(),
+        Class:CError:Trace ->
             lager:notice("NkSERVICE LUERL ~s (~s, ~s:~s(~p)) API Error ~p:~p ~p",
                          [SrvId, PackageId, Mod, Fun, Args, Class, CError, Trace]),
             {[nil], St}
