@@ -42,6 +42,7 @@ quote(Field) when is_list(Field) -> [$', Field, $'];
 quote(Field) when is_integer(Field); is_float(Field) -> to_bin(Field);
 quote(true) -> <<"TRUE">>;
 quote(false) -> <<"FALSE">>;
+quote(null) -> <<"NULL">>;
 quote(Field) when is_atom(Field) -> quote(atom_to_binary(Field, utf8));
 quote(Field) when is_map(Field) ->
     case nklib_json:encode(Field) of
@@ -59,6 +60,7 @@ quote_double(Field) when is_list(Field) -> [$", Field, $"];
 quote_double(Field) when is_integer(Field); is_float(Field) -> to_bin(Field);
 quote_double(true) -> <<"TRUE">>;
 quote_double(false) -> <<"FALSE">>;
+quote_double(null) -> <<"NULL">>;
 quote_double(Field) when is_atom(Field) -> quote_double(atom_to_binary(Field, utf8));
 quote_double(Field) when is_map(Field) ->
     case nklib_json:encode(Field) of

@@ -109,7 +109,7 @@ plugin_start(_Id, _Spec, _Pid, _Service) ->
 
 %% @doc
 %% Even if we are called only with modified config, we check if the spec is new
-plugin_update(_, #{id:=Id, config:=#{graphiqlUrl:=_}=NewConfig}, OldSpec, Pid, #{id:=SrvId}) ->
+plugin_update(_, #{id:=Id, config:=NewConfig}, OldSpec, Pid, #{id:=SrvId}) ->
     case OldSpec of
         #{config:=NewConfig} ->
             ok;

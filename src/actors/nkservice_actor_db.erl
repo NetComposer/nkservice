@@ -47,8 +47,9 @@
 #{
     db_srv => atom(),               % Service to use for database access
     ttl => integer(),               % For loading, changes default
-    activate => boolean(),          % Active object on creation, read
+    activate => boolean(),          % Active object on creation, read (default: true)
     activate_srv => atom(),         % Service fto call actor_create and actor_activate
+    consume => boolean(),           % Remove actor after read (default: false)
     cascade => boolean(),           % For deletes, hard deletes, deletes all linked objects
     force => boolean()              % For hard delete, deletes even if linked objects
 }.
@@ -158,21 +159,40 @@ read(Id) ->
 read(Id, Opts) ->
     case id_to_actor_id(Id) of
         {ok, #actor_id{}=ActorId} ->
-            case maps:get(activate, Opts, true) of
+            Consume = maps:get(consume, Opts, false),
+            Op = case Consume of
                 true ->
-                    case activate(ActorId, Opts) of
-                        {ok, #actor_id{pid=Pid}, _} ->
-                            case nkservice_actor_srv:sync_op(Pid, get_actor) of
-                                {ok, Actor} ->
-                                    {ok, Actor, #{}};
-                                {error, Error} ->
-                                    {error, Error}
-                            end;
+                    consume_actor;
+                false ->
+                    get_actor
+            end,
+            case is_activated(ActorId) of
+                {true, ActorId2} ->
+                    case nkservice_actor_srv:sync_op(ActorId2, Op) of
+                        {ok, Actor} ->
+                            {ok, Actor, #{}};
                         {error, Error} ->
                             {error, Error}
                     end;
                 false ->
-                    db_read(ActorId, Opts)
+                    case maps:get(activate, Opts, true) of
+                        true ->
+                            case activate(ActorId, Opts) of
+                                {ok, ActorId2, Meta} ->
+                                    case nkservice_actor_srv:sync_op(ActorId2, Op) of
+                                        {ok, Actor} ->
+                                            {ok, Actor, Meta};
+                                        {error, Error} ->
+                                            {error, Error}
+                                    end;
+                                {error, Error} ->
+                                    {error, Error}
+                            end;
+                        false when Consume ->
+                            {error, cannot_consume};
+                        false ->
+                            db_read(ActorId, Opts)
+                    end
             end;
         {error, Error} ->
             {error, Error}
@@ -202,12 +222,12 @@ activate(Id, Opts) ->
                     case is_pid(whereis(SrvId)) of
                         true ->
                             case db_read(ActorId, Opts#{db_srv=>SrvId}) of
-                                {ok, #actor{id=ActorId2}=Actor2, Meta2} ->
+                                {ok, Actor2, Meta2} ->
                                     case
                                         ?CALL_SRV(SrvId, actor_activate, [Actor2, Opts])
                                     of
-                                        {ok, Pid} ->
-                                            {ok, ActorId2#actor_id{pid=Pid}, Meta2};
+                                        {ok, ActorId3} ->
+                                            {ok, ActorId3, Meta2};
                                         {error, Error} ->
                                             {error, Error}
                                     end;
@@ -237,8 +257,8 @@ create(Actor, Opts) ->
                     SrvId = maps:get(activate_srv, Opts, ActorSrvId),
                     % The process will send the 'create' event in-server
                     case ?CALL_SRV(SrvId, actor_create, [Actor2, Opts]) of
-                        {ok, Pid} ->
-                            case nkservice_actor_srv:sync_op(Pid, get_actor) of
+                        {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+                            case nkservice_actor_srv:sync_op(ActorId, get_actor) of
                                 {ok, Actor3} ->
                                     {ok, Actor3, #{}};
                                 {error, Error} ->
@@ -279,10 +299,10 @@ update(Actor, Opts) ->
     case maps:get(activate, Opts, true) of
         true ->
             case activate(Actor, Opts) of
-                {ok, #actor_id{pid=Pid}, _} ->
-                    case nkservice_actor_srv:sync_op(Pid, {update, Actor}) of
+                {ok, ActorId, _} ->
+                    case nkservice_actor_srv:sync_op(ActorId, {update, Actor}) of
                         ok ->
-                            {ok, Actor2} = nkservice_actor_srv:sync_op(Pid, get_actor),
+                            {ok, Actor2} = nkservice_actor_srv:sync_op(ActorId, get_actor),
                             {ok, Actor2, #{}};
                         {error, Error} ->
                             {error, Error}
@@ -316,7 +336,7 @@ delete(Id, Opts) ->
         {ok, #actor_id{srv=ActorSrvId, uid=UID, pid=Pid}=ActorId, _Meta} ->
             case maps:get(cascade, Opts, false) of
                 false when is_pid(Pid) ->
-                    case nkservice_actor_srv:sync_op(Pid, delete) of
+                    case nkservice_actor_srv:sync_op(ActorId, delete) of
                         ok ->
                             % The object is loaded, and it will perform the delete
                             % itself, including sending the event (a full event)
@@ -508,13 +528,8 @@ db_read(Id, Opts) ->
         {ok, #actor_id{srv=ActorSrvId} = ActorId} ->
             SrvId = maps:get(db_srv, Opts, ActorSrvId),
             case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId]) of
-                {ok, #actor{id=#actor_id{srv=ActorSrvId}, metadata=Meta}=Actor, DbMeta} ->
-                    case check_actor(ActorSrvId, Meta, Actor, Opts) of
-                        ok ->
-                            {ok, Actor, DbMeta};
-                        removed ->
-                            {error, actor_not_found}
-                    end;
+                {ok, #actor{id=#actor_id{srv=ActorSrvId}}=Actor, DbMeta} ->
+                    {ok, Actor, DbMeta};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -522,50 +537,6 @@ db_read(Id, Opts) ->
             {error, Error}
     end.
 
-
-
-%% @private
-check_actor(SrvId, _Meta, Actor, #{parser:=Parser}) ->
-    case Parser(Actor) of
-        {ok, #{metadata:=Meta2}=Actor2} ->
-            check_actor_expired(SrvId, Meta2, Actor2);
-        {error, Error} ->
-            {error, Error}
-    end;
-
-check_actor(SrvId, Meta, Actor, _Opts) ->
-    check_actor_expired(SrvId, Meta, Actor).
-
-
-%% @private
-check_actor_expired(SrvId, #{<<"expiresTime">>:=Expires1}=Meta, Actor) ->
-    {ok, Expires2} = nklib_date:quick_epoch(Expires1, msecs),
-    Now = nklib_date:epoch(msecs),
-    case Now > Expires2 of
-        true ->
-            ok = ?CALL_SRV(SrvId, actor_do_expired, [Actor]),
-            removed;
-        false ->
-            check_actor_active(SrvId, Meta, Actor)
-    end;
-
-check_actor_expired(SrvId, Meta, Actor) ->
-    check_actor_active(SrvId, Meta, Actor).
-
-
-%% @private
-check_actor_active(SrvId, #{<<"isActivated">>:=true}, Actor) ->
-    case ?CALL_SRV(SrvId, actor_do_active, [Actor]) of
-        ok ->
-            ok;
-%%        processed ->
-%%            ok;
-        removed ->
-            removed
-    end;
-
-check_actor_active(_SrvId, _Meta, _Actor) ->
-    ok.
 
 
 %% @private

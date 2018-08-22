@@ -20,21 +20,24 @@
 }).
 
 
+%% 'run_state' is populated when reading the object from the server process
+%% if would be undefined if read from db. It will never be saved.
 -record(actor, {
     id :: #actor_id{},
     vsn :: nkservice_actor:vsn(),
     data = #{} :: nkservice_actor:data(),
     metadata = #{} :: nkservice_actor:metadata(),
-    status :: nkservice_actor:status() | undefined
+    run_state = undefined :: nkservice_actor_srv:run_state() | undefined
 }).
-
 
 
 -record(actor_st, {
     actor :: #actor{},
     config :: nkservice_actor_srv:config(),
+    module :: module(),
     leader_pid :: pid() | undefined,
-    is_dirty2 :: true | false | deleted,
+    run_state = #{} :: nkservice_actor_srv:run_state(),
+    is_dirty :: true | false | deleted,
     save_timer :: reference(),
     is_enabled :: boolean(),
     activated_time :: nklib_util:m_timestamp(),
@@ -44,9 +47,6 @@
     ttl_timer :: reference() | undefined,
     status_timer :: reference() | undefined
 }).
-
-
-
 
 
 -endif.

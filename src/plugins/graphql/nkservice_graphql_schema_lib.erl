@@ -133,9 +133,9 @@ make_schema(SrvId, inputs) ->
                     %% }
                     [
                         "input ", FilterFieldsName, " {\n",
-                        parse_fields(FilterFields), "}\n\n",
+                        parse_fields(FilterFields), "}\n\n"
                         "input ", QueryFilterName, " {\n",
-                        parse_fields(QueryFilterFields), "}\n\n",
+                        parse_fields(QueryFilterFields), "}\n\n"
                         "input ", QuerySortName, " {\n",
                         parse_fields(SortFields), "}\n\n"
                     ];

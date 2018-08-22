@@ -85,11 +85,12 @@ msg(SrvId, Msg) ->
     {atom(), Fmt::string(), Vals::string()}.
 
 
-msg(actor_deleted)                      -> "Actor has been deleted";
-msg({actors_deleted, N})                      -> {"Actors (~p) have been deleted", [N]};
-msg(actor_not_found)                    -> "Actor not found";
-msg({actor_invalid, _})                 -> "Actor is invalid";
+msg(actor_deleted)                  -> "Actor has been deleted";
+msg({actors_deleted, N})            -> {"Actors (~p) have been deleted", [N]};
+msg(actor_not_found)                -> "Actor not found";
+msg({actor_invalid, _})             -> "Actor is invalid";
 msg(actor_expired)	                -> "Actor has expired";
+msg(actor_updated)                  -> "Actor updated";
 msg(actor_has_linked_actors)	    -> "Actor has linked actors";
 msg(actor_is_not_activable)	        -> "Actor is not activable";
 msg(already_authenticated)	        -> "Already authenticated";
@@ -97,6 +98,7 @@ msg(already_started)	            -> "Already started";
 msg(already_uploaded)   		    -> "Already uploaded";
 msg(api_delete) 				    -> "API delete received";
 msg(api_stop) 				        -> "API stop received";
+msg(cannot_consume)                 -> "Actor cannot be consumed";
 msg(data_not_available)   	        -> "Data is not available";
 msg(delete_too_deep)                -> "DELETE is too deep";
 msg(duplicated_session_id)	        -> "Duplicated session";
@@ -146,7 +148,9 @@ msg(session_timeout) 		        -> "Session timeout";
 msg({syntax_error, Txt})		    -> {"Syntax error: '~s'", [Txt]};
 msg(timeout) 				        -> "Timeout";
 msg(too_many_records)               -> "Too many records";
+msg(ttl_missing) 			        -> "TTL is missing";
 msg(ttl_timeout) 			        -> "TTL Timeout";
+msg({type_unknown, Class, Type})    -> {"Type '~s' (~s) unknown", [Class, Type]};
 msg(unauthorized) 			        -> "Unauthorized";
 msg(uid_not_allowed) 	            -> "UID is not allowed";
 msg(uniqueness_violation)	        -> "Actor is not unique";
@@ -341,7 +345,7 @@ service_master_terminate(_Reason, _State) ->
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
 -spec actor_create(nkservice:actor(), nkservice_actor_srv:start_opts()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, actor_id()} | {error, term()}.
 
 actor_create(Actor, StartOpts) ->
     nkservice_actor_srv:create(Actor, StartOpts).
@@ -351,7 +355,7 @@ actor_create(Actor, StartOpts) ->
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
 -spec actor_activate(nkservice:actor(), nkservice_actor_srv:start_opts()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, actor_id()} | {error, term()}.
 
 actor_activate(Actor, StartOpts) ->
     nkservice_actor_srv:start(Actor, StartOpts).
@@ -382,22 +386,6 @@ actor_srv_init(State) ->
     {ok, State}.
 
 
-%% @doc Called when the session stops
--spec actor_srv_terminate(Reason::term(), actor_st()) ->
-    {ok, actor_st()}.
-
-actor_srv_terminate(_Reason, State) ->
-    {ok, State}.
-
-
-%% @private
--spec actor_srv_stop(nkservice:msg(), actor_st()) ->
-    {ok, actor_st()} | continue().
-
-actor_srv_stop(_Reason, State) ->
-    {ok, State}.
-
-
 %%  @doc Called update an actor with status
 -spec actor_srv_get(nkservice_actor:actor(), actor_st()) ->
     {ok, nkservice_actor:actor(), actor_st()} | continue().
@@ -406,7 +394,7 @@ actor_srv_get(Actor, State) ->
     {ok, Actor, State}.
 
 
-%%  @doc Called to send an event
+%%  @doc Called to send an event from inside an actor's process
 -spec actor_srv_event(term(), actor_st()) ->
     {ok, actor_st()} | continue().
 
@@ -425,8 +413,8 @@ actor_srv_link_event(_Link, _LinkData, _Event, State) ->
 
 %% @doc
 -spec actor_srv_sync_op(term(), {pid(), reference()}, actor_st()) ->
-    {reply, Reply::term(), session} | {reply_and_save, Reply::term(), session} |
-    {noreply, actor_st()} | {noreply_and_save, session} |
+    {reply, Reply::term(), actor_st()} | {reply_and_save, Reply::term(), actor_st()} |
+    {noreply, actor_st()} | {noreply_and_save, actor_st()} |
     {stop, Reason::term(), Reply::term(), actor_st()} |
     {stop, Reason::term(), actor_st()} |
     continue().
@@ -437,7 +425,7 @@ actor_srv_sync_op(_Op, _From, _State) ->
 
 %% @doc
 -spec actor_srv_async_op(term(), actor_st()) ->
-    {noreply, actor_st()} | {noreply_and_save, session} |
+    {noreply, actor_st()} | {noreply_and_save, actor_st()} |
     {stop, Reason::term(), actor_st()} |
     continue().
 
@@ -488,7 +476,8 @@ actor_srv_alarms(State) ->
 %% @doc
 -spec actor_srv_handle_call(term(), {pid(), term()}, actor_st()) ->
     {reply, term(), actor_st()} | {noreply, actor_st()} |
-    {stop, term(), term(), actor_st()} | {stop, term(), actor_st()} | continue().
+    {stop, Reason::term(), Reply::term(), actor_st()} |
+    {stop, Reason::term(), actor_st()} | continue().
 
 actor_srv_handle_call(Msg, _From, State) ->
     lager:error("Module nkdomain_obj received unexpected call: ~p", [Msg]),
@@ -511,6 +500,21 @@ actor_srv_handle_cast(Msg, State) ->
 actor_srv_handle_info(Msg, State) ->
     lager:warning("Module nkdomain_obj received unexpected info: ~p", [Msg]),
     {noreply, State}.
+
+%% @private Called on proper stop
+-spec actor_srv_stop(nkservice:msg(), actor_st()) ->
+    {ok, actor_st()} | {delete, actor_st()} | continue().
+
+actor_srv_stop(_Reason, State) ->
+    {ok, State}.
+
+
+%% @doc Called when the server terminate is called
+-spec actor_srv_terminate(Reason::term(), actor_st()) ->
+    {ok, actor_st()}.
+
+actor_srv_terminate(_Reason, State) ->
+    {ok, State}.
 
 
 %% ===================================================================

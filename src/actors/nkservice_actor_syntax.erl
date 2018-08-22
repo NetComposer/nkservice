@@ -60,8 +60,7 @@ parse(ActorMap, Syntax) ->
                 },
                 vsn = Vsn,
                 data = Data,
-                metadata = Meta,
-                status = undefined
+                metadata = Meta
             },
             {ok, Actor};
         {ok, _, [Field|_]} ->
@@ -93,6 +92,7 @@ syntax() ->
 %% @private
 meta_syntax() ->
     #{
+        <<"subtype">> => binary,
         <<"resourceVersion">> => binary,
         <<"generation">> => pos_integer,
         <<"creationTime">> => date_3339,
@@ -120,23 +120,6 @@ syntax_parse_fun(_Key, Map) when is_map(Map) ->
 
 syntax_parse_fun(_Key, _Val) ->
     error.
-
-
-%% @private
-%%make_value(<<"labels">>, Val) when is_binary(Val) -> Val;
-%%make_value(<<"labels">>, Val) when is_integer(Val) -> Val;
-%%make_value(<<"labels">>, Val) when is_boolean(Val) -> Val;
-%%make_value(<<"labels">>, Val) -> to_bin(Val);
-%%make_value(<<"annotations">>, Val) when is_binary(Val) -> Val;
-%%make_value(<<"annotations">>, Val) when is_integer(Val) -> Val;
-%%make_value(<<"annotations">>, Val) when is_boolean(Val) -> Val;
-%%make_value(<<"annotations">>, Val) -> to_bin(Val);
-%%make_value(<<"links">>, Val) -> to_bin(Val);
-%%% Saver must normalize, calling nkservice_actor_util:fts_normalize_multi/1
-%%make_value(<<"fts">>, Val) -> to_bin(Val).
-%%%%make_value(<<"fts">>, Val) when is_binary(Val) -> normalize_multi(Val);
-%%%%make_value(<<"fts">>, Val) when is_integer(Val) -> make_value(<<"fts">>, to_bin(Val));
-%%%%make_value(<<"fts">>, Val) when is_list(Val) -> Val.
 
 
 %% @private

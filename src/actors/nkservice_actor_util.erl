@@ -58,7 +58,7 @@ check_create_fields(Actor) ->
         NormName ->
             NormName
     end,
-    {ok, Time} = nklib_date:to_3339(nklib_date:epoch(msecs)),
+    Time = nklib_date:now_3339(msecs),
     Meta2 = Meta1#{<<"creationTime">> => Time},
     Meta3 = update_meta(Name2, Data, Meta2, Time),
     case check_links(Meta3) of

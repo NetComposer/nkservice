@@ -33,7 +33,8 @@
 -export([search_classes/2, search_types/3]).
 -export([search_linked_to/4, search_fts/4, search/3, search_ids/3,
          delete_all/3, delete_old/5]).
--export_type([actor/0, actor_map/0, id/0]).
+-export_type([actor/0, id/0, uid/0, class/0, type/0, path/0, name/0, vsn/0,
+              data/0, metadata/0]).
 
 
 -include("nkservice.hrl").
@@ -47,20 +48,6 @@
 %% ===================================================================
 
 -type actor() :: #actor{}.
-
--type actor_map() ::
-    #{
-        srv => nkservice:id(),              %% Service where it is loaded
-        class => class(),         %% Mandatory
-        type => type(),           %% Mandatory
-        name => name(),           %% Generated if not included
-        uid => uid(),             %% Always generated
-        vsn => vsn(),             %% DB version
-        data => data(),
-        metadata => metadata(),
-        status => status()
-    }.
-
 
 -type id() :: path() | uid() | #actor_id{}.
 
@@ -81,15 +68,9 @@
         binary() => binary() | integer() | float() | boolean()
     }.
 
--type status() ::
-    #{
-        is_activated => boolean(),
-        term() => term()
-    }.
-
-
 %% Recognized metadata
 %% -------------------
+%% (see nkservice_actor_syntax)
 %%
 %% - resourceVersion (binary)
 %%   hash of the Name, Spec and Meta, generated automatically
@@ -118,6 +99,8 @@
 %%
 %% - isEnabled (boolean)
 %%   defaults true, can be overridden on load
+%%
+%% - subtype (binary)
 %%
 %% - isInAlarm (boolean)
 %%
@@ -296,14 +279,14 @@ search_ids(SrvId, SearchSpec, SearchOpts) ->
                         #{deep=>boolean(), srv=>nksevice:id()}) ->
     {ok, integer(), Meta::map()}.
 
-delete_old(SrvId, Class, Type, RFC3339, Opts) ->
+delete_old(SrvId, Class, Type, Date, Opts) ->
     QuerySrvId = maps:get(srv, Opts, SrvId),
-    nkservice_actor_db:search(SrvId, {service_delete_old_actors, QuerySrvId, Class, Type, RFC3339, Opts}).
+    nkservice_actor_db:search(SrvId, {service_delete_old_actors, QuerySrvId, Class, Type, Date, Opts}).
 
 
 %% @doc Generic deletion of objects
-%% Can use field last_update. Use field 'test' = false for real deletion
-%% @doc Generic search returning actors
+%% Use delete=>true for real deletion
+%% Use search_opts() to be able to use special fields, otherwise anything is accepted
 -spec delete_all(nkservice:id(), nkservice_actor_search:search_spec()|#{delete=>boolean()},
                  nkservice_actor_search:search_opts()) ->
     {ok|deleted, integer(), Meta::map()}.

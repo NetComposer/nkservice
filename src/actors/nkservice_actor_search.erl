@@ -33,7 +33,6 @@
 %% ===================================================================
 
 
-
 -type search_spec() ::
     #{
         srv => nkservice:id(),
@@ -104,6 +103,9 @@ parse(Term) ->
 
 
 %% @doc
+%% If filter_fields is empty, anything is accepted
+%% Same for sort_fields
+%% If field is not in field_type, string is assumed
 %% If a field is defined in FieldTypes, 'type' will be added
 -spec parse(map(), search_opts()) ->
     {ok, map(), list()} | {error, term()}.

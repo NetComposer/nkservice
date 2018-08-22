@@ -30,7 +30,7 @@
 -include("nkservice.hrl").
 -include("nkservice_actor.hrl").
 
-
+-define(MAX_CASCADE_DELETE, 10000).
 -define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE PGSQL Actors "++Txt, Args)).
 -define(RETURN_NOTHING,  <<" RETURNING NOTHING; ">>).
 
@@ -130,7 +130,7 @@ create_database_query() ->
             metadata JSONB NOT NULL,
             path STRING NOT NULL,
             last_update STRING NOT NULL,
-            expires STRING,
+            expires INTEGER,
             fts_words STRING,
             UNIQUE INDEX name_idx (srv, class, actor_type, name),
             INDEX path_idx (path, class),
@@ -404,7 +404,7 @@ populate_fields([Actor|Rest], SaveFields) ->
     Updated = maps:get(<<"updateTime">>, Meta),
     Expires = case maps:get(<<"expiresTime">>, Meta, <<>>) of
         <<>> ->
-            <<"NULL">>;
+            null;
         Exp1 ->
             {ok, Exp2} = nklib_date:to_epoch(Exp1, secs),
             Exp2
@@ -523,7 +523,7 @@ delete_find_nested(Pid, [UID|Rest], Set) ->
             delete_find_nested(Pid, Rest, Set);
         false ->
             Set2 = sets:add_element(UID, Set),
-            case sets:size(Set2) > 5 of
+            case sets:size(Set2) > ?MAX_CASCADE_DELETE of
                 true ->
                     throw(delete_too_deep);
                 false ->
@@ -644,7 +644,7 @@ get_service(SrvId, PackageId, ActorSrvId) ->
 
 %% @doc
 update_service(SrvId, PackageId, ActorSrvId, Cluster) ->
-    {ok, Update} = nklib_date:to_3339(nklib_date:epoch(secs)),
+    Update = nklib_date:now_3339(secs),
     Pid2 = quote(list_to_binary(pid_to_list(self()))),
     Query = [
         <<"UPSERT INTO services (srv,cluster,node,last_update,pid) VALUES (">>,
@@ -765,7 +765,7 @@ query(SrvId, PackageId, Query, QueryMeta) ->
 
 %% @private
 do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
-    % ?LLOG(info, "PreQuery: ~s", [Query]),
+    %?LLOG(info, "PreQuery: ~s", [Query]),
     case nkservice_pgsql:do_query(Pid, Query) of
         {ok, Ops, PgMeta} ->
             case maps:get(pgsql_debug, QueryMeta, false) of

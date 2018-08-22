@@ -252,6 +252,9 @@ make_error(SrvId, Error) ->
 do_make_error(SrvId, #{key:={resolver_error, {resolver_error, _}=Key}}=Error) ->
     do_make_error(SrvId, Error#{key:=Key});
 
+do_make_error(SrvId, #{key:={resolver_error, {resolver_crash, _}=Key}}=Error) ->
+    do_make_error(SrvId, Error#{key:=Key});
+
 do_make_error(SrvId, #{key:=Key, message:=Msg, path:=Path}) ->
     Path2 = list_to_binary([<<" (">>, nklib_util:bjoin(Path, $.), <<" )">>]),
     case Key of
