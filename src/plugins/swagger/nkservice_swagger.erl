@@ -18,17 +18,15 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkDomain Swagger main module
+%% @doc Swagger
 %%
+%% - Contents in priv/swagger copied directly from dist in
+%%   https://github.com/swagger-api/swagger-ui
+%% - Script updates index.html in nkservice_swagger_callbacks
+%% - Must implement nkservice_swagger_get_spec/1
+
 
 -module(nkservice_swagger).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([get_definition/0]).
 
-
-%% @doc
-get_definition() ->
-    Path = filename:join([code:priv_dir(nkservice), "swagger.json"]),
-    {ok, File} = file:read_file(Path),
-    {ok, File}.
 
