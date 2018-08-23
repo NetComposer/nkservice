@@ -327,7 +327,7 @@ make_listen(SrvId, _Id, #{graphiqlUrl:=Url}=Entry) ->
             Opts1 = maps:get(graphiqlUrl_opts, Entry, #{}),
             Debug = maps:get(graphiql_debug, Entry, []),
             Opts2 = Opts1#{debug=>lists:member(nkpacket, Debug)},
-            make_listen_transps(SrvId, <<"domains-graphiql">>, Conns, Opts2, []);
+            make_listen_transps(SrvId, <<"nkservice-graphiql">>, Conns, Opts2, []);
         {error, Error} ->
             {error, Error}
     end;

@@ -317,9 +317,11 @@ init(Paths, CowReq, Env, NkPort) ->
         {redirect, Path3} ->
             {redirect, Path3};
         {cowboy_static, Opts} ->
+            % @see cowboy_static:opts()
             ?DEBUG("replying cowboy_static (~p)", [Opts], Req),
             {cowboy_static, Opts};
         {cowboy_rest, Module, State} ->
+            % @see
             ?DEBUG("replying cowboy_rest '~p'", [Module], Req),
             {cowboy_rest, Module, State};
         continue ->
@@ -328,7 +330,6 @@ init(Paths, CowReq, Env, NkPort) ->
                         <<"NkSERVICE REST resource not found">>, CowReq),
             {ok, Reply, Env}
     end.
-
 
 %% @private
 terminate(_Reason, _Req, _Opts) ->

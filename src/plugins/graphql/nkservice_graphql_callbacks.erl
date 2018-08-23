@@ -114,7 +114,7 @@ nkservice_graphql_execute(_SrvId, _Field, _Obj, _Meta, _Args) ->
 
 
 %% @doc
-nkservice_rest_http(<<"domains-graphiql">>, Verb, Path, Req) ->
+nkservice_rest_http(<<"nkservice-graphiql">>, Verb, Path, Req) ->
     nkservice_graphiql_server:http(Verb, Path, Req);
 
 
