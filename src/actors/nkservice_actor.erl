@@ -34,7 +34,7 @@
 -export([search_linked_to/4, search_fts/4, search/3, search_ids/3,
          delete_all/3, delete_old/5]).
 -export_type([actor/0, id/0, uid/0, class/0, type/0, path/0, name/0, vsn/0,
-              data/0, metadata/0]).
+              data/0, metadata/0, alarm_class/0, alarm_body/0]).
 
 
 -include("nkservice.hrl").
@@ -67,6 +67,19 @@
     #{
         binary() => binary() | integer() | float() | boolean()
     }.
+
+
+-type alarm_class() :: binary().
+
+%% Recommended alarm fields
+%% ------------------------
+%% - code (binary)
+%% - message (binary)
+%% - lastTime (binary, rfc3339)
+%% - meta (map)
+
+-type alarm_body() :: map().
+
 
 %% Recognized metadata
 %% -------------------
@@ -104,7 +117,7 @@
 %%
 %% - isInAlarm (boolean)
 %%
-%% - alarms ([binary])
+%% - alarms [alarm()]
 %%
 %% - nextStatusTime (rfc3339)
 %%
@@ -260,6 +273,7 @@ search(SrvId, SearchSpec, SearchOpts) ->
 
 
 %% @doc Generic search returning actors
+%% Meta will include size, last_updated and total (if not totals=false)
 -spec search_ids(nkservice:id(), nkservice_actor_search:search_spec(),
     nkservice_actor_search:search_opts()) ->
     {ok, [#actor_id{}], Meta::map()} | {error, term()}.

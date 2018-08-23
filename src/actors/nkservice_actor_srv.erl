@@ -62,7 +62,7 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([add_link/3, remove_link/2]).
 -export([get_all/0, unload_all/0, get_state/1, raw_stop/2]).
--export([do_stop/2, do_event/2, do_event_link/2]).
+-export([do_stop/2, do_event/2, do_update/2, do_event_link/2]).
 -export_type([event/0, save_reason/0, run_state/0]).
 
 
@@ -107,6 +107,8 @@
     {link_added, Type::binary()} |
     {link_removed, Type::binary()} |
     {link_down, Type::binary()} |
+    {alarm_fired, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
+    alarms_all_cleared |
     {stopped, nkservice:msg()}.
 
 
@@ -139,6 +141,7 @@
     {update, nkservice_actor:actor()} |
     {update_name, binary()} |
     get_alarms |
+    {set_alarm, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
     {apply, Mod::module(), Fun::atom(), Args::list()} |
     actor_deleted |
     term().
@@ -147,6 +150,8 @@
     {unlink, nklib:link()} |
     {send_info, atom()|binary(), map()} |
     {send_event, event()} |
+    {set_alarm, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
+    clear_all_alarms |
     save |
     delete |
     {stop, Reason::nkservice:msg()} |
@@ -365,7 +370,7 @@ init({Op, Actor, StartOpts, Caller, Ref}) ->
                     {stop, Error}
             end;
         true ->
-            lager:error("NKLOG OBJECT EXPIRED"),
+            ?LLOG(warning, "actor is expired on load", [], State),
             % Call stop functions, probably will delete the actor
             _ = do_stop(actor_expired, State),
             do_init_stop(actor_not_found, Caller, Ref)
@@ -559,6 +564,18 @@ do_sync_op(save, _From, State) ->
     {Reply, State2} = do_save(user_order, State),
     reply(Reply, do_refresh_ttl(State2));
 
+do_sync_op(get_unload_policy, _From, #actor_st{unload_policy=Policy}=State) ->
+    reply({ok, Policy}, State);
+
+do_sync_op(get_save_time, _From, #actor_st{save_timer=Timer}=State) ->
+    Reply = case is_reference(Timer) of
+        true ->
+            erlang:read_timer(Timer);
+        false ->
+            undefined
+    end,
+    reply({ok, Reply}, State);
+
 do_sync_op(delete, From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_delete_on_disabled:=true}} ->
@@ -634,6 +651,9 @@ do_sync_op(get_alarms, _From, #actor_st{actor=Actor}=State) ->
     end,
     {reply, {ok, Alarms}, State};
 
+do_sync_op({set_alarm, Class, Body}, _From, State) ->
+    reply(ok, do_add_alarm(Class, Body, State));
+
 do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
@@ -680,6 +700,12 @@ do_async_op({raw_stop, Reason}, State) ->
     {ok, State2} = handle(actor_srv_stop, [Reason], State),
     State3 = do_event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
+
+do_async_op({set_alarm, Class, Body}, State) ->
+    noreply(do_add_alarm(Class, Body, State));
+
+do_async_op(clear_all_alarms, State) ->
+    noreply(do_clear_all_alarms(State));
 
 do_async_op(Op, State) ->
     ?LLOG(notice, "unknown async op: ~p", [Op], State),
@@ -1074,6 +1100,37 @@ do_heartbeat(State) ->
             noreply(State2);
         {error, Error} ->
             do_stop(Error, State)
+    end.
+
+
+%% @private
+do_add_alarm(Class, Body, #actor_st{actor=Actor}=State) when is_map(Body) ->
+    #actor{metadata = Meta} = Actor,
+    Alarms = maps:get(<<"alarms">>, Meta, #{}),
+    Body2 = case maps:is_key(<<"lastTime">>, Body) of
+        true ->
+            Body;
+        false ->
+            Body#{<<"lastTime">> => nklib_date:now_3339(secs)}
+    end,
+    Alarms2 = Alarms#{nklib_util:to_binary(Class) => Body2},
+    Meta2 = Meta#{<<"isInAlarm">> => true, <<"alarms">> => Alarms2},
+    Actor2 = Actor#actor{metadata = Meta2},
+    State2 = State#actor_st{actor=Actor2, is_dirty=true},
+    do_refresh_ttl(do_event({alarm_fired, Class, Body}, State2)).
+
+
+%% @private
+do_clear_all_alarms(#actor_st{actor=Actor}=State) ->
+    #actor{metadata = Meta} = Actor,
+    case Meta of
+        #{<<"isInAlarm">>:=true} ->
+            Meta2 = maps:without([<<"isInAlarm">>, <<"alarms">>], Meta),
+            Actor2 = Actor#actor{metadata = Meta2},
+            State2 = State#actor_st{actor=Actor2, is_dirty=true},
+            do_refresh_ttl(do_event(alarms_all_cleared, State2));
+        _ ->
+            State
     end.
 
 

@@ -170,7 +170,7 @@ get_query({service_search_actors_id, SearchSpec}, _Opts) ->
             false ->
                 []
         end,
-        <<"SELECT uid,srv,class,actor_type,name FROM actors">>,
+        <<"SELECT uid,srv,class,actor_type,name,last_update FROM actors">>,
         SQLFilters,
         SQLSort,
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
@@ -269,9 +269,15 @@ pgsql_actors_id([{{select, Size}, Rows, _OpMeta}], Meta) ->
             type = Type,
             name = Name
         }
-        || {UID, SrvId, Class, Type, Name} <- Rows
+        || {UID, SrvId, Class, Type, Name, _Updated} <- Rows
     ],
-    {ok, Actors, Meta#{size=>Size}}.
+    Last = case lists:reverse(Rows) of
+        [{_UID, _SrvId, _Class, _Type, _Name, Updated}|_] ->
+            Updated;
+        [] ->
+            undefined
+    end,
+    {ok, Actors, Meta#{size=>Size, last_updated=>Last}}.
 
 
 %% @private
@@ -284,9 +290,15 @@ pgsql_totals_actors_id([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpM
             type = Type,
             name = Name
         }
-        || {UID, SrvId, Class, Type, Name} <- Rows
+        || {UID, SrvId, Class, Type, Name, _Updated} <- Rows
     ],
-    {ok, Actors, Meta#{size=>Size, total=>Total}}.
+    Last = case lists:reverse(Rows) of
+        [{_UID, _SrvId, _Class, _Type, _Name, Updated}|_] ->
+            Updated;
+        [] ->
+            undefined
+    end,
+    {ok, Actors, Meta#{size=>Size, total=>Total, last_updated=>Last}}.
 
 
 %% @private
@@ -343,6 +355,11 @@ expand_filter([#{field:=Field, value:=Value}=Term|Rest], Acc) ->
 %% @private
 make_filter([], Acc) ->
     Acc;
+
+make_filter([{<<"class+type">>, eq, Val, _Type} | Rest], Acc) ->
+    [Class, Type] = binary:split(Val, <<"+">>),
+    Filter = <<"(class='", Class/binary, "' AND actor_type='", Type/binary, "')">>,
+    make_filter(Rest, [Filter | Acc]);
 
 make_filter([{<<"metadata.fts.", Field/binary>>, Op, Val, _Type} | Rest], Acc) ->
     Word = nkservice_actor_util:fts_normalize_word(Val),
@@ -467,7 +484,7 @@ expand_sort([], Acc) ->
 
 expand_sort([#{field:=Field}=Term|Rest], Acc) ->
     case Field of
-        <<"x_class_type">> ->
+        <<"class+type">> ->
             % Special field used in domains
             expand_sort([Term#{field:=<<"class">>}, Term#{field:=<<"type">>}|Rest], Acc);
         _ ->

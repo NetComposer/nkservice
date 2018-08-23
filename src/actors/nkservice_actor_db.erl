@@ -538,7 +538,6 @@ db_read(Id, Opts) ->
     end.
 
 
-
 %% @private
 to_bin(T) when is_binary(T)-> T;
 to_bin(T) -> nklib_util:to_binary(T).
