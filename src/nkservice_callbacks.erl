@@ -106,6 +106,7 @@ msg({field_missing, Txt})	        -> {"Missing field: '~s'", [Txt]};
 msg({field_invalid, Txt})	        -> {"Field '~s' is invalid", [Txt]};
 msg({field_unknown, Txt})	        -> {"Unknown field: '~s'", [Txt]};
 msg(file_read_error)   		        -> "File read error";
+msg(hash_invalid)                   -> "Hash check is invalid";
 msg(internal_error)			        -> "Internal error";
 msg({internal_error, Ref})	        -> {"Internal error: ~s", [Ref]};
 msg({invalid_action, Txt})          -> {"Invalid action '~s'", [Txt]};
