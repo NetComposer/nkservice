@@ -89,7 +89,7 @@ s1() -> <<"
                 pool = 5
             }
         },
-        resolveInterval = 0,
+        resolveIntervalSecs = 0,
         debug = true
     }
 

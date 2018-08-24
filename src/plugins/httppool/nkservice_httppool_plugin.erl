@@ -68,7 +68,7 @@ plugin_config(?PKG_HTTPPOOL, #{config:=Config}=Spec, _Service) ->
             '__mandatory' => [url]
         }},
         debug => boolean,
-        resolveInterval => {integer, 0, none},
+        resolveIntervalSecs => {integer, 0, none},
         '__mandatory' => [targets]
     },
     case nklib_syntax:parse(Config, Syntax) of
@@ -116,7 +116,7 @@ insert(Id, Config, SupPid, #{id:=SrvId}) ->
     PoolConfig = #{
         targets => maps:get(targets, Config),
         debug => maps:get(debug, Config, false),
-        resolve_interval => maps:get(resolveInterval, Config, 0)
+        resolve_interval_secs => maps:get(resolveIntervalSecs, Config, 0)
     },
     Spec = #{
         id => Id,
