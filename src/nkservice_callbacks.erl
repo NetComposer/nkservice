@@ -642,7 +642,6 @@ actor_db_update_service(_SrvId, _ActorSrvId, _Cluster) ->
     {error, not_implemented}.
 
 
-
 %% @doc Called to find an actor on disk, when we only have the UUID and no service
 %% from id_to_actor_id/1
 %% SrvId will be nkservice_app:get(dbDefaultService)

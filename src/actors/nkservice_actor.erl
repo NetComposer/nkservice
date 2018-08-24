@@ -142,7 +142,8 @@
 
 %% @doc
 create(Actor) ->
-    nkservice_actor_db:create(Actor, #{}).
+    Actor2 = nkservice_actor_util:put_create_fields(Actor),
+    nkservice_actor_db:create(Actor2, #{}).
 
 
 %% @doc

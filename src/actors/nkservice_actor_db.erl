@@ -246,8 +246,9 @@ activate(Id, Opts) ->
 
 %% @doc Creates a brand new actor
 %% It will activate the object, unless indicated
+%% ¡¡Must call nkservice_actor_util:check_create_fields(Actor) before!!
 create(Actor, Opts) ->
-    case nkservice_actor_util:check_create_fields(Actor) of
+    case nkservice_actor_util:check_links(Actor) of
         {ok, #actor{id=#actor_id{srv=ActorSrvId}}=Actor2} ->
             case maps:get(activate, Opts, true) of
                 true ->

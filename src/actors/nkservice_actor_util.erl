@@ -28,7 +28,7 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
--export([check_create_fields/1, update_meta/4, check_links/1]).
+-export([put_create_fields/1, update_meta/4, check_links/1, do_check_links/1]).
 -export([is_path/1, actor_id_to_path/1]).
 -export([make_reversed_srv_id/1, gen_srv_id/1]).
 -export([make_plural/1, normalized_name/1]).
@@ -43,11 +43,7 @@
 %% - uuid is added
 %% - name is added (if not present)
 %% - metas creationTime, updateTime, generation and resourceVersion are added
-%% - links are checked to exist
-check_create_fields(#actor{id=#actor_id{uid=UID}}) when UID /= undefined ->
-    {error, uid_not_allowed};
-
-check_create_fields(Actor) ->
+put_create_fields(Actor) ->
     #actor{id=ActorId, data=Data, metadata=Meta1} = Actor,
     #actor_id{type=Type, name=Name1} = ActorId,
     UID = make_uid(Type),
@@ -61,16 +57,10 @@ check_create_fields(Actor) ->
     Time = nklib_date:now_3339(msecs),
     Meta2 = Meta1#{<<"creationTime">> => Time},
     Meta3 = update_meta(Name2, Data, Meta2, Time),
-    case check_links(Meta3) of
-        {ok, Meta4} ->
-            Actor2 = Actor#actor{
-                id = ActorId#actor_id{uid = UID, name = Name2},
-                metadata = Meta4
-            },
-            {ok, Actor2};
-        {error, Error} ->
-            {error, Error}
-    end.
+    Actor#actor{
+        id = ActorId#actor_id{uid = UID, name = Name2},
+        metadata = Meta3
+    }.
 
 
 %% @private
@@ -84,8 +74,18 @@ update_meta(Name, Data, Meta, Time3339) ->
     }.
 
 
+%% @doc
+check_links(#actor{metadata=Meta1}=Actor) ->
+    case do_check_links(Meta1) of
+        {ok, Meta2} ->
+            {ok, Actor#actor{metadata = Meta2}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
 %% @private
-check_links(#{<<"links">>:=Links}=Meta) ->
+do_check_links(#{<<"links">>:=Links}=Meta) ->
     case do_check_links(maps:to_list(Links), []) of
         {ok, Links2} ->
             {ok, Meta#{<<"links">>:=Links2}};
@@ -93,7 +93,7 @@ check_links(#{<<"links">>:=Links}=Meta) ->
             {error, Error}
     end;
 
-check_links(Meta) ->
+do_check_links(Meta) ->
     {ok, Meta}.
 
 

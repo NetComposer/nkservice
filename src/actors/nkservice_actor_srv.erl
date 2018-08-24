@@ -997,12 +997,11 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
         end,
         Links = maps:get(<<"links">>, Meta, #{}),
         UpdLinks = maps:get(<<"links">>, UpdMeta, Links),
-
         UpdMeta2 = case UpdLinks == Links of
             true ->
                 UpdMeta;
             false ->
-                case nkservice_actor_util:check_links(UpdMeta) of
+                case nkservice_actor_util:do_check_links(UpdMeta) of
                     {ok, UpdMetaLinks} ->
                         UpdMetaLinks;
                     {error, Error} ->
