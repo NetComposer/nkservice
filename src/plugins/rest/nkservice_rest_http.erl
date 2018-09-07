@@ -84,7 +84,7 @@
 
 
 %% @doc
--spec get_body(req(), #{max_size=>integer(), parse=>boolean()}) ->
+-spec get_body(req(), #{max_size=>integer(), parse=>boolean(), allow_list=>boolean()}) ->
     {ok, binary(), req()} | {error, term()}.
 
 get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
@@ -96,13 +96,20 @@ get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
             Req2 = Req#{cowboy_req:=CowReq2},
             case maps:get(parse, Opts, false) of
                 true ->
+                    AllowList = maps:get(allow_list, Opts, false),
                     case CT of
                         <<"application/json", _/binary>> when is_binary(Body) ->
                             case catch nklib_json:decode(Body) of
                                 {'EXIT', _} ->
                                     {error, invalid_json};
-                                Json ->
-                                    {ok, Json, Req2}
+                                List when is_list(List), AllowList ->
+                                    {ok, List, Req};
+                                [Term] ->
+                                    {ok, Term, Req};
+                                List when is_list(List) ->
+                                    {error, invalid_json};
+                                Term ->
+                                    {ok, Term, Req}
                             end;
                         <<"application/json", _/binary>> ->
                             {error, invalid_json};
@@ -112,8 +119,12 @@ get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
                                     case catch nklib_yaml:decode(Body) of
                                         {'EXIT', _} ->
                                             {error, invalid_yaml};
-                                        Yaml ->
-                                            {ok, Yaml, Req2}
+                                        List when is_list(List), AllowList ->
+                                            {ok, List, Req};
+                                        [Term] ->
+                                            {ok, Term, Req};
+                                        _ ->
+                                            {error, invalid_yaml}
                                     end;
                                 [_, _] ->
                                     {error, invalid_yaml};

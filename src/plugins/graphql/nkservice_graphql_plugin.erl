@@ -27,6 +27,7 @@
          get_actor_queries/1, get_actor_query_meta/2,
          get_actor_connections/1, get_actor_connection_meta/2,
          get_actor_mutations/1, get_actor_mutation_meta/2]).
+-export([has_graphiql/2]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkDOMAIN GraphQL Plugin: "++Txt, Args)).
 
@@ -183,6 +184,13 @@ get_actor_mutations(SrvId) ->
 %% @doc Get mutation params
 get_actor_mutation_meta(SrvId, Name) when is_binary(Name) ->
     get_domain_cache(SrvId, {mutation_meta, Name}).
+
+
+%% @private
+has_graphiql(SrvId, PackageId) ->
+    Config = nkservice_util:get_config(SrvId, PackageId),
+    maps:is_key(graphiqlUrl, Config).
+
 
 
 %% ===================================================================

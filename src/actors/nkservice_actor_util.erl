@@ -40,7 +40,7 @@
 
 
 %% @doc Prepares an actor for creation
-%% - uuid is added
+%% - uid is added
 %% - name is added (if not present)
 %% - metas creationTime, updateTime, generation and resourceVersion are added
 put_create_fields(Actor) ->

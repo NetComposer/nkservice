@@ -795,6 +795,9 @@ do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
         {error, {pgsql_error, #{code := <<"42601">>}}=Error} ->
             ?LLOG(warning, "syntax PGSQL error: ~p\n~s", [Error, list_to_binary([Query])]),
             throw(pgsql_error);
+        {error, {pgsql_error, #{code := <<"22023">>}}} ->
+            throw(data_value_invalid);
+
         {error, {pgsql_error, Error}} ->
             ?LLOG(warning, "unknown PGSQL error: ~p\n~s", [Error, list_to_binary([Query])]),
             throw(pgsql_error);

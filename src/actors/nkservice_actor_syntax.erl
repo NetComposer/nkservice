@@ -92,6 +92,9 @@ syntax() ->
 %% @private
 meta_syntax() ->
     #{
+        <<"uid">> => binary,
+        <<"domain">> => binary,
+        <<"name">> => binary,
         <<"subtype">> => binary,
         <<"resourceVersion">> => binary,
         <<"generation">> => pos_integer,

@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc Service  Plugin
--module(nkservice_swagger_plugin).
+-module(nkservice_openapi_plugin).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/5]).
@@ -49,9 +49,9 @@ plugin_deps() ->
 
 plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     Syntax = #{
-        swaggerlUrl => binary,
-        swaggerlUrl_opts => nkpacket_syntax:safe_syntax(),
-        swagger_debug => {list, {atom, [http, nkpacket]}},
+        openapilUrl => binary,
+        openapilUrl_opts => nkpacket_syntax:safe_syntax(),
+        openapi_debug => {list, {atom, [http, nkpacket]}},
         '__allow_unknown' => true
     },
     case nklib_syntax:parse(Config, Syntax) of
@@ -60,7 +60,7 @@ plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
             Debug2 = lists:foldl(
                 fun(Type, Acc) -> set_debug(Id, Type, Acc) end,
                 Debug1,
-                maps:get(swagger_debug, Parsed, [])),
+                maps:get(openapi_debug, Parsed, [])),
             Spec2 = nkservice_config_util:set_debug_map(Debug2, Spec),
             case make_listen(SrvId, Id, Parsed) of
                 {ok, _Listeners} ->
@@ -113,14 +113,14 @@ set_debug(Id, Type, Debug) ->
 
 
 %% @private
-make_listen(SrvId, _Id, #{swaggerUrl:=Url}=Entry) ->
+make_listen(SrvId, _Id, #{openapiUrl:=Url}=Entry) ->
     ResolveOpts = #{resolve_type=>listen, protocol=>nkservice_rest_protocol},
     case nkpacket_resolve:resolve(Url, ResolveOpts) of
         {ok, Conns} ->
-            Opts1 = maps:get(swaggerUrl_opts, Entry, #{}),
-            Debug = maps:get(swagger_debug, Entry, []),
+            Opts1 = maps:get(openapiUrl_opts, Entry, #{}),
+            Debug = maps:get(openapi_debug, Entry, []),
             Opts2 = Opts1#{debug=>lists:member(nkpacket, Debug)},
-            make_listen_transps(SrvId, <<"nkservice-swagger">>, Conns, Opts2, []);
+            make_listen_transps(SrvId, <<"nkservice-openapi">>, Conns, Opts2, []);
         {error, Error} ->
             {error, Error}
     end;

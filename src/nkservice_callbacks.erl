@@ -100,6 +100,7 @@ msg(api_delete) 				    -> "API delete received";
 msg(api_stop) 				        -> "API stop received";
 msg(cannot_consume)                 -> "Actor cannot be consumed";
 msg(data_not_available)   	        -> "Data is not available";
+msg(data_value_invalid)   	        -> "Data value is not valid";
 msg(delete_too_deep)                -> "DELETE is too deep";
 msg(duplicated_session_id)	        -> "Duplicated session";
 msg({field_missing, Txt})	        -> {"Missing field: '~s'", [Txt]};

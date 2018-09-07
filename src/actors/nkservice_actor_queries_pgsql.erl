@@ -349,19 +349,35 @@ expand_filter([], Acc) ->
 expand_filter([#{field:=Field, value:=Value}=Term|Rest], Acc) ->
     Op = maps:get(op, Term, eq),
     Type = maps:get(type, Term, string),
-    expand_filter(Rest, [{Field, Op, Value, Type}|Acc]).
+    Value2 = case Type of
+        _ when Op==exists ->
+            to_boolean(Value);
+        string when Op==values, is_list(Value) ->
+            [to_bin(V) || V <- Value];
+        string ->
+            to_bin(Value);
+        integer when Op==values, is_list(Value) ->
+            [to_integer(V) || V <- Value];
+        integer ->
+            to_integer(Value);
+        boolean when Op==values, is_list(Value) ->
+            [to_boolean(V) || V <- Value];
+        boolean ->
+            to_boolean(Value)
+    end,
+    expand_filter(Rest, [{Field, Op, Value2, Type}|Acc]).
 
 
 %% @private
 make_filter([], Acc) ->
     Acc;
 
-make_filter([{<<"class+type">>, eq, Val, _Type} | Rest], Acc) ->
+make_filter([{<<"class+type">>, eq, Val, string} | Rest], Acc) ->
     [Class, Type] = binary:split(Val, <<"+">>),
     Filter = <<"(class='", Class/binary, "' AND actor_type='", Type/binary, "')">>,
     make_filter(Rest, [Filter | Acc]);
 
-make_filter([{<<"metadata.fts.", Field/binary>>, Op, Val, _Type} | Rest], Acc) ->
+make_filter([{<<"metadata.fts.", Field/binary>>, Op, Val, string} | Rest], Acc) ->
     Word = nkservice_actor_util:fts_normalize_word(Val),
     Filter = case {Field, Op} of
         {<<"*">>, eq} ->
@@ -386,8 +402,8 @@ make_filter([{<<"metadata.fts.", Field/binary>>, Op, Val, _Type} | Rest], Acc) -
     end,
     make_filter(Rest, [Filter | Acc]);
 
-make_filter([{<<"metadata.isEnabled">>, eq, Bool, _}|Rest], Acc) ->
-    Filter = case nklib_util:to_boolean(Bool) of
+make_filter([{<<"metadata.isEnabled">>, eq, Bool, boolean}|Rest], Acc) ->
+    Filter = case Bool of
         true ->
             <<"((NOT metadata ? 'isEnabled') OR ((metadata->>'isEnabled')::BOOLEAN=TRUE))">>;
         false ->
@@ -408,13 +424,16 @@ make_filter([{Field, exists, Bool, _}|Rest], Acc)
     end,
     make_filter(Rest, Acc2);
 
-make_filter([{Field, exists, Bool, _Type}|Rest], Acc) ->
+make_filter([{Field, exists, Bool, _}|Rest], Acc) ->
     Field2 = get_field_db_name(Field),
     L = binary:split(Field2, <<".">>, [global]),
     [Field3|Base1] = lists:reverse(L),
     Base2 = nklib_util:bjoin(lists:reverse(Base1), $.),
     Filter = [
-        case Bool of true -> <<"(">>; false -> <<"(NOT ">> end,
+        case Bool of
+            true -> <<"(">>;
+            false -> <<"(NOT ">>
+        end,
         json_value(Base2, json),
         <<" ? ">>, quote(Field3), <<")">>
     ],
@@ -429,7 +448,7 @@ make_filter([{Field, prefix, Val, string}|Rest], Acc) ->
     ],
     make_filter(Rest, [list_to_binary(Filter)|Acc]);
 
-make_filter([{Field, values, ValList, Type}|Rest], Acc) ->
+make_filter([{Field, values, ValList, Type}|Rest], Acc) when is_list(ValList) ->
     Values = nklib_util:bjoin([quote(Val) || Val <- ValList], $,),
     Field2 = get_field_db_name(Field),
     Filter = [
@@ -438,6 +457,9 @@ make_filter([{Field, values, ValList, Type}|Rest], Acc) ->
         <<" IN (">>, Values, <<"))">>
     ],
     make_filter(Rest, [list_to_binary(Filter)|Acc]);
+
+make_filter([{Field, values, Value, Type}|Rest], Acc) ->
+    make_filter([{Field, values, [Value], Type}|Rest], Acc);
 
 make_filter([{Field, Op, Val, Type} | Rest], Acc) ->
     Field2 = get_field_db_name(Field),
@@ -561,3 +583,21 @@ quote(Term) ->
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).
+
+%% @private
+to_integer(Term) when is_integer(Term) ->
+    Term;
+to_integer(Term) ->
+    case nklib_util:to_integer(Term) of
+        error -> 0;
+        Integer -> Integer
+    end.
+
+%% @private
+to_boolean(Term) when is_boolean(Term) ->
+    Term;
+to_boolean(Term) ->
+    case nklib_util:to_boolean(Term) of
+        error -> false;
+        Boolean -> Boolean
+    end.

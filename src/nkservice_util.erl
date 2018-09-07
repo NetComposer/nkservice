@@ -25,6 +25,7 @@
 -export([get_cache/4, get_debug/4, get_secret/2, get_callback/4]).
 -export([name/1]).
 -export([get_srv_secret/2, set_srv_secret/3]).
+-export([get_config/2]).
 -export([luerl_api/6]).
 -export([register_for_changes/1, notify_updated_service/1]).
 -export([get_net_ticktime/0, set_net_ticktime/2]).
@@ -128,6 +129,13 @@ get_srv_secret(Id, Service) ->
 set_srv_secret(Id, Value, Service) ->
     Secrets = maps:get(secret, Service, #{}),
     Service#{secret=>Secrets#{Id => Value}}.
+
+
+%% @doc Gets service config for a package
+get_config(SrvId, PackageId) ->
+    #{packages:=Packages} = ?CALL_SRV(SrvId, service),
+    DomainsPkg = maps:get(PackageId, Packages, #{}),
+    maps:get(config, DomainsPkg, #{}).
 
 
 %% @doc
