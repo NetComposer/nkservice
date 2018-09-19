@@ -55,16 +55,16 @@ plugin_deps() ->
 plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     Syntax = #{
         makeGraphqlSchema => boolean,
-        graphqlActorModules => {list, binary},
+        graphqlActorModules => {list, module},
         graphiqlUrl => binary,
         graphiqlUrl_opts => nkpacket_syntax:safe_syntax(),
-        graphiql_debug => {list, {atom, [ws, http, nkpacket]}},
+        graphiql_debug => {list, {atom, [http]}}, % nkpacket
         '__allow_unknown' => true
     },
     case nklib_syntax:parse(Config, Syntax) of
-        {ok, #{makeGraphqlSchema:=true}=Parsed, _} ->
+        {ok, #{makeGraphqlSchema:=true}=Config2, _} ->
             Cache1 = nkservice_config_util:get_cache_map(Spec),
-            Modules = maps:get(graphqlActorModules, Parsed, []),
+            Modules = maps:get(graphqlActorModules, Config2, []),
             Cache2 = make_type_cache(Modules, Cache1),
             Cache3 = make_queries_cache(Modules, Cache2),
             Cache4 = make_connections_cache(Modules, Cache3),
@@ -74,11 +74,11 @@ plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
             Debug2 = lists:foldl(
                 fun(Type, Acc) -> set_debug(Id, Type, Acc) end,
                 Debug1,
-                maps:get(graphiql_debug, Parsed, [])),
+                maps:get(graphiql_debug, Config2, [])),
             Spec3 = nkservice_config_util:set_debug_map(Debug2, Spec2),
-            case make_listen(SrvId, Id, Parsed) of
+            case make_listen(SrvId, Id, Config2) of
                 {ok, _Listeners} ->
-                    {ok, Spec3#{config := Parsed}};
+                    {ok, Spec3#{config := Config2}};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -217,18 +217,17 @@ make_type_cache([], Cache) ->
     Cache;
 
 make_type_cache([Module|Rest], Cache) ->
-    Module2 = nklib_util:to_atom(Module),
-    code:ensure_loaded(Module2),
-    Config = case Module2:config() of
+    code:ensure_loaded(Module),
+    Config = case Module:config() of
         not_exported ->
-            ?LLOG(error, "Invalid graphQL actor callback module '~s'", [Module2]),
-            error({module_unknown, Module2});
+            ?LLOG(error, "Invalid graphQL actor callback module '~s'", [Module]),
+            error({module_unknown, Module});
         Config0 ->
             Config0
     end,
     Type = to_bin(maps:get(type, Config)),
     Config2 = #{
-        module => Module2,
+        module => Module,
         type => Type,
         actor_class => nklib_util:to_binary(maps:get(actor_class, Config)),
         actor_type => nklib_util:to_binary(maps:get(actor_type, Config))
@@ -245,7 +244,6 @@ make_queries_cache([], Cache) ->
     Cache;
 
 make_queries_cache([Module|Rest], Cache) ->
-    Module2 = nklib_util:to_atom(Module),
     Cache2 = maps:fold(
         fun
             (Name, {_Result, Opts}, Acc) ->
@@ -254,13 +252,13 @@ make_queries_cache([Module|Rest], Cache) ->
                 Queries2 = lists:usort([Name2|Queries1]),
                 Acc2 = set_cache(queries, Queries2, Acc),
                 Meta1 = maps:get(meta, Opts, #{}),
-                Meta2 = Meta1#{module => Module2},
+                Meta2 = Meta1#{module => Module},
                 set_cache({query_meta, Name2}, Meta2, Acc2);
             (_Name, _, Acc) ->
                 Acc
         end,
         Cache,
-        Module2:schema(queries)
+        Module:schema(queries)
     ),
     make_queries_cache(Rest, Cache2).
 
@@ -270,8 +268,7 @@ make_connections_cache([], Cache) ->
     Cache;
 
 make_connections_cache([Module|Rest], Cache) ->
-    Module2 = nklib_util:to_atom(Module),
-    Cache2 = case erlang:function_exported(Module2, connections, 1) of
+    Cache2 = case erlang:function_exported(Module, connections, 1) of
         true ->
             Types = get_cache(types, Cache, []),
             lists:foldl(
@@ -284,13 +281,13 @@ make_connections_cache([Module|Rest], Cache) ->
                                 Connection2 = lists:usort([Name2|Connection1]),
                                 Acc3 = set_cache(connections, Connection2, Acc2),
                                 Meta1 = maps:get(meta, Opts, #{}),
-                                Meta2 = Meta1#{module => Module2},
+                                Meta2 = Meta1#{module => Module},
                                 set_cache({connection_meta, Name2}, Meta2, Acc3);
                             (_Name, _, Acc2) ->
                                 Acc2
                         end,
                         Acc1,
-                        Module2:connections(Type))
+                        Module:connections(Type))
                 end,
                 Cache,
                 Types
@@ -306,7 +303,6 @@ make_mutations_cache([], Cache) ->
     Cache;
 
 make_mutations_cache([Module|Rest], Cache) ->
-    Module2 = nklib_util:to_atom(Module),
     Cache2 = maps:fold(
         fun
             (Name, {_Result, Opts}, Acc) ->
@@ -315,13 +311,13 @@ make_mutations_cache([Module|Rest], Cache) ->
                 Queries2 = lists:usort([Name2|Queries1]),
                 Acc2 = set_cache(mutations, Queries2, Acc),
                 Meta1 = maps:get(meta, Opts, #{}),
-                Meta2 = Meta1#{module => Module2},
+                Meta2 = Meta1#{module => Module},
                 set_cache({mutation_meta, Name2}, Meta2, Acc2);
             (_Name, _, Acc) ->
                 Acc
         end,
         Cache,
-        Module2:schema(mutations)
+        Module:schema(mutations)
     ),
     make_mutations_cache(Rest, Cache2).
 

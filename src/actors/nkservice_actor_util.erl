@@ -28,15 +28,27 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
--export([put_create_fields/1, update_meta/4, check_links/1, do_check_links/1]).
+-export([send_external_event/3]).
+-export([put_create_fields/1, update/2, check_links/1, do_check_links/1]).
 -export([is_path/1, actor_id_to_path/1]).
 -export([make_reversed_srv_id/1, gen_srv_id/1]).
 -export([make_plural/1, normalized_name/1]).
 -export([fts_normalize_word/1, fts_normalize_multi/1]).
+-export([update_check_fields/2]).
+
 
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc Sends an out-of-actor event
+-spec send_external_event(nkservice:id(), created|deleted|updated, #actor{}) ->
+    ok.
+
+send_external_event(SrvId, Reason, Actor) ->
+    ?CALL_SRV(SrvId, actor_external_event, [SrvId, Reason, Actor]).
+
 
 
 %% @doc Prepares an actor for creation
@@ -44,7 +56,7 @@
 %% - name is added (if not present)
 %% - metas creationTime, updateTime, generation and resourceVersion are added
 put_create_fields(Actor) ->
-    #actor{id=ActorId, data=Data, metadata=Meta1} = Actor,
+    #actor{id=ActorId, metadata=Meta} = Actor,
     #actor_id{type=Type, name=Name1} = ActorId,
     UID = make_uid(Type),
     %% Add Name if not present
@@ -55,22 +67,25 @@ put_create_fields(Actor) ->
             NormName
     end,
     Time = nklib_date:now_3339(msecs),
-    Meta2 = Meta1#{<<"creationTime">> => Time},
-    Meta3 = update_meta(Name2, Data, Meta2, Time),
-    Actor#actor{
-        id = ActorId#actor_id{uid = UID, name = Name2},
-        metadata = Meta3
-    }.
+    Actor2 = Actor#actor{
+        id = ActorId#actor_id{uid=UID, name=Name2},
+        metadata = Meta#{<<"creationTime">> => Time}
+    },
+    update(Actor2, Time).
 
 
 %% @private
-update_meta(Name, Data, Meta, Time3339) ->
+update(#actor{id=ActorId, data=Data, metadata=Meta}=Actor, Time3339) ->
+    #actor_id{srv=SrvId, group=Group, vsn=Vsn, type=Type, name=Name} = ActorId,
     Gen = maps:get(<<"generation">>, Meta, -1),
-    Vsn = erlang:phash2({Name, Data, Meta}),
-    Meta#{
+    Hash = erlang:phash2({SrvId, Group, Vsn, Type, Name, Data, Meta}),
+    Meta2 = Meta#{
         <<"updateTime">> => Time3339,
-        <<"generation">> => Gen+1,
-        <<"resourceVersion">> => to_bin(Vsn)
+        <<"generation">> => Gen+1
+    },
+    Actor#actor{
+        id = ActorId#actor_id{hash=to_bin(Hash)},
+        metadata = Meta2
     }.
 
 
@@ -118,14 +133,12 @@ is_path(Path) ->
     case to_bin(Path) of
         <<$/, Path2/binary>> ->
             case binary:split(Path2, <<$/>>, [global]) of
-                [SrvId, Class, Type, Name] ->
+                [SrvId, Group, Type, Name] ->
                     ActorId = #actor_id{
                         srv = gen_srv_id(SrvId),
-                        class = Class,
+                        group = Group,
                         type = Type,
-                        name = Name,
-                        uid = undefined,
-                        pid = undefined
+                        name = Name
                     },
                     {true, ActorId};
                 _ ->
@@ -137,8 +150,8 @@ is_path(Path) ->
 
 
 %% @doc
-actor_id_to_path(#actor_id{srv=SrvId, class=Class, type=Type, name=Name}) ->
-    list_to_binary([$/, to_bin(SrvId), $/, Class, $/, Type, $/, Name]).
+actor_id_to_path(#actor_id{srv=SrvId, group=Group, type=Type, name=Name}) ->
+    list_to_binary([$/, to_bin(SrvId), $/, Group, $/, Type, $/, Name]).
 
 
 %% @private
@@ -216,6 +229,39 @@ fts_normalize_word(Word) ->
 %% @doc
 fts_normalize_multi(Text) ->
     nklib_parse:normalize_words(Text, #{unrecognized=>keep}).
+
+
+%% @doc
+update_check_fields(NewActor, #actor_st{actor=OldActor, config=Config}) ->
+    #actor{data=NewData} = NewActor,
+    #actor{data=OldData} = OldActor,
+    Fields = maps:get(immutable_fields, Config, []),
+    do_update_check_fields(Fields, NewData, OldData).
+
+
+%% @private
+do_update_check_fields([], _NewData, _OldData) ->
+    ok;
+
+do_update_check_fields([Field|Rest], NewData, OldData) ->
+    case binary:split(Field, <<".">>) of
+        [Group, Key] ->
+            SubNew = maps:get(Group, NewData, #{}),
+            SubOld = maps:get(Group, OldData, #{}),
+            case do_update_check_fields([Key], SubNew, SubOld) of
+                ok ->
+                    do_update_check_fields(Rest, NewData, OldData);
+                {error, {updated_invalid_field, _}} ->
+                    {error, {updated_invalid_field, Field}}
+            end;
+        [_] ->
+            case maps:find(Field, NewData) == maps:find(Field, OldData) of
+                true ->
+                    do_update_check_fields(Rest, NewData, OldData);
+                false ->
+                    {error, {updated_invalid_field, Field}}
+            end
+    end.
 
 
 %% @private

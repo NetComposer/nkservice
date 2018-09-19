@@ -43,10 +43,10 @@ parse(ActorMap, Syntax) ->
         {ok, ActorMap2, []} ->
             #{
                 srv := Srv,
-                class := Class,
+                group := Group,
+                vsn := Vsn,
                 type := Type,
                 name := Name,
-                vsn := Vsn,
                 data := Data,
                 metadata := Meta
             } = ActorMap2,
@@ -54,11 +54,12 @@ parse(ActorMap, Syntax) ->
                 id = #actor_id{
                     uid = maps:get(uid, ActorMap2, undefined),
                     srv = Srv,
-                    class = Class,
+                    group = Group,
+                    vsn = Vsn,
                     type = Type,
-                    name = Name
+                    name = Name,
+                    hash = maps:get(hash, ActorMap2, undefined)
                 },
-                vsn = Vsn,
                 data = Data,
                 metadata = Meta
             },
@@ -75,13 +76,14 @@ syntax() ->
     #{
         uid => binary,
         srv => atom,
-        class => binary,
+        group => binary,
+        vsn => binary,
         type => binary,
         name => binary,
-        vsn => binary,
+        hash => binary,
         data => map,
         metadata => meta_syntax(),
-        '__mandatory' => [srv, class, type, name, vsn],
+        '__mandatory' => [srv, group, vsn, type, name],
         '__defaults' => #{
             data => #{},
             metadata => #{}
@@ -96,7 +98,6 @@ meta_syntax() ->
         <<"domain">> => binary,
         <<"name">> => binary,
         <<"subtype">> => binary,
-        <<"resourceVersion">> => binary,
         <<"generation">> => pos_integer,
         <<"creationTime">> => date_3339,
         <<"updateTime">> => date_3339,
@@ -112,7 +113,8 @@ meta_syntax() ->
         <<"nextStatusTime">> => date_3339,
         <<"description">> => binary,
         <<"createdBy">> => binary,
-        <<"updatedBy">> => binary
+        <<"updatedBy">> => binary,
+        <<"callbackUrl">> => binary
     }.
 
 

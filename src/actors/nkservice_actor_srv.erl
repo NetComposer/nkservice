@@ -91,6 +91,7 @@
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false
         activable => boolean(),                         %% Default true
+        immutable_fields => [binary()],
         module => module(),                             %% Not used by this module
         atom() => term()                                %% User config
     }.
@@ -779,16 +780,16 @@ do_post_init(State) ->
 
 %% @private
 set_debug(State) ->
-    #actor_st{actor=#actor{id=#actor_id{srv=SrvId, class=Class, type=Type}}} = State,
+    #actor_st{actor=#actor{id=#actor_id{srv=SrvId, group=Group, type=Type}}} = State,
     Debug = case nkservice_util:get_debug(SrvId, nkservice_actor, <<"all">>, debug) of
         true ->
             true;
         _ ->
-            case nkservice_util:get_debug(SrvId, nkservice_actor, {Class, <<"all">>}, debug) of
+            case nkservice_util:get_debug(SrvId, nkservice_actor, {Group, <<"all">>}, debug) of
                 true ->
                     true;
                 _ ->
-                    case nkservice_util:get_debug(SrvId, nkservice_actor, {Class, Type}, debug) of
+                    case nkservice_util:get_debug(SrvId, nkservice_actor, {Group, Type}, debug) of
                         true ->
                             true;
                         _ ->
@@ -958,7 +959,7 @@ do_delete(#actor_st{actor=Actor}=State) ->
 
 %% @private
 do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
-    #actor_id{srv=SrvId, uid=UID, class=Class, type=Type, name=Name} = Id,
+    #actor_id{srv=SrvId, uid=UID, group=Class, vsn=Vsn, type=Type, name=Name} = Id,
     try
         case UpdActor#actor.id#actor_id.srv of
             SrvId -> ok;
@@ -969,9 +970,13 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
             UID -> ok;
             _ -> throw({updated_invalid_field, uid})
         end,
-        case UpdActor#actor.id#actor_id.class of
+        case UpdActor#actor.id#actor_id.group of
             Class -> ok;
-            _ -> throw({updated_invalid_field, class})
+            _ -> throw({updated_invalid_field, group})
+        end,
+        case UpdActor#actor.id#actor_id.vsn of
+            Vsn -> ok;
+            _ -> throw({updated_invalid_field, vsn})
         end,
         case UpdActor#actor.id#actor_id.type of
             Type -> ok;
@@ -1020,7 +1025,7 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
         IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
         case IsDataUpdated orelse IsMetaUpdated of
             true ->
-                %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
+                % lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
                 NewMeta2 = case UpdEnabled of
                     true ->
                         maps:remove(<<"isEnabled">>, NewMeta);
@@ -1028,15 +1033,25 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
                         NewMeta#{<<"isEnabled">>=>false}
                 end,
                 NewActor = Actor#actor{data=UpdData, metadata=NewMeta2},
-                State2 = State#actor_st{actor=NewActor, is_dirty=true},
-                State3 = do_update_version(State2),
-                State4 = do_enabled(UpdEnabled, State3),
-                State5 = set_unload_policy(State4),
-                case do_save(update, State5) of
-                    {ok, State6} ->
-                        {ok, do_event({updated, UpdActor}, State6)};
-                    {{error, SaveError}, State5} ->
-                        {error, SaveError, State5}
+                case nkservice_actor_util:update_check_fields(NewActor, State) of
+                    ok ->
+                        case handle(actor_srv_update, [NewActor], State) of
+                            {ok, NewActor2, State2} ->
+                                State3 = State2#actor_st{actor=NewActor2, is_dirty=true},
+                                State4 = do_update_version(State3),
+                                State5 = do_enabled(UpdEnabled, State4),
+                                State6 = set_unload_policy(State5),
+                                case do_save(update, State6) of
+                                    {ok, State7} ->
+                                        {ok, do_event({updated, UpdActor}, State7)};
+                                    {{error, SaveError}, State6} ->
+                                        {error, SaveError, State6}
+                                end;
+                            {error, UpdError, State2} ->
+                                {error, UpdError, State2}
+                        end;
+                    {error, StaticFieldError} ->
+                        {error, StaticFieldError, State}
                 end;
             false ->
                 % lager:error("NKLOG NO UPDATE"),
@@ -1076,10 +1091,8 @@ do_update_name(Name, #actor_st{actor=Actor}=State) ->
 
 %% @private
 do_update_version(#actor_st{actor=Actor}=State) ->
-    #actor{id=#actor_id{name=Name}, data=Data, metadata=Meta} = Actor,
     Time = nklib_date:now_3339(msecs),
-    Meta2 = nkservice_actor_util:update_meta(Name, Data, Meta, Time),
-    State#actor_st{actor=Actor#actor{metadata=Meta2}}.
+    State#actor_st{actor=nkservice_actor_util:update(Actor, Time)}.
 
 
 %% @private

@@ -91,6 +91,7 @@ find(Id) ->
 
 %% @doc Finds and actor from UUID or Path, in memory and disk
 %% SrvId will be used for calling the bd backend
+%% Fields vsn and hash are removed since they are not stored in memory
 -spec find(nkservice_actor:id(), opts()) ->
     {ok, #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
@@ -110,7 +111,7 @@ find(Id, Opts) ->
                                 {true, ActorId3} ->
                                     {ok, ActorId3, Meta};
                                 false ->
-                                    {ok, ActorId2, Meta}
+                                    {ok, ActorId2#actor_id{vsn=undefined, hash=undefined}, Meta}
                             end;
                         {error, Error} ->
                             {error, Error}
@@ -123,6 +124,7 @@ find(Id, Opts) ->
 
 %% @doc Finds if an actor is currently activated
 %% If true, full #actor_id{} will be returned (with uid and pid)
+%% Fields vsn and hash are deleted since they are not stored (to be sure!)
 -spec is_activated(nkservice_actor:id()) ->
     {true, #actor_id{}} | false.
 
@@ -131,7 +133,7 @@ is_activated(Id) ->
         {ok, ActorId} ->
             case nkservice_master:find_actor(ActorId) of
                 {ok, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
-                    {true, ActorId2};
+                    {true, ActorId2#actor_id{vsn=undefined, hash=undefined}};
                 {error, _} ->
                     false
             end;
@@ -235,7 +237,8 @@ activate(Id, Opts) ->
                                     {error, Error}
                             end;
                         false ->
-                            % ActorSrvId must be running to activate Actor
+                            % If ActorSrvId is not loaded, you must use
+                            % activate_srv with a loaded domain
                             {error, {service_not_available, SrvId}}
                     end
             end;
@@ -277,7 +280,7 @@ create(Actor, Opts) ->
                     case ?CALL_SRV(SrvId, actor_db_create, [ActorSrvId, Actor2]) of
                         {ok, Meta} ->
                             % Use the alternative method for sending the event
-                            ?CALL_SRV(SrvId, actor_event, [SrvId, created, Actor2]),
+                            nkservice_actor_util:send_external_event(SrvId, created, Actor2),
                             {ok, Actor2, Meta};
                         {error, Error} ->
                             {error, Error}
@@ -313,7 +316,7 @@ update(Actor, Opts) ->
             end;
         false ->
             % TODO: perform the manual update?
-            % ?CALL_SRV(SrvId, actor_event, [SrvId, updated, Actor2]),
+            % nkservice_actor_util:send_external_event(SrvId, update, Actor2),
             {error, update_not_implemented}
     end.
 
@@ -358,7 +361,8 @@ delete(Id, Opts) ->
                             % In this case, we must send the deleted events
                             lists:foreach(
                                 fun(AId) ->
-                                    ?CALL_SRV(SrvId, actor_event, [SrvId, deleted, AId])
+                                    FakeActor = #actor{id=AId},
+                                    nkservice_actor_util:send_external_event(SrvId, deleted, FakeActor)
                                 end,
                                 ActorIds),
                             {ok, ActorIds, DeleteMeta};
@@ -380,7 +384,8 @@ delete_multi(SrvId, UIDs) ->
         {ok, ActorIds, DeleteMeta} ->
             lists:foreach(
                 fun(AId) ->
-                    ?CALL_SRV(SrvId, actor_event, [SrvId, deleted, AId])
+                    FakeActor = #actor{id=AId},
+                    nkservice_actor_util:send_external_event(SrvId, deleted, FakeActor)
                 end,
                 ActorIds),
             {ok, ActorIds, DeleteMeta};

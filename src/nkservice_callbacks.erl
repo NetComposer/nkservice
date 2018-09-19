@@ -29,10 +29,11 @@
          service_master_handle_call/3, service_master_handle_cast/2,
          service_master_handle_info/2, service_leader_code_change/3,
          service_master_terminate/2]).
--export([actor_create/2, actor_activate/2, actor_event/3, actor_config/1]).
+-export([actor_create/2, actor_activate/2, actor_external_event/3, actor_config/1]).
 -export([actor_srv_init/1, actor_srv_terminate/2,
-         actor_srv_stop/2, actor_srv_get/2, actor_srv_event/2, actor_srv_link_event/4,
-         actor_srv_sync_op/3, actor_srv_async_op/2, actor_srv_link_down/2,
+         actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_event/2,
+         actor_srv_link_event/4,  actor_srv_link_down/2,
+         actor_srv_sync_op/3, actor_srv_async_op/2,
          actor_srv_enabled/2, actor_srv_next_status_timer/1,
          actor_srv_alarms/1, actor_srv_heartbeat/1,
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2]).
@@ -139,6 +140,7 @@ msg(not_authenticated)		        -> "Not authenticated";
 msg(not_found) 				        -> "Not found";
 msg(not_started) 				    -> "Not yet started";
 msg(not_implemented) 		        -> "Not implemented";
+msg(nxdomain)       		        -> "DNS Error";
 msg(process_down)  			        -> "Process failed";
 msg(process_not_found) 		        -> "Process not found";
 msg(registered_down) 	            -> "Registered process stopped";
@@ -148,19 +150,20 @@ msg(session_not_found) 		        -> "Session not found";
 msg(session_stop) 			        -> "Session stop";
 msg(session_timeout) 		        -> "Session timeout";
 msg({syntax_error, Txt})		    -> {"Syntax error: '~s'", [Txt]};
+msg({tls_alert, Txt}) 			    -> {"Error TTL: ~s", [Txt]};
 msg(timeout) 				        -> "Timeout";
 msg(too_many_records)               -> "Too many records";
 msg(ttl_missing) 			        -> "TTL is missing";
 msg(ttl_timeout) 			        -> "TTL Timeout";
-msg({type_unknown, Class, Type})    -> {"Type '~s' (~s) unknown", [Class, Type]};
+msg({type_unknown, Group, Type})    -> {"Type '~s' (~s) unknown", [Group, Type]};
 msg(unauthorized) 			        -> "Unauthorized";
 msg(uid_not_allowed) 	            -> "UID is not allowed";
 msg(uniqueness_violation)	        -> "Actor is not unique";
 msg({unknown_command, Txt})	        -> {"Unknown command '~s'", [Txt]};
 msg(unknown_peer) 			        -> "Unknown peer";
 msg(unknown_op)   			        -> "Unknown operation";
-msg(updated_invalid_field) 	        -> "Tried to update invalid field";
-msg({updated_invalid_field, Txt})   -> {"Tried to update invalid field: '~s'", [Txt]};
+msg(updated_invalid_field) 	        -> "Tried to update immutable field";
+msg({updated_invalid_field, Txt})   -> {"Tried to update immutable field: '~s'", [Txt]};
 msg(user_not_found)			        -> "User not found";
 msg({user_not_found, User})	        -> {"User not found: '~s'", [User]};
 msg(user_stop) 				        -> "User stop";
@@ -371,12 +374,12 @@ actor_config(_ActorId) ->
     #{}.
 
 
-%% @doc Called from nkservice_actor_db when an operation is performed over
-%% non-activated actors
--spec actor_event(nkservice:id(), created|deleted|updated, #actor{}|#actor_id{}) ->
+%% @doc Called from nkservice_actor_util:send_external_event/3 to send
+%% created, deleted or updated operations on non-activated actors
+-spec actor_external_event(nkservice:id(), created|deleted|updated, #actor{}) ->
     ok | continue.
 
-actor_event(_SrvId, _Event, _Actor) ->
+actor_external_event(_SrvId, _Event, _Actor) ->
     ok.
 
 
@@ -396,7 +399,17 @@ actor_srv_get(Actor, State) ->
     {ok, Actor, State}.
 
 
-%%  @doc Called to send an event from inside an actor's process
+%%  @doc Called before finishing an update
+-spec actor_srv_update(nkservice_actor:actor(), actor_st()) ->
+    {ok, nkservice_actor:actor(), actor_st()} | {error, nkservice:msg(), actor_st()} |continue().
+
+actor_srv_update(Actor, State) ->
+    {ok, Actor, State}.
+
+
+%% @doc Called to send an event from inside an actor's process
+%% from nkservice_actor_srv:do_event/2
+%% The events are 'erlang' events (tuples usually)
 -spec actor_srv_event(term(), actor_st()) ->
     {ok, actor_st()} | continue().
 
@@ -405,6 +418,7 @@ actor_srv_event(_Event, State) ->
 
 
 %% @doc Called when an event is sent, for each registered process to the session
+%% from nkservice_actor_srv:do_event_link/2
 %% The events are 'erlang' events (tuples usually)
 -spec actor_srv_link_event(nklib:link(), term(), nkservice_actor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().

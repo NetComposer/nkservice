@@ -11,11 +11,13 @@
 %% ===================================================================
 
 -record(actor_id, {
+    uid :: nkservice_actor:uid() | undefined,
     srv :: nkservice:id(),
-    class :: nkservice_actor:class(),
+    group :: nkservice_actor:group(),
     type :: nkservice_actor:type(),
     name :: nkservice_actor:name(),
-    uid :: nkservice_actor:uid() | undefined,
+    vsn :: nkservice_actor:vsn() | undefined,
+    hash :: nkservice_actor:hash() | undefined,
     pid :: pid() | undefined
 }).
 
@@ -24,7 +26,6 @@
 %% if would be undefined if read from db. It will never be saved.
 -record(actor, {
     id :: #actor_id{},
-    vsn :: nkservice_actor:vsn(),
     data = #{} :: nkservice_actor:data(),
     metadata = #{} :: nkservice_actor:metadata(),
     run_state = undefined :: nkservice_actor_srv:run_state() | undefined

@@ -295,6 +295,16 @@ add_apis([_PluginId|Rest], Package, Modules, Service) ->
 
 %% @private
 get_plugin_mod(Plugin) ->
+    case get_plugin_mod_check(Plugin) of
+        undefined ->
+            throw({plugin_unknown, Plugin});
+        Mod ->
+            Mod
+    end.
+
+
+%% @private
+get_plugin_mod_check(Plugin) ->
     Mod = list_to_atom(atom_to_list(Plugin)++"_plugin"),
     case code:ensure_loaded(Mod) of
         {module, _} ->
@@ -304,7 +314,7 @@ get_plugin_mod(Plugin) ->
                 {module, _} ->
                     Plugin;
                 {error, nofile} ->
-                    throw({unknown_plugin, Plugin})
+                    undefined
             end
     end.
 
@@ -325,7 +335,7 @@ get_callback_mod(Plugin) ->
     end.
 
 
-%% @private Expands a list of plugins with its found dependencies
+%% @private Expands a list of plugins with their dependencies
 %% First in the returned list will be the higher-level plugins, last one
 %% will be 'nkservice' usually
 
@@ -334,10 +344,12 @@ get_callback_mod(Plugin) ->
 
 expand_plugins(ModuleList) ->
     List1 = add_group_deps([nkservice|ModuleList]),
-    List2 = add_all_deps(List1, []),
+    List2 = add_all_deps(List1, [], []),
     case nklib_sort:top_sort(List2) of
         {ok, Sorted} ->
-            Sorted;
+            % Optional plugins could still appear in dependencies, and show up here
+            Sorted2 = [Plugin || Plugin <- Sorted, get_plugin_mod_check(Plugin) /= undefined],
+            Sorted2;
         {error, Error} ->
             throw(Error)
     end.
@@ -379,39 +391,64 @@ add_group_deps([{Plugin, Deps}|Rest], Acc, Groups) ->
 
 
 %% @private
-add_all_deps([], Acc) ->
+add_all_deps([], _Optional, Acc) ->
     Acc;
 
-add_all_deps([Plugin|Rest], Acc) when is_atom(Plugin) ->
-    add_all_deps([{Plugin, []}|Rest], Acc);
+add_all_deps([Plugin|Rest], Optional, Acc) when is_atom(Plugin) ->
+    add_all_deps([{Plugin, []}|Rest], Optional, Acc);
 
-add_all_deps([{Plugin, List}|Rest], Acc) when is_atom(Plugin) ->
+add_all_deps([{Plugin, List}|Rest], Optional, Acc) when is_atom(Plugin) ->
     case lists:keyfind(Plugin, 1, Acc) of
         {Plugin, OldList} ->
             List2 = lists:usort(OldList++List),
             Acc2 = lists:keystore(Plugin, 1, Acc, {Plugin, List2}),
-            add_all_deps(Rest, Acc2);
+            add_all_deps(Rest, Optional, Acc2);
         false ->
-            Deps = get_plugin_deps(Plugin, List),
-            add_all_deps(Deps++Rest, [{Plugin, Deps}|Acc])
+            case get_plugin_deps(Plugin, List, Optional) of
+                undefined ->
+                    add_all_deps(Rest, Optional, Acc);
+                {Deps, Optional2} ->
+                    add_all_deps(Deps++Rest, Optional2, [{Plugin, Deps}|Acc])
+            end
     end;
 
-add_all_deps([Other|_], _Acc) ->
+add_all_deps([Other|_], _Optional, _Acc) ->
     throw({invalid_plugin_name, Other}).
 
 
 %% @private
-get_plugin_deps(Plugin, BaseDeps) ->
-    Mod = get_plugin_mod(Plugin),
-    Deps = case nklib_util:apply(Mod, plugin_deps, []) of
-        List when is_list(List) ->
-            List;
-        not_exported ->
-            [];
-        continue ->
-            []
-    end,
-    lists:usort(BaseDeps ++ [nkservice|Deps]) -- [Plugin].
+get_plugin_deps(Plugin, BaseDeps, Optional) ->
+    case get_plugin_mod_check(Plugin) of
+        undefined ->
+            case lists:member(Plugin, Optional) of
+                true ->
+                    undefined;
+                false ->
+                    throw({plugin_unknown, Plugin})
+            end;
+        Mod ->
+            {Deps1, Optional2} = case nklib_util:apply(Mod, plugin_deps, []) of
+                List when is_list(List) ->
+                    get_plugin_deps_list(List, [], Optional);
+                not_exported ->
+                    {[], Optional};
+                continue ->
+                    {[], Optional}
+            end,
+            Deps2 = lists:usort(BaseDeps ++ [nkservice|Deps1]) -- [Plugin],
+            {Deps2, Optional2}
+    end.
+
+
+%% @private
+get_plugin_deps_list([], Deps, Optional) ->
+    {Deps, Optional};
+
+get_plugin_deps_list([{Plugin, optional}|Rest], Deps, Optional) when is_atom(Plugin) ->
+    get_plugin_deps_list(Rest, [Plugin|Deps], [Plugin|Optional]);
+
+get_plugin_deps_list([Plugin|Rest], Deps, Optional) when is_atom(Plugin) ->
+    get_plugin_deps_list(Rest, [Plugin|Deps], Optional).
 
 
 %% @private
