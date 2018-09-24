@@ -38,8 +38,9 @@
 
 
 %% @doc Called to get the list of plugins this service/plugin depends on.
+%% If the option 'optional' is used, and the plugin could not be loaded, it is ignored
 -spec plugin_deps() ->
-    [module()].
+    [module() | {module(), optional}].
 
 plugin_deps() ->
 	[].

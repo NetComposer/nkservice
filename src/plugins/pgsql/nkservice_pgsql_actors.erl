@@ -122,18 +122,19 @@ create_database_query() ->
         CREATE TABLE actors (
             uid STRING PRIMARY KEY NOT NULL,
             srv STRING NOT NULL,
-            class STRING NOT NULL,
-            actor_type STRING NOT NULL,
-            name STRING NOT NULL,
+            \"group\" STRING NOT NULL,
             vsn STRING NOT NULL,
+            \"type\" STRING NOT NULL,
+            hash STRING NOT NULL,
+            name STRING NOT NULL,
             data JSONB NOT NULL,
             metadata JSONB NOT NULL,
             path STRING NOT NULL,
             last_update STRING NOT NULL,
             expires INTEGER,
             fts_words STRING,
-            UNIQUE INDEX name_idx (srv, class, actor_type, name),
-            INDEX path_idx (path, class),
+            UNIQUE INDEX name_idx (srv, \"group\", \"type\", name),
+            INDEX path_idx (path, \"group\"),
             INDEX last_update_idx (last_update),
             INDEX expires_idx (expires),
             INVERTED INDEX data_idx (data),
@@ -181,12 +182,12 @@ create_database_query() ->
 
 %% @doc Called from actor_db_find callback
 find(SrvId, PackageId, #actor_id{}=ActorId) ->
-    #actor_id{srv=ActorSrvId, class=Class, type=Type, name=Name} = ActorId,
+    #actor_id{srv=ActorSrvId, group=Group, type=Type, name=Name} = ActorId,
     Query = [
         <<"SELECT uid FROM actors">>,
         <<" WHERE srv=">>, quote(ActorSrvId),
-        <<" AND class=">>, quote(Class),
-        <<" AND actor_type=">>, quote(Type),
+        <<" AND \"group\"=">>, quote(Group),
+        <<" AND \"type\"=">>, quote(Type),
         <<" AND name=">>, quote(Name), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
@@ -200,17 +201,19 @@ find(SrvId, PackageId, #actor_id{}=ActorId) ->
 
 find(SrvId, PackageId, UID) ->
     Query = [
-        <<"SELECT srv,class,actor_type,name FROM actors">>,
+        <<"SELECT srv,\"group\",vsn,\"type\",name,hash FROM actors">>,
         <<" WHERE uid=">>, quote(UID), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
-        {ok, [[{ActorSrvId, Class, Type, Name}]], QueryMeta} ->
+        {ok, [[{ActorSrvId, Group, Vsn, Type, Name, Hash}]], QueryMeta} ->
             ActorId = #actor_id{
                 srv = get_srv(ActorSrvId),
                 uid = UID,
-                class = Class,
+                group = Group,
+                vsn = Vsn,
                 type = Type,
                 name = Name,
+                hash = Hash,
                 pid = undefined
             },
             {ok, ActorId, QueryMeta};
@@ -223,26 +226,27 @@ find(SrvId, PackageId, UID) ->
 
 %% @doc Called from actor_db_read callback
 read(SrvId, PackageId, #actor_id{}=ActorId) ->
-    #actor_id{srv=ActorSrvId, class=Class, type=Type, name=Name} = ActorId,
+    #actor_id{srv=ActorSrvId, group=Group, type=Type, name=Name} = ActorId,
     Query = [
-        <<"SELECT uid,vsn,metadata,data FROM actors ">>,
+        <<"SELECT uid,vsn,hash,metadata,data FROM actors ">>,
         <<" WHERE srv=">>, quote(ActorSrvId),
-        <<" AND class=">>, quote(Class),
-        <<" AND actor_type=">>, quote(Type),
+        <<" AND \"group\"=">>, quote(Group),
+        <<" AND \"type\"=">>, quote(Type),
         <<" AND name=">>, quote(Name), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {UID, Vsn, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            {UID, Vsn, Hash, {jsonb, Meta}, {jsonb, Data}} = Fields,
             Actor = #actor{
                 id = #actor_id{
                     uid = UID,
                     srv = ActorSrvId,
-                    class = Class,
+                    group = Group,
+                    vsn = Vsn,
                     type = Type,
-                    name = Name
+                    name = Name,
+                    hash = Hash
                 },
-                vsn = Vsn,
                 data = nklib_json:decode(Data),
                 metadata = nklib_json:decode(Meta)
             },
@@ -256,21 +260,22 @@ read(SrvId, PackageId, #actor_id{}=ActorId) ->
 read(SrvId, PackageId, UID) ->
     UID2 = to_bin(UID),
     Query = [
-        <<"SELECT srv,class,actor_type,name,vsn,metadata,data FROM actors ">>,
+        <<"SELECT srv,\"group\",vsn,\"type\",name,hash,metadata,data FROM actors ">>,
         <<" WHERE uid=">>, quote(UID2), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {ActorSrvId, Class, Type, Name, Vsn, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            {ActorSrvId, Group, Vsn, Type, Name, Hash, {jsonb, Meta}, {jsonb, Data}} = Fields,
             Actor = #actor{
                 id = #actor_id{
                     uid = UID2,
                     srv = get_srv(ActorSrvId),
-                    class = Class,
+                    group = Group,
+                    vsn = Vsn,
                     type = Type,
-                    name = Name
+                    name = Name,
+                    hash = Hash
                 },
-                vsn = Vsn,
                 data = nklib_json:decode(Data),
                 metadata = nklib_json:decode(Meta)
             },
@@ -314,7 +319,7 @@ save(SrvId, PackageId, Mode, Actors) ->
     end,
     ActorsQuery = [
         Verb, <<" INTO actors">>,
-        <<" (uid,srv,class,actor_type,name,vsn,data,metadata,path,last_update,expires,fts_words)">>,
+        <<" (uid,srv,\"group\",vsn,\"type\",name,hash,data,metadata,path,last_update,expires,fts_words)">>,
         <<" VALUES ">>, nklib_util:bjoin(ActorFields), ?RETURN_NOTHING
     ],
     LabelsQuery = [
@@ -389,11 +394,12 @@ populate_fields([Actor|Rest], SaveFields) ->
         id = #actor_id{
             uid = UID,
             srv = ActorSrvId,
-            class = Class,
+            group = Group,
+            vsn = Vsn,
             type = Type,
-            name = Name
+            name = Name,
+            hash = Hash
         },
-        vsn = Vsn,
         data = Data,
         metadata = Meta
     } = Actor,
@@ -429,10 +435,11 @@ populate_fields([Actor|Rest], SaveFields) ->
     ActorFields = quote_list([
         UID,
         ActorSrvId,
-        Class,
+        Group,
+        Vsn,
         Type,
         Name,
-        Vsn,
+        Hash,
         Data,
         Meta,
         Path,
@@ -559,17 +566,19 @@ delete_actors([UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
             ok
     end,
     GetQ = [
-        <<"SELECT srv,class,actor_type,name FROM actors ">>,
+        <<"SELECT srv,\"group\",vsn,\"type\",name,hash FROM actors ">>,
         <<"WHERE uid=">>, quote(UID), <<";">>
     ],
     case do_query(Pid, GetQ, QueryMeta) of
-        {ok, [[{ActorSrvId, Class, Type, Name}]], _} ->
+        {ok, [[{ActorSrvId, Group, Vsn, Type, Name, Hash}]], _} ->
             ActorId = #actor_id{
                 srv = get_srv(ActorSrvId),
                 uid = UID,
-                class = Class,
+                group = Group,
+                vsn = Vsn,
                 type = Type,
                 name = Name,
+                hash = Hash,
                 pid = undefined
             },
             QueryAcc2 = [

@@ -41,6 +41,7 @@ execute(Ctx, Obj, Field, Args) ->
         continue ->
             case call_actor_execute(SrvId, Field, Obj, Args) of
                 continue ->
+                    lager:warning("NKLOG GRAPHQ UNKNOWN ~p ~p ~p ~p", [SrvId, Field, Obj, Args]),
                     {error, {field_unknown, Field}};
                 {ok, Obj2} ->
                     {ok, Obj2};

@@ -30,10 +30,11 @@
 -export([create/1]).
 -export([get_actor/1, get_path/1, is_enabled/1, enable/2, update/2, remove/1,
          stop/1, stop/2]).
--export([search_classes/2, search_types/3]).
+-export([search_groups/2, search_types/3]).
 -export([search_linked_to/4, search_fts/4, search/3, search_ids/3,
          delete_all/3, delete_old/5]).
--export_type([actor/0, id/0, uid/0, class/0, type/0, path/0, name/0, vsn/0,
+-export_type([actor/0, id/0, uid/0, type/0, path/0, name/0,
+              vsn/0, group/0, hash/0,
               data/0, metadata/0, alarm_class/0, alarm_body/0]).
 
 
@@ -53,15 +54,17 @@
 
 -type uid() :: binary().
 
--type class() :: binary().
+-type group() :: binary().
+
+-type vsn() :: binary().
+
+-type hash() :: binary().
 
 -type type() :: binary().
 
 -type path() :: binary().   %% /srv/class/type/name
 
 -type name() :: binary().
-
--type vsn() :: binary().
 
 -type data() ::
     #{
@@ -216,21 +219,21 @@ stop(Id, Reason) ->
 
 
 %% @doc Counts classes and objects of each class
--spec search_classes(nkservice:id(), #{deep=>boolean(), srv=>nksevice:id()}) ->
+-spec search_groups(nkservice:id(), #{deep=>boolean(), srv=>nksevice:id()}) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
-search_classes(SrvId, Opts) ->
+search_groups(SrvId, Opts) ->
     QuerySrvId = maps:get(srv, Opts, SrvId),
-    nkservice_actor_db:aggregation(SrvId, {service_aggregation_classes, QuerySrvId, Opts}).
+    nkservice_actor_db:aggregation(SrvId, {service_aggregation_groups, QuerySrvId, Opts}).
 
 
 %% @doc
--spec search_types(nkservice:id(), class(), #{deep=>boolean(), srv=>nksevice:id()}) ->
+-spec search_types(nkservice:id(), group(), #{deep=>boolean(), srv=>nksevice:id()}) ->
     {ok, [{binary(), integer()}], Meta::map()} | {error, term()}.
 
-search_types(SrvId, Class, Opts) ->
+search_types(SrvId, Group, Opts) ->
     QuerySrvId = maps:get(srv, Opts, SrvId),
-    nkservice_actor_db:aggregation(SrvId, {service_aggregation_types, QuerySrvId, Class, Opts}).
+    nkservice_actor_db:aggregation(SrvId, {service_aggregation_types, QuerySrvId, Group, Opts}).
 
 
 %% @doc Gets objects pointing to another
@@ -290,13 +293,13 @@ search_ids(SrvId, SearchSpec, SearchOpts) ->
 
 
 %% @doc Deletes actors older than Epoch (secs)
--spec delete_old(nkservice:id(), class(), type(), binary(),
+-spec delete_old(nkservice:id(), group(), type(), binary(),
                         #{deep=>boolean(), srv=>nksevice:id()}) ->
     {ok, integer(), Meta::map()}.
 
-delete_old(SrvId, Class, Type, Date, Opts) ->
+delete_old(SrvId, Group, Type, Date, Opts) ->
     QuerySrvId = maps:get(srv, Opts, SrvId),
-    nkservice_actor_db:search(SrvId, {service_delete_old_actors, QuerySrvId, Class, Type, Date, Opts}).
+    nkservice_actor_db:search(SrvId, {service_delete_old_actors, QuerySrvId, Group, Type, Date, Opts}).
 
 
 %% @doc Generic deletion of objects
