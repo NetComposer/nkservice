@@ -1025,7 +1025,7 @@ do_update(UpdActor, #actor_st{actor=#actor{id=Id}=Actor}=State) ->
         IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
         case IsDataUpdated orelse IsMetaUpdated of
             true ->
-                lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
+                % lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
                 NewMeta2 = case UpdEnabled of
                     true ->
                         maps:remove(<<"isEnabled">>, NewMeta);
