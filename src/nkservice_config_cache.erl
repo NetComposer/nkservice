@@ -61,7 +61,7 @@ make_cache(#{id:=Id}=Service) ->
         secret => SafeSecrets
     },
     FunKeys = [
-        id, class, name, uuid, hash, timestamp,
+        id, class, name, domain, uuid, hash, timestamp,
         plugins, plugin_ids, packages, modules, meta, parent
     ],
     Spec1 = maps:map(

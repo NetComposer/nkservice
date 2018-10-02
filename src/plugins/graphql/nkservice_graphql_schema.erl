@@ -34,8 +34,8 @@
 -type config() ::
     #{
         type => atom(),
-        actor_class => nkservice_actor:class(),
-        actor_type => nkservice_actor:type()
+        actor_group => nkservice_actor:class(),
+        actor_resource => nkservice_actor:resource()
     }.
 
 

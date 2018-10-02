@@ -21,7 +21,7 @@
 %% @doc Default plugin callbacks
 -module(nkservice_actor_queries_pgsql).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([get_query/2]).
+-export([get_query/3]).
 -export([pgsql_totals_actors/2, pgsql_actors/2,
          pgsql_totals_actors_id/2, pgsql_actors_id/2]).
 -export([filter_path/2, make_sort/2, make_filter/2]).
@@ -37,26 +37,26 @@
 
 %% @private
 %% - deep: boolean()
-get_query({service_aggregation_groups, SrvId, Params}, _Opts) ->
+get_query(_SrvId, {service_aggregation_groups, Domain, Params}, _Opts) ->
     Query = [
         <<"SELECT \"group\", COUNT(\"group\") FROM actors">>,
-        <<" WHERE ">>, filter_path(SrvId, Params),
+        <<" WHERE ">>, filter_path(Domain, Params),
         <<" GROUP BY \"group\";">>
     ],
     {ok, {pgsql, Query, #{}}};
 
 %% - deep: boolean()
-get_query({service_aggregation_types, SrvId, Class, Params}, _Opts) ->
+get_query(_SrvId, {service_aggregation_resources, Domain, Group, Params}, _Opts) ->
     Query = [
-        <<"SELECT \"type\", COUNT(\"type\") FROM actors">>,
-        <<" WHERE \"group\" = ">>, quote(Class), <<" AND ">>, filter_path(SrvId, Params),
-        <<" GROUP BY \"type\";">>
+        <<"SELECT resource, COUNT(resource) FROM actors">>,
+        <<" WHERE \"group\" = ">>, quote(Group), <<" AND ">>, filter_path(Domain, Params),
+        <<" GROUP BY resource;">>
     ],
     {ok, {pgsql, Query, #{}}};
 
 %% - from, size: integer()
 %% - deep: boolean()
-get_query({service_search_linked, SrvId, UID, LinkType, Params}, _Opts) ->
+get_query(_SrvId, {service_search_linked, Domain, UID, LinkType, Params}, _Opts) ->
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Query = [
@@ -68,7 +68,7 @@ get_query({service_search_linked, SrvId, UID, LinkType, Params}, _Opts) ->
             _ ->
                 [<<" AND link_type=">>, quote(LinkType)]
         end,
-        <<" AND ">>, filter_path(SrvId, Params),
+        <<" AND ">>, filter_path(Domain, Params),
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Limit),
         <<";">>
     ],
@@ -84,7 +84,7 @@ get_query({service_search_linked, SrvId, UID, LinkType, Params}, _Opts) ->
 
 %% - from, size: integer()
 %% - deep: boolean()
-get_query({service_search_fts, SrvId, Field, Word, Params}, _Opts) ->
+get_query(_SrvId, {service_search_fts, Domain, Field, Word, Params}, _Opts) ->
     From = maps:get(from, Params, 0),
     Limit = maps:get(size, Params, 100),
     Word2 = nklib_parse:normalize(Word, #{unrecognized=>keep}),
@@ -97,7 +97,7 @@ get_query({service_search_fts, SrvId, Field, Word, Params}, _Opts) ->
     end,
     Query = [
         <<"SELECT uid FROM fts">>,
-        <<" WHERE ">>, Filter, <<" AND ">>, filter_path(SrvId, Params),
+        <<" WHERE ">>, Filter, <<" AND ">>, filter_path(Domain, Params),
         case Field of
             any ->
                 [];
@@ -116,7 +116,7 @@ get_query({service_search_fts, SrvId, Field, Word, Params}, _Opts) ->
 
 
 %% Params is nkdomain_search:search_spec()
-get_query({service_search_actors, SearchSpec}, _Opts) ->
+get_query(_SrvId, {service_search_actors, SearchSpec}, _Opts) ->
     % lager:error("NKLOG SEARCH SPEC ~p", [SearchSpec]),
     From = maps:get(from, SearchSpec, 0),
     Size = maps:get(size, SearchSpec, 10),
@@ -138,7 +138,7 @@ get_query({service_search_actors, SearchSpec}, _Opts) ->
             false ->
                 []
         end,
-        <<"SELECT uid,srv,\"group\",vsn,\"type\",name,hash,data,metadata FROM actors">>,
+        <<"SELECT uid,domain,\"group\",vsn,resource,name,data,metadata,hash FROM actors">>,
         SQLFilters,
         SQLSort,
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
@@ -152,7 +152,26 @@ get_query({service_search_actors, SearchSpec}, _Opts) ->
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
-get_query({service_search_actors_id, SearchSpec}, _Opts) ->
+get_query(SrvId, {service_search_actors, Group, Type, SearchSpec}, _Opts) ->
+    Filters1 = maps:get(filter, SearchSpec, #{}),
+    AndFilters1 = maps:get('and', Filters1, []),
+    AndFilters2 = case Group of
+        all ->
+            AndFilters1;
+        _ ->
+            [#{field=><<"group">>, op=>eq, value=>Group}|AndFilters1]
+    end,
+    AndFilters3 = case Type of
+        all ->
+            AndFilters2;
+        _ ->
+            [#{field=><<"resource">>, op=>eq, value=>Type}|AndFilters2]
+    end,
+    Filters2 = Filters1#{'and' => AndFilters3},
+    SearchSpec2 = SearchSpec#{filter => Filters2},
+    get_query(SrvId, {service_search_actors, SearchSpec2}, []);
+
+get_query(_SrvId, {service_search_actors_id, SearchSpec}, _Opts) ->
     % lager:error("NKLOG SEARCH SPEC ~p", [SearchSpec]),
     From = maps:get(from, SearchSpec, 0),
     Size = maps:get(size, SearchSpec, 10),
@@ -170,7 +189,7 @@ get_query({service_search_actors_id, SearchSpec}, _Opts) ->
             false ->
                 []
         end,
-        <<"SELECT uid,srv,\"group\",vsn,\"type\",name,hash,last_update FROM actors">>,
+        <<"SELECT uid,domain,\"group\",vsn,resource,name,last_update FROM actors">>,
         SQLFilters,
         SQLSort,
         <<" OFFSET ">>, to_bin(From), <<" LIMIT ">>, to_bin(Size),
@@ -184,7 +203,26 @@ get_query({service_search_actors_id, SearchSpec}, _Opts) ->
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
 
-get_query({service_delete_actors, DoDelete, SearchSpec}, _Opts) ->
+get_query(SrvId, {service_search_actors_type_id, Group, Type, SearchSpec}, _Opts) ->
+    Filters1 = maps:get(filter, SearchSpec, #{}),
+    AndFilters1 = maps:get('and', Filters1, []),
+    AndFilters2 = case Group of
+        all ->
+            AndFilters1;
+        _ ->
+            [#{field=><<"group">>, op=>eq, value=>Group}|AndFilters1]
+    end,
+    AndFilters3 = case Type of
+        all ->
+            AndFilters2;
+        _ ->
+            [#{field=><<"resource">>, op=>eq, value=>Type}|AndFilters2]
+    end,
+    Filters2 = Filters1#{'and' => AndFilters3},
+    SearchSpec2 = SearchSpec#{filter => Filters2},
+    get_query(SrvId, {service_search_actors_id, SearchSpec2}, []);
+
+get_query(_SrvId, {service_delete_actors, DoDelete, SearchSpec}, _Opts) ->
     SQLFilters = make_sql_filters(SearchSpec),
     Query = [
         case DoDelete of
@@ -198,17 +236,17 @@ get_query({service_delete_actors, DoDelete, SearchSpec}, _Opts) ->
     ],
     {ok, {pgsql, Query, #{result_fun=>fun pgsql_delete/2}}};
 
-get_query({service_delete_old_actors, SrvId, Group, Type, Epoch, Opts}, _Opts) ->
+get_query(_SrvId, {service_delete_old_actors, Domain, Group, Type, Epoch, Opts}, _Opts) ->
     Query = [
         <<"DELETE FROM actors">>,
-        <<" WHERE \"group\"=">>, quote(Group), <<" AND \"type\"=">>, quote(Type),
+        <<" WHERE \"group\"=">>, quote(Group), <<" AND resource=">>, quote(Type),
         <<" AND last_update<">>, quote(Epoch),
-        <<" AND ">>, filter_path(SrvId, Opts),
+        <<" AND ">>, filter_path(Domain, Opts),
         <<";">>
     ],
     {ok, {pgsql, Query, #{result_fun=>fun pgsql_delete/2}}};
 
-get_query(QueryType, _Opts) ->
+get_query(_SrvId, QueryType, _Opts) ->
     {error, {query_unknown, QueryType}}.
 
 
@@ -225,17 +263,17 @@ pgsql_actors([{{select, Size}, Rows, _OpMeta}], Meta) ->
         #actor{
             id = #actor_id{
                 uid = UID,
-                srv = nkservice_actor_util:gen_srv_id(SrvId),
+                domain = Domain,
                 group = Group,
                 vsn = Vsn,
-                type = Type,
-                name = Name,
-                hash = Hash
+                resource = Res,
+                name = Name
             },
             data = nklib_json:decode(Data),
-            metadata = nklib_json:decode(MetaData)
+            metadata = nklib_json:decode(MetaData),
+            hash = Hash
         }
-        || {UID, SrvId, Group, Vsn, Type, Name, Hash, {jsonb, Data}, {jsonb, MetaData}} <- Rows
+        || {UID, Domain, Group, Vsn, Res, Name, {jsonb, Data}, {jsonb, MetaData}, Hash} <- Rows
     ],
     {ok, Actors, Meta#{size=>Size}}.
 
@@ -246,17 +284,17 @@ pgsql_totals_actors([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta
         #actor{
             id = #actor_id{
                 uid = UID,
-                srv = nkservice_actor_util:gen_srv_id(SrvId),
+                domain = Domain,
                 group = Group,
                 vsn = Vsn,
-                type = Type,
-                name = Name,
-                hash = Hash
+                resource = Res,
+                name = Name
             },
             data = nklib_json:decode(Data),
-            metadata = nklib_json:decode(MetaData)
+            metadata = nklib_json:decode(MetaData),
+            hash = Hash
         }
-        || {UID, SrvId, Group, Vsn, Type, Name, Hash, {jsonb, Data}, {jsonb, MetaData}} <- Rows
+        || {UID, Domain, Group, Vsn, Res, Name, {jsonb, Data}, {jsonb, MetaData}, Hash} <- Rows
     ],
     {ok, Actors, Meta#{size=>Size, total=>Total}}.
 
@@ -265,18 +303,17 @@ pgsql_totals_actors([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta
 pgsql_actors_id([{{select, Size}, Rows, _OpMeta}], Meta) ->
     Actors = [
         #actor_id{
-            srv = nkservice_actor_util:gen_srv_id(SrvId),
+            domain = Domain,
             uid = UID,
             group = Group,
             vsn = Vsn,
-            type = Type,
-            name = Name,
-            hash = Hash
+            resource = Res,
+            name = Name
         }
-        || {UID, SrvId, Group, Vsn, Type, Name, Hash, _Updated} <- Rows
+        || {UID, Domain, Group, Vsn, Res, Name, _Updated} <- Rows
     ],
     Last = case lists:reverse(Rows) of
-        [{_UID, _SrvId, _Group, _Vsn, _Type, _Name, _Hash, Updated}|_] ->
+        [{_UID, _Domain, _Group, _Vsn, _Res, _Name, Updated}|_] ->
             Updated;
         [] ->
             undefined
@@ -288,18 +325,17 @@ pgsql_actors_id([{{select, Size}, Rows, _OpMeta}], Meta) ->
 pgsql_totals_actors_id([{{select, 1}, [{Total}], _}, {{select, Size}, Rows, _OpMeta}], Meta) ->
     Actors = [
         #actor_id{
-            srv = nkservice_actor_util:gen_srv_id(SrvId),
+            domain = Domain,
             uid = UID,
             group = Group,
             vsn = Vsn,
-            type = Type,
-            name = Name,
-            hash = Hash
+            resource = Res,
+            name = Name
         }
-        || {UID, SrvId, Group, Vsn, Type, Name, Hash, _Updated} <- Rows
+        || {UID, Domain, Group, Vsn, Res, Name, _Updated} <- Rows
     ],
     Last = case lists:reverse(Rows) of
-        [{_UID, _SrvId, _Group, _Vsn, _Type, _Name, _Hash, Updated}|_] ->
+        [{_UID, _Domain, _Group, _Vsn, _Res, _Name, Updated}|_] ->
             Updated;
         [] ->
             undefined
@@ -321,7 +357,7 @@ pgsql_delete([{{select, _}, [{Total}], _}], Meta) ->
 %% ===================================================================
 
 %% @private
-make_sql_filters(#{srv:=SrvId}=Params) ->
+make_sql_filters(#{domain:=Domain}=Params) ->
     Filters = maps:get(filter, Params, #{}),
     AndFilters1 = expand_filter(maps:get('and', Filters, []), []),
     AndFilters2 = make_filter(AndFilters1, []),
@@ -342,7 +378,7 @@ make_sql_filters(#{srv:=SrvId}=Params) ->
         _ ->
             [<<"(NOT ", F/binary, ")">> || F <- NotFilters2]
     end,
-    PathFilter = list_to_binary(filter_path(SrvId, Params)),
+    PathFilter = list_to_binary(filter_path(Domain, Params)),
     FilterList = [PathFilter | AndFilters2 ++ OrFilters4 ++ NotFilters3],
     Where = nklib_util:bjoin(FilterList, <<" AND ">>),
     [<<" WHERE ">>, Where].
@@ -378,9 +414,9 @@ expand_filter([#{field:=Field, value:=Value}=Term|Rest], Acc) ->
 make_filter([], Acc) ->
     Acc;
 
-make_filter([{<<"group+type">>, eq, Val, string} | Rest], Acc) ->
+make_filter([{<<"group+resource">>, eq, Val, string} | Rest], Acc) ->
     [Group, Type] = binary:split(Val, <<"+">>),
-    Filter = <<"(\"group\"='", Group/binary, "' AND \"type\"='", Type/binary, "')">>,
+    Filter = <<"(\"group\"='", Group/binary, "' AND resource='", Type/binary, "')">>,
     make_filter(Rest, [Filter | Acc]);
 
 make_filter([{<<"metadata.fts.", Field/binary>>, Op, Val, string} | Rest], Acc) ->
@@ -418,8 +454,8 @@ make_filter([{<<"metadata.isEnabled">>, eq, Bool, boolean}|Rest], Acc) ->
     make_filter(Rest, [Filter|Acc]);
 
 make_filter([{Field, exists, Bool, _}|Rest], Acc)
-    when Field==<<"uid">>; Field==<<"srv">>; Field==<<"group">>; Field==<<"vsn">>;
-         Field==<<"type">>; Field==<<"path">>; Field==<<"hash">>; Field==<<"last_update">>;
+    when Field==<<"uid">>; Field==<<"domain">>; Field==<<"group">>; Field==<<"vsn">>;
+         Field==<<"resource">>; Field==<<"path">>; Field==<<"hash">>; Field==<<"last_update">>;
          Field==<<"expires">>; Field==<<"fts_word">> ->
     Acc2 = case Bool of
         true ->
@@ -484,10 +520,10 @@ get_op(Field, gte, Value) -> [Field, <<" >= ">>, quote(Value)].
 
 %% @private
 get_field_db_name(<<"uid">>) -> <<"uid">>;
-get_field_db_name(<<"srv">>) -> <<"srv">>;
+get_field_db_name(<<"domain">>) -> <<"domain">>;
 get_field_db_name(<<"group">>) -> <<"\"group\"">>;
 get_field_db_name(<<"vsn">>) -> <<"vsn">>;
-get_field_db_name(<<"type">>) -> <<"\"type\"">>;
+get_field_db_name(<<"resource">>) -> <<"resource">>;
 get_field_db_name(<<"name">>) -> <<"name">>;
 get_field_db_name(<<"hash">>) -> <<"hash">>;
 get_field_db_name(<<"path">>) -> <<"path">>;
@@ -495,7 +531,12 @@ get_field_db_name(<<"last_update">>) -> <<"last_update">>;
 get_field_db_name(<<"expires">>) -> <<"expires">>;
 get_field_db_name(<<"fts_word">>) -> <<"fts_word">>;
 get_field_db_name(<<"data.", _/binary>>=Field) -> Field;
+get_field_db_name(<<"metadata.uid">>) -> <<"uid">>;
+get_field_db_name(<<"metadata.domain">>) -> <<"domain">>;
+get_field_db_name(<<"metadata.name">>) -> <<"name">>;
+get_field_db_name(<<"metadata.resourceVersion">>) -> <<"hash">>;
 get_field_db_name(<<"metadata.updateTime">>) -> <<"last_update">>;
+% Any other metadata is kept
 get_field_db_name(<<"metadata.", _/binary>>=Field) -> Field;
 % Any other field should be inside data in this implementation
 get_field_db_name(Field) -> <<"data.", Field/binary>>.
@@ -513,9 +554,9 @@ expand_sort([], Acc) ->
 
 expand_sort([#{field:=Field}=Term|Rest], Acc) ->
     case Field of
-        <<"group+type">> ->
+        <<"group+resource">> ->
             % Special field used in domains
-            expand_sort([Term#{field:=<<"group">>}, Term#{field:=<<"type">>}|Rest], Acc);
+            expand_sort([Term#{field:=<<"group">>}, Term#{field:=<<"resource">>}|Rest], Acc);
         _ ->
             Order = maps:get(order, Term, asc),
             Type = maps:get(type, Term, string),
@@ -568,15 +609,16 @@ json_value(Field, Type, Acc) ->
 
 
 %% @private
-filter_path(SrvId, Opts) when is_list(SrvId) ->
-    Terms = [list_to_binary(filter_path(T, Opts)) || T <- SrvId],
-    [$(, nklib_util:bjoin(Terms, <<" OR ">>), $)];
-
-filter_path(SrvId, Opts) ->
-    Path = nkservice_actor_util:make_reversed_srv_id(SrvId),
+filter_path(Domain, Opts) ->
+    Path = nkservice_actor_util:make_path(Domain),
     case Opts of
         #{deep:=true} ->
-            [<<"(path LIKE ">>, quote(<<Path/binary, $%>>), <<")">>];
+            case Path of
+                <<>> ->
+                    [<<"TRUE">>];
+                _ ->
+                    [<<"(path LIKE ">>, quote(<<Path/binary, "%">>), <<")">>]
+            end;
         _ ->
             [<<"(path = ">>, quote(Path), <<")">>]
     end.

@@ -61,6 +61,7 @@ syntax() ->
         id => atom,
         class => binary,
         name => binary,
+        domain => binary,
         uuid => binary,
         plugins => {list, atom},
         packages => {list, #{
@@ -101,7 +102,7 @@ syntax() ->
             '__mandatory' => [key, value],
             '__defaults' => #{class=><<>>, id=><<>>}
         }},
-        debug_actors => {list, binary},     % Can be "all", "(class)", or "(class):(type)"
+        debug_actors => {list, binary},     % Can be "all", "(class)", or "(class):(resource)"
         meta => map,
         parent => atom,
         '__defaults' => #{parent => undefined},

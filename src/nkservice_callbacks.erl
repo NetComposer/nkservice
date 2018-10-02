@@ -29,8 +29,9 @@
          service_master_handle_call/3, service_master_handle_cast/2,
          service_master_handle_info/2, service_leader_code_change/3,
          service_master_terminate/2]).
--export([actor_create/2, actor_activate/2, actor_external_event/3, actor_config/1]).
--export([actor_srv_init/1, actor_srv_terminate/2,
+-export([actor_is_activated/2, actor_create/3, actor_activate/3,
+         actor_external_event/3, actor_config/1]).
+-export([actor_srv_init/3, actor_srv_register/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_event/2,
          actor_srv_link_event/4,  actor_srv_link_down/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
@@ -40,9 +41,8 @@
 -export([actor_do_active/1, actor_do_expired/1]).
 -export([actor_db_find/2, actor_db_create/2, actor_db_read/2,
          actor_db_update/2, actor_db_delete/3, actor_db_search/3,
-         actor_db_aggregate/3, actor_db_get_query/3,
+         actor_db_aggregate/3, actor_db_get_query/4,
          actor_db_get_service/2, actor_db_update_service/3]).
--export([nkservice_find_uid/2, nkservice_make_srv_id/2]).
 
 -export_type([continue/0]).
 
@@ -155,7 +155,6 @@ msg(timeout) 				        -> "Timeout";
 msg(too_many_records)               -> "Too many records";
 msg(ttl_missing) 			        -> "TTL is missing";
 msg(ttl_timeout) 			        -> "TTL Timeout";
-msg({type_unknown, Group, Type})    -> {"Type '~s' (~s) unknown", [Group, Type]};
 msg(unauthorized) 			        -> "Unauthorized";
 msg(uid_not_allowed) 	            -> "UID is not allowed";
 msg(uniqueness_violation)	        -> "Actor is not unique";
@@ -346,24 +345,33 @@ service_master_terminate(_Reason, _State) ->
 -type actor_st() :: #actor_st{}.
 -type actor_id() :: #actor_id{}.
 
+
+%% @doc Called from nkservice_actor_db:is_activated/2
+-spec actor_is_activated(nkservice:id(), #actor_id{}|binary()) ->
+    {true, #actor_id{}} | false | continue().
+
+actor_is_activated(_SrvId, _ActorIdOrUID) ->
+    false.
+
+
 %% @doc Called from nkdomain_actor_db:create() when an actor is to be created
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
--spec actor_create(nkservice:actor(), nkservice_actor_srv:start_opts()) ->
+-spec actor_create(nkservice:id(), nkservice:actor(), nkservice_actor_srv:start_opts()) ->
     {ok, actor_id()} | {error, term()}.
 
-actor_create(Actor, StartOpts) ->
-    nkservice_actor_srv:create(Actor, StartOpts).
+actor_create(SrvId, Actor, StartOpts) ->
+    nkservice_actor_srv:create(SrvId, Actor, StartOpts).
 
 
 %% @doc Called from nkdomain_actor_db:load() when an actor has been read and must be activated
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
--spec actor_activate(nkservice:actor(), nkservice_actor_srv:start_opts()) ->
+-spec actor_activate(nkservice:id(), nkservice:actor(), nkservice_actor_srv:start_opts()) ->
     {ok, actor_id()} | {error, term()}.
 
-actor_activate(Actor, StartOpts) ->
-    nkservice_actor_srv:start(Actor, StartOpts).
+actor_activate(SrvId, Actor, StartOpts) ->
+    nkservice_actor_srv:start(SrvId, Actor, StartOpts).
 
 
 %% @doc Called to get the default configuration for an actor
@@ -384,11 +392,19 @@ actor_external_event(_SrvId, _Event, _Actor) ->
 
 
 %% @doc Called when a new session starts
--spec actor_srv_init(actor_st()) ->
+-spec actor_srv_init(nkservice:id(), map(), actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_srv_init(State) ->
+actor_srv_init(_SrvId, _StartOpts, State) ->
     {ok, State}.
+
+
+%% @doc Called to register actor with a master process
+-spec actor_srv_register(nkservice:id(), actor_st()) ->
+    {ok, pid()|undefined, actor_st()} | {error, Reason::term()}.
+
+actor_srv_register(_SrvId, State) ->
+    {ok, undefined, State}.
 
 
 %%  @doc Called update an actor with status
@@ -496,7 +512,7 @@ actor_srv_alarms(State) ->
     {stop, Reason::term(), actor_st()} | continue().
 
 actor_srv_handle_call(Msg, _From, State) ->
-    lager:error("Module nkdomain_obj received unexpected call: ~p", [Msg]),
+    lager:error("Module nkservice_actor_srv received unexpected call: ~p", [Msg]),
     {noreply, State}.
 
 
@@ -505,7 +521,7 @@ actor_srv_handle_call(Msg, _From, State) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
 actor_srv_handle_cast(Msg, State) ->
-    lager:error("Module nkdomain_obj received unexpected cast: ~p", [Msg]),
+    lager:error("Module nkservice_actor_srv received unexpected cast: ~p", [Msg]),
     {noreply, State}.
 
 
@@ -514,7 +530,7 @@ actor_srv_handle_cast(Msg, State) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
 actor_srv_handle_info(Msg, State) ->
-    lager:warning("Module nkdomain_obj received unexpected info: ~p", [Msg]),
+    lager:warning("Module nkservice_actor_srv received unexpected info: ~p", [Msg]),
     {noreply, State}.
 
 %% @private Called on proper stop
@@ -554,20 +570,10 @@ actor_do_expired(_Actor) ->
     ok.
 
 
-%%%% @doc Tries to find the #actor_id{} of a path
-%%%% Plugins can modify the behaviour
-%%-spec actor_path_preprocess([binary()]) ->
-%%    {ok, #actor_id{}, Resource::binary()} | {error, term()}.
-%%
-%%actor_path_preprocess(Parts) ->
-%%    nkservice_actor_util:path_parts_to_actor_id(Parts).
-
-
-
-
 %% ===================================================================
 %% Actor DB
 %% ===================================================================
+
 
 
 %% @doc Called to find an actor on disk
@@ -630,14 +636,15 @@ actor_db_aggregate(_SrvId, _SearchType, _Opts) ->
 
 
 %% @doc
--spec actor_db_get_query(term(), nkservice_actor_db:search_type() | nkservice_actor_db:agg_type(),
-                            nkservice_actor_db:opts()) ->
+-spec actor_db_get_query(nkservice:id(), term(),
+                         nkservice_actor_db:search_type() | nkservice_actor_db:agg_type(),
+                         nkservice_actor_db:opts()) ->
     {ok, term()} | {error, term()}.
 
-actor_db_get_query(pgsql, SearchType, Opts) ->
-    nkservice_actor_queries_pgsql:get_query(SearchType, Opts);
+actor_db_get_query(SrvId, pgsql, SearchType, Opts) ->
+    nkservice_actor_queries_pgsql:get_query(SrvId, SearchType, Opts);
 
-actor_db_get_query(Backend, _SearchType, _Opts) ->
+actor_db_get_query(_SrvId, Backend, _SearchType, _Opts) ->
     {error, {query_backend_unknown, Backend}}.
 
 
@@ -657,23 +664,5 @@ actor_db_update_service(_SrvId, _ActorSrvId, _Cluster) ->
     {error, not_implemented}.
 
 
-%% @doc Called to find an actor on disk, when we only have the UUID and no service
-%% from id_to_actor_id/1
-%% SrvId will be nkservice_app:get(dbDefaultService)
--spec nkservice_find_uid(nkservice:id(), UID::binary()) ->
-    {ok, #actor_id{}, Meta::map()} | {error, term()} | continue().
-
-nkservice_find_uid(_SrvId, _UID) ->
-    {error, not_implemented}.
-
-
-%% @doc Called to check if a service atom must be created,
-%% from nkservice_actor_util:gen_srv_id/1
-%% SrvId will be nkservice_app:get(dbDefaultService)
--spec nkservice_make_srv_id(nkservice:id(), Srv::binary()) ->
-    {ok, nkservice:id()} | {error, term()}.
-
-nkservice_make_srv_id(_SrvId, _UID) ->
-    {error, not_implemented}.
 
 

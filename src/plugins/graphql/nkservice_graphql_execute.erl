@@ -24,7 +24,6 @@
 
 -export([execute/4]).
 
-%-include("nkdomain.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nkservice/include/nkservice_actor.hrl").
 
@@ -59,7 +58,7 @@ execute(Ctx, Obj, Field, Args) ->
 
 %% @private
 call_actor_execute(SrvId, Field, Obj, Args) ->
-    case catch nkservice_graphql_plugin:get_actor_connection_meta(SrvId, Field) of
+    case catch nkservice_graphql_plugin:get_connection_meta(SrvId, Field) of
         #{module:=Module}=Meta ->
             case erlang:function_exported(Module, execute, 5) of
                 true ->

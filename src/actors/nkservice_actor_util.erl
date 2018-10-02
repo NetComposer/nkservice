@@ -29,10 +29,10 @@
 -include_lib("nkevent/include/nkevent.hrl").
 
 -export([send_external_event/3]).
--export([put_create_fields/1, update/2, check_links/1, do_check_links/1]).
--export([is_path/1, actor_id_to_path/1]).
--export([make_reversed_srv_id/1, gen_srv_id/1]).
--export([make_plural/1, normalized_name/1]).
+-export([put_create_fields/1, update/2, check_links/2, do_check_links/2]).
+-export([is_actor_id/1, actor_id_to_path/1]).
+-export([make_path/1]).
+-export([make_plural/1, make_singular/1, normalized_name/1]).
 -export([fts_normalize_word/1, fts_normalize_multi/1]).
 -export([update_check_fields/2]).
 
@@ -50,21 +50,25 @@ send_external_event(SrvId, Reason, Actor) ->
     ?CALL_SRV(SrvId, actor_external_event, [SrvId, Reason, Actor]).
 
 
-
 %% @doc Prepares an actor for creation
 %% - uid is added
 %% - name is added (if not present)
 %% - metas creationTime, updateTime, generation and resourceVersion are added
 put_create_fields(Actor) ->
     #actor{id=ActorId, metadata=Meta} = Actor,
-    #actor_id{type=Type, name=Name1} = ActorId,
-    UID = make_uid(Type),
+    #actor_id{resource=Res, name=Name1} = ActorId,
+    UID = make_uid(Res),
     %% Add Name if not present
-    Name2 = case normalized_name(Name1) of
-        <<>> ->
-            make_name(UID);
-        NormName ->
-            NormName
+    Name2 = case is_binary(Name1) of
+        true ->
+            case normalized_name(Name1) of
+                <<>> ->
+                    make_name(UID);
+                NormName ->
+                    NormName
+            end;
+        false ->
+            make_name(UID)
     end,
     Time = nklib_date:now_3339(msecs),
     Actor2 = Actor#actor{
@@ -74,24 +78,22 @@ put_create_fields(Actor) ->
     update(Actor2, Time).
 
 
+
 %% @private
 update(#actor{id=ActorId, data=Data, metadata=Meta}=Actor, Time3339) ->
-    #actor_id{srv=SrvId, group=Group, vsn=Vsn, type=Type, name=Name} = ActorId,
+    #actor_id{domain=Domain, group=Group, vsn=Vsn, resource=Res, name=Name} = ActorId,
     Gen = maps:get(<<"generation">>, Meta, -1),
-    Hash = erlang:phash2({SrvId, Group, Vsn, Type, Name, Data, Meta}),
+    Hash = erlang:phash2({Domain, Group, Vsn, Res, Name, Data, Meta}),
     Meta2 = Meta#{
         <<"updateTime">> => Time3339,
         <<"generation">> => Gen+1
     },
-    Actor#actor{
-        id = ActorId#actor_id{hash=to_bin(Hash)},
-        metadata = Meta2
-    }.
+    Actor#actor{hash=to_bin(Hash), metadata=Meta2}.
 
 
 %% @doc
-check_links(#actor{metadata=Meta1}=Actor) ->
-    case do_check_links(Meta1) of
+check_links(SrvId, #actor{metadata=Meta1}=Actor) ->
+    case do_check_links(SrvId, Meta1) of
         {ok, Meta2} ->
             {ok, Actor#actor{metadata = Meta2}};
         {error, Error} ->
@@ -100,27 +102,27 @@ check_links(#actor{metadata=Meta1}=Actor) ->
 
 
 %% @private
-do_check_links(#{<<"links">>:=Links}=Meta) ->
-    case do_check_links(maps:to_list(Links), []) of
+do_check_links(SrvId, #{<<"links">>:=Links}=Meta) ->
+    case do_check_links(SrvId, maps:to_list(Links), []) of
         {ok, Links2} ->
             {ok, Meta#{<<"links">>:=Links2}};
         {error, Error} ->
             {error, Error}
     end;
 
-do_check_links(Meta) ->
+do_check_links(_SrvId, Meta) ->
     {ok, Meta}.
 
 
 %% @private
-do_check_links([], Acc) ->
+do_check_links(_SrvId, [], Acc) ->
     {ok, maps:from_list(Acc)};
 
-do_check_links([{Type, Id}|Rest], Acc) ->
-    case nkservice_actor_db:find(Id) of
+do_check_links(SrvId, [{Type, Id}|Rest], Acc) ->
+    case nkservice_actor_db:find(SrvId, Id) of
         {ok, #actor_id{uid=UID}, _} ->
             true = is_binary(UID),
-            do_check_links(Rest, [{Type, UID}|Acc]);
+            do_check_links(SrvId, Rest, [{Type, UID}|Acc]);
         {error, actor_not_found} ->
             {error, linked_actor_unknown};
         {error, Error} ->
@@ -129,15 +131,22 @@ do_check_links([{Type, Id}|Rest], Acc) ->
 
 
 %% @doc Checks if ID is a path or #actor_id{}
-is_path(Path) ->
+%% SrvId must be an activated service, to check the service in the path
+is_actor_id(#actor_id{}=ActorId) ->
+    {true, ActorId};
+
+is_actor_id(#actor{id=ActorId}) ->
+    {true, ActorId};
+
+is_actor_id(Path) when is_binary(Path); is_list(Path) ->
     case to_bin(Path) of
         <<$/, Path2/binary>> ->
             case binary:split(Path2, <<$/>>, [global]) of
-                [SrvId, Group, Type, Name] ->
+                [Domain, Group, Res, Name] ->
                     ActorId = #actor_id{
-                        srv = gen_srv_id(SrvId),
+                        domain = Domain,
                         group = Group,
-                        type = Type,
+                        resource = Res,
                         name = Name
                     },
                     {true, ActorId};
@@ -150,38 +159,19 @@ is_path(Path) ->
 
 
 %% @doc
-actor_id_to_path(#actor_id{srv=SrvId, group=Group, type=Type, name=Name}) ->
-    list_to_binary([$/, to_bin(SrvId), $/, Group, $/, Type, $/, Name]).
+actor_id_to_path(#actor_id{domain=Domain, group=Group, resource=Res, name=Name}) ->
+    list_to_binary([$/, Domain, $/, Group, $/, Res, $/, Name]).
 
 
 %% @private
-%% Will make an atom from a binary defining a service
-%% If the atom does not exist yet, and a default db service is defined,
-%% it is called to allow the generation of the atom
-gen_srv_id(BinSrvId) when is_binary(BinSrvId) ->
-    case catch binary_to_existing_atom(BinSrvId, utf8) of
-        {'EXIT', _} ->
-            case nkservice_app:get_db_default_service() of
-                undefined ->
-                    nklib_util:make_atom(?MODULE, BinSrvId);
-                DefSrvId ->
-                    case ?CALL_SRV(DefSrvId, nkservice_make_srv_id, [DefSrvId, BinSrvId]) of
-                        {ok, SrvId} ->
-                            SrvId;
-                        {error, Error} ->
-                            error(Error)
-
-                    end
-            end;
-        SrvId ->
-            SrvId
+make_path(Domain) ->
+    case to_bin(Domain) of
+        ?ROOT_DOMAIN ->
+            <<>>;
+        Domain2 ->
+            Parts = lists:reverse(binary:split(Domain2, <<$.>>, [global])),
+            nklib_util:bjoin(Parts, $.)
     end.
-
-
-%% @private
-make_reversed_srv_id(SrvId) ->
-    Parts = lists:reverse(binary:split(to_bin(SrvId), <<$.>>, [global])),
-    nklib_util:bjoin(Parts, $.).
 
 
 %% @private
@@ -219,6 +209,21 @@ make_plural(Type) ->
         _ ->
             <<Type2/binary, "s">>
     end.
+
+
+%% @private
+make_singular(Resource) ->
+    Word = case lists:reverse(nklib_util:to_list(Resource)) of
+        [$s, $e, $i|Rest] ->
+            [$y|Rest];
+        [$s, $e, $s|Rest] ->
+            [$s|Rest];
+        [$s|Rest] ->
+            Rest;
+        Rest ->
+            Rest
+    end,
+    list_to_binary(lists:reverse(Word)).
 
 
 %% @private

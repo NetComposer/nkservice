@@ -6,18 +6,20 @@
 %% ===================================================================
 
 
+-define(ROOT_DOMAIN, <<"root">>).
+
+
 %% ===================================================================
 %% Records
 %% ===================================================================
 
 -record(actor_id, {
-    uid :: nkservice_actor:uid() | undefined,
-    srv :: nkservice:id(),
+    domain :: nkservice_actor:domain(),
     group :: nkservice_actor:group(),
-    type :: nkservice_actor:type(),
-    name :: nkservice_actor:name(),
     vsn :: nkservice_actor:vsn() | undefined,
-    hash :: nkservice_actor:hash() | undefined,
+    resource :: nkservice_actor:resource(),
+    name :: nkservice_actor:name(),
+    uid :: nkservice_actor:uid() | undefined,
     pid :: pid() | undefined
 }).
 
@@ -28,16 +30,19 @@
     id :: #actor_id{},
     data = #{} :: nkservice_actor:data(),
     metadata = #{} :: nkservice_actor:metadata(),
-    run_state = undefined :: nkservice_actor_srv:run_state() | undefined
+    hash :: nkservice_actor:hash() | undefined,
+    run_state = undefined :: term()
 }).
 
 
 -record(actor_st, {
+    srv :: nkservice:id(),
     actor :: #actor{},
     config :: nkservice_actor_srv:config(),
     module :: module(),
-    leader_pid :: pid() | undefined,
-    run_state = #{} :: nkservice_actor_srv:run_state(),
+    % leader_pid :: pid() | undefined,
+    run_state :: term(),
+    father_pid :: pid() | undefined,
     is_dirty :: true | false | deleted,
     save_timer :: reference(),
     is_enabled :: boolean(),

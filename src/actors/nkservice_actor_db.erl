@@ -22,10 +22,9 @@
 -module(nkservice_actor_db).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, find/2, is_activated/1, read/1, read/2, activate/1, activate/2]).
--export([create/2, delete/1, delete/2, delete_multi/2, update/1, update/2]).
+-export([find/2, is_activated/2, read/3, activate/3]).
+-export([create/3, delete/3, delete_multi/2, update/3]).
 -export([search/2, search/3, aggregation/2, aggregation/3]).
--export([db_read/2]).
 -export([check_service/4]).
 %%-export_type([search_obj/0, search_objs_opts/0]).
 
@@ -45,10 +44,7 @@
 
 -type opts() ::
 #{
-    db_srv => atom(),               % Service to use for database access
     ttl => integer(),               % For loading, changes default
-    activate => boolean(),          % Active object on creation, read (default: true)
-    activate_srv => atom(),         % Service fto call actor_create and actor_activate
     consume => boolean(),           % Remove actor after read (default: false)
     cascade => boolean(),           % For deletes, hard deletes, deletes all linked objects
     force => boolean()              % For hard delete, deletes even if linked objects
@@ -80,38 +76,29 @@
 %% ===================================================================
 
 
-
 %% @doc Finds and actor from UUID or Path, in memory and disk
--spec find(nkservice_actor:id()) ->
+%% It also checks if it is currently activated, returning the pid
+%% SrvId is be used for calling the DB backend and finding UID if necessary
+-spec find(nkservice:id(), nkservice_actor:id()) ->
     {ok, #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
-find(Id) ->
-    find(Id, #{}).
-
-
-%% @doc Finds and actor from UUID or Path, in memory and disk
-%% SrvId will be used for calling the bd backend
-%% Fields vsn and hash are removed since they are not stored in memory
--spec find(nkservice_actor:id(), opts()) ->
-    {ok, #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
-
-find(Id, Opts) ->
-    case id_to_actor_id(Id) of
-        {ok, #actor_id{srv=ActorSrvId}=ActorId} ->
-            case is_activated(ActorId) of
+find(SrvId, Id) ->
+    case id_to_actor_id(SrvId, Id) of
+        {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+            {ok, ActorId, #{}};
+        {ok, ActorId} ->
+            case is_activated(SrvId, ActorId) of
                 {true, ActorId2} ->
                     {ok, ActorId2, #{}};
                 false ->
-                    SrvId = maps:get(db_srv, Opts, ActorSrvId),
                     case ?CALL_SRV(SrvId, actor_db_find, [SrvId, ActorId]) of
                         {ok, #actor_id{}=ActorId2, Meta} ->
                             % Check if it is loaded, set pid()
-                            % 'unknown' is not possible here
-                            case is_activated(ActorId2) of
+                            case is_activated(SrvId, ActorId2) of
                                 {true, ActorId3} ->
                                     {ok, ActorId3, Meta};
                                 false ->
-                                    {ok, ActorId2#actor_id{vsn=undefined, hash=undefined}, Meta}
+                                    {ok, ActorId2, Meta}
                             end;
                         {error, Error} ->
                             {error, Error}
@@ -122,19 +109,21 @@ find(Id, Opts) ->
     end.
 
 
-%% @doc Finds if an actor is currently activated
+%% @doc Checks if an actor is currently activated
 %% If true, full #actor_id{} will be returned (with uid and pid)
-%% Fields vsn and hash are deleted since they are not stored (to be sure!)
--spec is_activated(nkservice_actor:id()) ->
+%% SrvId is only used to find the UID if necessary
+-spec is_activated(nkservice:id(), nkservice_actor:id()) ->
     {true, #actor_id{}} | false.
 
-is_activated(Id) ->
-    case id_to_actor_id(Id) of
+is_activated(SrvId, Id) ->
+    case id_to_actor_id(SrvId, Id) of
+        {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+            {true, ActorId};
         {ok, ActorId} ->
-            case nkservice_master:find_actor(ActorId) of
-                {ok, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
-                    {true, ActorId2#actor_id{vsn=undefined, hash=undefined}};
-                {error, _} ->
+            case ?CALL_SRV(SrvId, actor_is_activated, [SrvId, ActorId]) of
+                {true, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
+                    {true, ActorId2};
+                false ->
                     false
             end;
         _ ->
@@ -143,34 +132,32 @@ is_activated(Id) ->
 
 
 %% @doc Reads an actor from memory if loaded, or disk if not
-%% It will activate it
--spec read(nkservice_actor:id()) ->
-    {ok, nkservice_actor:actor(), Meta::map()} |
-    {deleted, nkservice_actor:actor()} |
-    {error, term()}.
-
-read(Id) ->
-    read(Id, #{}).
-
-
-%% @doc Reads an actor from memory if loaded, or disk if not
-%% It will activate it unless indicated
--spec read(nkservice_actor:id(), opts()) ->
+%% It will first try to activate it (unless indicated)
+%% If consume is set, it will destroy the object on read
+%% SrvId is used for calling the DB
+-spec read(nkservice:id(), nkservice_actor:id(), opts()) ->
     {ok, nkservice_actor:actor(),  Meta::map()} | {error, actor_not_found|term()}.
 
-read(Id, Opts) ->
-    case id_to_actor_id(Id) of
-        {ok, #actor_id{}=ActorId} ->
-            Consume = maps:get(consume, Opts, false),
-            Op = case Consume of
-                true ->
-                    consume_actor;
-                false ->
-                    get_actor
-            end,
-            case is_activated(ActorId) of
+read(SrvId, Id, Opts) ->
+    Consume = maps:get(consume, Opts, false),
+    Op = case Consume of
+        true ->
+            consume_actor;
+        false ->
+            get_actor
+    end,
+    case id_to_actor_id(SrvId, Id) of
+        {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+            case nkservice_actor_srv:sync_op(SrvId, ActorId, Op) of
+                {ok, Actor} ->
+                    {ok, Actor, #{}};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {ok, ActorId} ->
+            case is_activated(SrvId, ActorId) of
                 {true, ActorId2} ->
-                    case nkservice_actor_srv:sync_op(ActorId2, Op) of
+                    case nkservice_actor_srv:sync_op(SrvId, ActorId2, Op) of
                         {ok, Actor} ->
                             {ok, Actor, #{}};
                         {error, Error} ->
@@ -179,9 +166,9 @@ read(Id, Opts) ->
                 false ->
                     case maps:get(activate, Opts, true) of
                         true ->
-                            case activate(ActorId, Opts) of
+                            case activate(SrvId, ActorId, Opts) of
                                 {ok, ActorId2, Meta} ->
-                                    case nkservice_actor_srv:sync_op(ActorId2, Op) of
+                                    case nkservice_actor_srv:sync_op(SrvId, ActorId2, Op) of
                                         {ok, Actor} ->
                                             {ok, Actor, Meta};
                                         {error, Error} ->
@@ -193,7 +180,7 @@ read(Id, Opts) ->
                         false when Consume ->
                             {error, cannot_consume};
                         false ->
-                            db_read(ActorId, Opts)
+                            db_read(SrvId, ActorId)
                     end
             end;
         {error, Error} ->
@@ -202,44 +189,31 @@ read(Id, Opts) ->
 
 
 %% @doc Finds an actors's pid or loads it from storage and activates it
--spec activate(nkservice_actor:id()) ->
+%% Option 'ttl' can be used
+-spec activate(nkservice:id(), nkservice_actor:id(), opts()) ->
     {ok, #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
 
-activate(Id) ->
-    activate(Id, #{}).
-
-
-%% @doc Finds an actors's pid or loads it from storage
--spec activate(nkservice_actor:id(), opts()) ->
-    {ok, #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
-
-activate(Id, Opts) ->
-    case id_to_actor_id(Id) of
-        {ok, #actor_id{srv=ActorSrvId}=ActorId} ->
-            case is_activated(ActorId) of
+activate(SrvId, Id, Opts) ->
+    case id_to_actor_id(SrvId, Id) of
+        {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+            {ok, ActorId, #{}};
+        {ok, ActorId} ->
+            case is_activated(SrvId, ActorId) of
                 {true, ActorId2} ->
                     {ok, ActorId2, #{}};
                 _ ->
-                    SrvId = maps:get(activate_srv, Opts, ActorSrvId),
-                    case is_pid(whereis(SrvId)) of
-                        true ->
-                            case db_read(ActorId, Opts#{db_srv=>SrvId}) of
-                                {ok, Actor2, Meta2} ->
-                                    case
-                                        ?CALL_SRV(SrvId, actor_activate, [Actor2, Opts])
-                                    of
-                                        {ok, ActorId3} ->
-                                            {ok, ActorId3, Meta2};
-                                        {error, Error} ->
-                                            {error, Error}
-                                    end;
+                    case db_read(SrvId, ActorId) of
+                        {ok, Actor2, Meta2} ->
+                            case
+                                ?CALL_SRV(SrvId, actor_activate, [SrvId, Actor2, Opts])
+                            of
+                                {ok, ActorId3} ->
+                                    {ok, ActorId3, Meta2};
                                 {error, Error} ->
                                     {error, Error}
                             end;
-                        false ->
-                            % If ActorSrvId is not loaded, you must use
-                            % activate_srv with a loaded domain
-                            {error, {service_not_available, SrvId}}
+                        {error, Error} ->
+                            {error, Error}
                     end
             end;
         {error, Error} ->
@@ -250,19 +224,18 @@ activate(Id, Opts) ->
 %% @doc Creates a brand new actor
 %% It will activate the object, unless indicated
 %% ¡¡Must call nkservice_actor_util:check_create_fields(Actor) before!!
-create(Actor, Opts) ->
-    case nkservice_actor_util:check_links(Actor) of
-        {ok, #actor{id=#actor_id{srv=ActorSrvId}}=Actor2} ->
+create(SrvId, Actor, Opts) ->
+    case nkservice_actor_util:check_links(SrvId, Actor) of
+        {ok, #actor{}=Actor2} ->
             case maps:get(activate, Opts, true) of
                 true ->
                     % If we use the activate option, the object is first
                     % registered with leader, so you cannot have two with same
                     % name even on non-relational databases
-                    SrvId = maps:get(activate_srv, Opts, ActorSrvId),
                     % The process will send the 'create' event in-server
-                    case ?CALL_SRV(SrvId, actor_create, [Actor2, Opts]) of
+                    case ?CALL_SRV(SrvId, actor_create, [SrvId, Actor2, Opts]) of
                         {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
-                            case nkservice_actor_srv:sync_op(ActorId, get_actor) of
+                            case nkservice_actor_srv:sync_op(SrvId, ActorId, get_actor) of
                                 {ok, Actor3} ->
                                     {ok, Actor3, #{}};
                                 {error, Error} ->
@@ -276,8 +249,7 @@ create(Actor, Opts) ->
                 false ->
                     % Non recommended for non-relational databases, if name is not
                     % randomly generated
-                    SrvId = maps:get(db_srv, Opts, ActorSrvId),
-                    case ?CALL_SRV(SrvId, actor_db_create, [ActorSrvId, Actor2]) of
+                    case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor2]) of
                         {ok, Meta} ->
                             % Use the alternative method for sending the event
                             nkservice_actor_util:send_external_event(SrvId, created, Actor2),
@@ -293,20 +265,14 @@ create(Actor, Opts) ->
 
 %% @doc Updates an actor
 %% It will activate the object, unless indicated
-update(Actor) ->
-    update(Actor, #{}).
-
-
-%% @doc Updates an actor
-%% It will activate the object, unless indicated
-update(Actor, Opts) ->
+update(SrvId, Actor, Opts) ->
     case maps:get(activate, Opts, true) of
         true ->
-            case activate(Actor, Opts) of
+            case activate(SrvId, Actor, Opts) of
                 {ok, ActorId, _} ->
-                    case nkservice_actor_srv:sync_op(ActorId, {update, Actor}) of
+                    case nkservice_actor_srv:sync_op(SrvId, ActorId, {update, Actor}) of
                         ok ->
-                            {ok, Actor2} = nkservice_actor_srv:sync_op(ActorId, get_actor),
+                            {ok, Actor2} = nkservice_actor_srv:sync_op(SrvId, ActorId, get_actor),
                             {ok, Actor2, #{}};
                         {error, Error} ->
                             {error, Error}
@@ -322,25 +288,17 @@ update(Actor, Opts) ->
 
 
 %% @doc Deletes an actor
--spec delete(nkservice_actor:id()) ->
-    {ok, #actor_id{}, map()} | {error, actor_not_found|term()}.
-
-delete(Id) ->
-    delete(Id, #{}).
-
-
-%% @doc Deletes an actor
 %% Uses options srv_db, cascade
 
--spec delete(nkservice_actor:id(), opts()) ->
+-spec delete(nkservice:id(), nkservice_actor:id(), opts()) ->
     {ok, [#actor_id{}], map()} | {error, actor_not_found|term()}.
 
-delete(Id, Opts) ->
-    case find(Id, Opts) of
-        {ok, #actor_id{srv=ActorSrvId, uid=UID, pid=Pid}=ActorId, _Meta} ->
+delete(SrvId, Id, Opts) ->
+    case find(SrvId, Id) of
+        {ok, #actor_id{uid=UID, pid=Pid}=ActorId, _Meta} ->
             case maps:get(cascade, Opts, false) of
                 false when is_pid(Pid) ->
-                    case nkservice_actor_srv:sync_op(ActorId, delete) of
+                    case nkservice_actor_srv:sync_op(SrvId, ActorId, delete) of
                         ok ->
                             % The object is loaded, and it will perform the delete
                             % itself, including sending the event (a full event)
@@ -353,7 +311,6 @@ delete(Id, Opts) ->
                     end;
                 Cascade ->
                     % The actor is not activated or we want cascade deletion
-                    SrvId = maps:get(db_srv, Opts, ActorSrvId),
                     Opts2 = #{cascade => Cascade},
                     % Implementation must call nkservice_actor_srv:raw_stop/2
                     case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, Opts2]) of
@@ -493,48 +450,42 @@ check_service_update(SrvId, ActorSrvId, Cluster) ->
 %% ===================================================================
 
 
+%% @doc Gets a full #actor_id{} based on path, #actor_id{} or uid
+%% It will remove the pid if present (we don't know if it is correct)
+%% Can add pid if cached (only for UIDs)
+id_to_actor_id(_SrvId, #actor_id{}=ActorId) ->
+    {ok, ActorId#actor_id{pid=undefined}};
 
-%% @doc Gets a full #actor_id{} based on path or uid
-%% If uid, and not cached, a service must be provided and db is hit
-%% UID in returning #actor_id{} may be empty
-id_to_actor_id(#actor_id{}=ActorId) ->
-    {ok, ActorId};
+id_to_actor_id(_SrvId, #actor{id=#actor_id{}=ActorId}) ->
+    {ok, ActorId#actor_id{pid=undefined}};
 
-id_to_actor_id(#actor{id=ActorId}) ->
-    {ok, ActorId};
-
-id_to_actor_id(Id) ->
-    case nkservice_actor_util:is_path(Id) of
-        {true, ActorId} ->
+id_to_actor_id(SrvId, Id) ->
+    case nkservice_actor_util:is_actor_id(Id) of
+        {true, #actor_id{}=ActorId} ->
             {ok, ActorId};
         false ->
-            UID = to_bin(Id),
-            case nkservice_master:is_cached_actor(UID) of
+            % It is an UID
+            case ?CALL_SRV(SrvId, actor_is_activated, [SrvId, Id]) of
                 {true, ActorId} ->
-                    {ok, ActorId};
+                    {ok, ActorId};      % Has pid
                 false ->
-                    case nkservice_app:get_db_default_service() of
-                        undefined ->
-                            error(dbDefaultService_not_defined);
-                        DefSrvId ->
-                            case ?CALL_SRV(DefSrvId, nkservice_find_uid, [DefSrvId, UID]) of
-                                {ok, ActorId, _} ->
-                                    {ok, ActorId};
-                                {error, Error} ->
-                                    {error, Error}
-                            end
+                    case ?CALL_SRV(SrvId, actor_db_find, [SrvId, Id]) of
+                        {ok, #actor_id{}=ActorId, _Meta} ->
+                            {ok, ActorId};
+                        {error, Error} ->
+                            {error, Error}
                     end
             end
+
     end.
 
 
 %% @private
-db_read(Id, Opts) ->
-    case id_to_actor_id(Id) of
-        {ok, #actor_id{srv=ActorSrvId} = ActorId} ->
-            SrvId = maps:get(db_srv, Opts, ActorSrvId),
+db_read(SrvId, Id) ->
+    case id_to_actor_id(SrvId, Id) of
+        {ok, ActorId} ->
             case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId]) of
-                {ok, #actor{id=#actor_id{srv=ActorSrvId}}=Actor, DbMeta} ->
+                {ok, #actor{}=Actor, DbMeta} ->
                     {ok, Actor, DbMeta};
                 {error, Error} ->
                     {error, Error}
@@ -544,6 +495,6 @@ db_read(Id, Opts) ->
     end.
 
 
-%% @private
-to_bin(T) when is_binary(T)-> T;
-to_bin(T) -> nklib_util:to_binary(T).
+%%%% @private
+%%to_bin(T) when is_binary(T)-> T;
+%%to_bin(T) -> nklib_util:to_binary(T).

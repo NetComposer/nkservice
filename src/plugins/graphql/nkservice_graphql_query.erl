@@ -68,7 +68,7 @@ remove_nulls(Map) ->
 
 %% @private
 call_actor_query(SrvId, Name, Params, Ctx) ->
-    case catch nkservice_graphql_plugin:get_actor_query_meta(SrvId, Name) of
+    case catch nkservice_graphql_plugin:get_query_meta(SrvId, Name) of
         #{module:=Module}=Meta ->
             case erlang:function_exported(Module, query, 5) of
                 true ->

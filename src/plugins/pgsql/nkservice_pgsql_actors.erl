@@ -121,19 +121,19 @@ create_database_query() ->
         );
         CREATE TABLE actors (
             uid STRING PRIMARY KEY NOT NULL,
-            srv STRING NOT NULL,
+            domain STRING NOT NULL,
             \"group\" STRING NOT NULL,
             vsn STRING NOT NULL,
-            \"type\" STRING NOT NULL,
-            hash STRING NOT NULL,
+            resource STRING NOT NULL,
             name STRING NOT NULL,
             data JSONB NOT NULL,
             metadata JSONB NOT NULL,
+            hash STRING NOT NULL,
             path STRING NOT NULL,
             last_update STRING NOT NULL,
             expires INTEGER,
             fts_words STRING,
-            UNIQUE INDEX name_idx (srv, \"group\", \"type\", name),
+            UNIQUE INDEX name_idx (domain, \"group\", resource, name),
             INDEX path_idx (path, \"group\"),
             INDEX last_update_idx (last_update),
             INDEX expires_idx (expires),
@@ -182,17 +182,17 @@ create_database_query() ->
 
 %% @doc Called from actor_db_find callback
 find(SrvId, PackageId, #actor_id{}=ActorId) ->
-    #actor_id{srv=ActorSrvId, group=Group, type=Type, name=Name} = ActorId,
+    #actor_id{domain=Domain, group=Group, resource=Res, name=Name} = ActorId,
     Query = [
-        <<"SELECT uid FROM actors">>,
-        <<" WHERE srv=">>, quote(ActorSrvId),
+        <<"SELECT uid,vsn FROM actors">>,
+        <<" WHERE domain=">>, quote(Domain),
         <<" AND \"group\"=">>, quote(Group),
-        <<" AND \"type\"=">>, quote(Type),
+        <<" AND resource=">>, quote(Res),
         <<" AND name=">>, quote(Name), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
-        {ok, [[{UID}]], QueryMeta} ->
-            {ok, ActorId#actor_id{uid=UID, pid=undefined}, QueryMeta};
+        {ok, [[{UID, Vsn}]], QueryMeta} ->
+            {ok, ActorId#actor_id{uid=UID, vsn=Vsn, pid=undefined}, QueryMeta};
         {ok, [[]], _} ->
             {error, actor_not_found};
         {error, Error} ->
@@ -201,19 +201,18 @@ find(SrvId, PackageId, #actor_id{}=ActorId) ->
 
 find(SrvId, PackageId, UID) ->
     Query = [
-        <<"SELECT srv,\"group\",vsn,\"type\",name,hash FROM actors">>,
+        <<"SELECT domain,\"group\",vsn,resource,name FROM actors">>,
         <<" WHERE uid=">>, quote(UID), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
-        {ok, [[{ActorSrvId, Group, Vsn, Type, Name, Hash}]], QueryMeta} ->
+        {ok, [[{Domain, Group, Vsn, Res, Name}]], QueryMeta} ->
             ActorId = #actor_id{
-                srv = get_srv(ActorSrvId),
                 uid = UID,
+                domain = Domain,
                 group = Group,
                 vsn = Vsn,
-                type = Type,
+                resource = Res,
                 name = Name,
-                hash = Hash,
                 pid = undefined
             },
             {ok, ActorId, QueryMeta};
@@ -226,29 +225,29 @@ find(SrvId, PackageId, UID) ->
 
 %% @doc Called from actor_db_read callback
 read(SrvId, PackageId, #actor_id{}=ActorId) ->
-    #actor_id{srv=ActorSrvId, group=Group, type=Type, name=Name} = ActorId,
+    #actor_id{domain=Domain, group=Group, resource=Res, name=Name} = ActorId,
     Query = [
-        <<"SELECT uid,vsn,hash,metadata,data FROM actors ">>,
-        <<" WHERE srv=">>, quote(ActorSrvId),
+        <<"SELECT uid,vsn,metadata,data,hash FROM actors ">>,
+        <<" WHERE domain=">>, quote(Domain),
         <<" AND \"group\"=">>, quote(Group),
-        <<" AND \"type\"=">>, quote(Type),
+        <<" AND resource=">>, quote(Res),
         <<" AND name=">>, quote(Name), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {UID, Vsn, Hash, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            {UID, Vsn, {jsonb, Meta}, {jsonb, Data}, Hash} = Fields,
             Actor = #actor{
                 id = #actor_id{
                     uid = UID,
-                    srv = ActorSrvId,
+                    domain = Domain,
                     group = Group,
                     vsn = Vsn,
-                    type = Type,
-                    name = Name,
-                    hash = Hash
+                    resource = Res,
+                    name = Name
                 },
                 data = nklib_json:decode(Data),
-                metadata = nklib_json:decode(Meta)
+                metadata = nklib_json:decode(Meta),
+                hash = Hash
             },
             {ok, Actor, QueryMeta};
         {ok, [[]], _QueryMeta} ->
@@ -260,21 +259,20 @@ read(SrvId, PackageId, #actor_id{}=ActorId) ->
 read(SrvId, PackageId, UID) ->
     UID2 = to_bin(UID),
     Query = [
-        <<"SELECT srv,\"group\",vsn,\"type\",name,hash,metadata,data FROM actors ">>,
+        <<"SELECT domain,\"group\",vsn,resource,name,metadata,data FROM actors ">>,
         <<" WHERE uid=">>, quote(UID2), <<";">>
     ],
     case query(SrvId, PackageId, Query) of
         {ok, [[Fields]], QueryMeta} ->
-            {ActorSrvId, Group, Vsn, Type, Name, Hash, {jsonb, Meta}, {jsonb, Data}} = Fields,
+            {Domain, Group, Vsn, Res, Name, {jsonb, Meta}, {jsonb, Data}} = Fields,
             Actor = #actor{
                 id = #actor_id{
                     uid = UID2,
-                    srv = get_srv(ActorSrvId),
+                    domain = Domain,
                     group = Group,
                     vsn = Vsn,
-                    type = Type,
-                    name = Name,
-                    hash = Hash
+                    resource = Res,
+                    name = Name
                 },
                 data = nklib_json:decode(Data),
                 metadata = nklib_json:decode(Meta)
@@ -319,7 +317,7 @@ save(SrvId, PackageId, Mode, Actors) ->
     end,
     ActorsQuery = [
         Verb, <<" INTO actors">>,
-        <<" (uid,srv,\"group\",vsn,\"type\",name,hash,data,metadata,path,last_update,expires,fts_words)">>,
+        <<" (uid,domain,\"group\",vsn,resource,name,hash,data,metadata,path,last_update,expires,fts_words)">>,
         <<" VALUES ">>, nklib_util:bjoin(ActorFields), ?RETURN_NOTHING
     ],
     LabelsQuery = [
@@ -393,18 +391,18 @@ populate_fields([Actor|Rest], SaveFields) ->
     #actor{
         id = #actor_id{
             uid = UID,
-            srv = ActorSrvId,
+            domain = Domain,
             group = Group,
             vsn = Vsn,
-            type = Type,
-            name = Name,
-            hash = Hash
+            resource = Res,
+            name = Name
         },
         data = Data,
-        metadata = Meta
+        metadata = Meta,
+        hash = Hash
     } = Actor,
     true = is_binary(UID) andalso UID /= <<>>,
-    Path = nkservice_actor_util:make_reversed_srv_id(ActorSrvId),
+    Path = nkservice_actor_util:make_path(Domain),
     QUID = quote(UID),
     QPath = quote(Path),
     Updated = maps:get(<<"updateTime">>, Meta),
@@ -434,10 +432,10 @@ populate_fields([Actor|Rest], SaveFields) ->
         FtsWords1),
     ActorFields = quote_list([
         UID,
-        ActorSrvId,
+        Domain,
         Group,
         Vsn,
-        Type,
+        Res,
         Name,
         Hash,
         Data,
@@ -504,12 +502,24 @@ delete(SrvId, PackageId, UIDs, Opts) ->
             #{cascade:=true} ->
                 NestedUIDs = delete_find_nested(Pid, UIDs, sets:new()),
                 ?LLOG(notice, "DELETE on CASCADE: ~p", [NestedUIDs]),
-                delete_actors(NestedUIDs, false, Pid, QueryMeta, [], []);
+                delete_actors(SrvId, NestedUIDs, false, Pid, QueryMeta, [], []);
             _ ->
-                delete_actors(UIDs, true, Pid, QueryMeta, [], [])
+                delete_actors(SrvId, UIDs, true, Pid, QueryMeta, [], [])
         end,
         do_query(Pid, DelQ, QueryMeta),
-        do_query(Pid, <<"COMMIT;">>, QueryMeta#{deleted_actor_ids=>ActorIds})
+        case do_query(Pid, <<"COMMIT;">>, QueryMeta#{deleted_actor_ids=>ActorIds}) of
+            {ok, DeletedActorIds, DeletedMeta} ->
+                % Actors could have been reactivated after the raw_stop and before the
+                % real deletion
+%%                lists:foreach(
+%%                    fun(#actor_id{uid=DUID}) ->
+%%                        nkservice_actor_srv:raw_stop(SrvId, DUID, actor_deleted)
+%%                    end,
+%%                    DeletedActorIds),
+                {ok, DeletedActorIds, DeletedMeta};
+            Other ->
+                Other
+        end
     end,
     case query(SrvId, PackageId, QueryFun, #{}) of
         {ok, _, Meta1} ->
@@ -547,11 +557,11 @@ delete_find_nested(Pid, [UID|Rest], Set) ->
 
 
 %% @private
-delete_actors([], _CheckChilds, _Pid, _QueryMeta, ActorIds, QueryAcc) ->
+delete_actors(_SrvId, [], _CheckChilds, _Pid, _QueryMeta, ActorIds, QueryAcc) ->
     {ActorIds, QueryAcc};
 
-delete_actors([UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
-    nkservice_actor_srv:raw_stop(UID, pre_delete),
+delete_actors(SrvId, [UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
+    nkservice_actor_srv:raw_stop(SrvId, UID, pre_delete),
     QUID = quote(UID),
     case CheckChilds of
         true ->
@@ -566,19 +576,18 @@ delete_actors([UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
             ok
     end,
     GetQ = [
-        <<"SELECT srv,\"group\",vsn,\"type\",name,hash FROM actors ">>,
+        <<"SELECT domain,\"group\",vsn,resource,name FROM actors ">>,
         <<"WHERE uid=">>, quote(UID), <<";">>
     ],
     case do_query(Pid, GetQ, QueryMeta) of
-        {ok, [[{ActorSrvId, Group, Vsn, Type, Name, Hash}]], _} ->
+        {ok, [[{Domain, Group, Vsn, Res, Name}]], _} ->
             ActorId = #actor_id{
-                srv = get_srv(ActorSrvId),
+                domain = Domain,
                 uid = UID,
                 group = Group,
                 vsn = Vsn,
-                type = Type,
+                resource = Res,
                 name = Name,
-                hash = Hash,
                 pid = undefined
             },
             QueryAcc2 = [
@@ -588,7 +597,7 @@ delete_actors([UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
                 <<"DELETE FROM fts WHERE uid=">>, QUID, ?RETURN_NOTHING
                 | QueryAcc
             ],
-            delete_actors(Rest, CheckChilds, Pid, QueryMeta, [ActorId|ActorIds], QueryAcc2);
+            delete_actors(SrvId, Rest, CheckChilds, Pid, QueryMeta, [ActorId|ActorIds], QueryAcc2);
         {ok, [[]], _} ->
             throw(actor_not_found);
         {error, Error} ->
@@ -598,7 +607,7 @@ delete_actors([UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
 
 %% @doc
 search(SrvId, PackageId, SearchType, Opts) ->
-    case ?CALL_SRV(SrvId, actor_db_get_query, [pgsql, SearchType, Opts]) of
+    case ?CALL_SRV(SrvId, actor_db_get_query, [SrvId, pgsql, SearchType, Opts]) of
         {ok, {pgsql, Query, QueryMeta}} ->
             query(SrvId, PackageId, Query, QueryMeta);
         {error, Error} ->
@@ -608,7 +617,7 @@ search(SrvId, PackageId, SearchType, Opts) ->
 
 %% @doc
 aggregation(SrvId, PackageId, SearchType, Opts) ->
-    case ?CALL_SRV(SrvId, actor_db_get_query, [pgsql, SearchType, Opts]) of
+    case ?CALL_SRV(SrvId, actor_db_get_query, [SrvId, pgsql, SearchType, Opts]) of
         {ok, {pgsql, Query, QueryMeta}} ->
             case query(SrvId, PackageId, Query, QueryMeta) of
                 {ok, [Res], Meta} ->
@@ -818,11 +827,6 @@ do_query(Pid, Query, QueryMeta) when is_pid(Pid) ->
 
 quote_list(List) ->
     nkservice_pgsql_util:quote_list(List).
-
-
-%% @private
-get_srv(ActorSrvId) ->
-    nkservice_actor_util:gen_srv_id(ActorSrvId).
 
 
 %% @private

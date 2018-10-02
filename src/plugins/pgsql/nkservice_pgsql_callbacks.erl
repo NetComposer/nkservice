@@ -139,7 +139,7 @@ get_id(#actor_id{}=ActorId) ->
     ActorId;
 
 get_id(Id) ->
-    case nkservice_actor_util:is_path(Id) of
+    case nkservice_actor_util:is_actor_id(Id) of
         {true, ActorId} ->
             ActorId;
         false ->

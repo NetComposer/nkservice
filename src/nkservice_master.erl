@@ -33,19 +33,14 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
-
 -export([get_info/1, stop/1, update/2, replace/2]).
 -export([get_leader_pid/1]).
--export([get_all_actors/1]).
--export([find_actor/1, is_cached_actor/1, register_actor/1]).
--export([get_all_counters/1, get_group_counters/2, get_type_counter/3,
-         get_all_groups/1, get_all_types/2]).
 -export([updated_nodes_info/2, updated_service_status/2, update_child_counters/5]).
 -export([call_leader/2, cast_leader/2]).
 -export([start_link/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
--export([resolve/3, get_uid_cached/0]).
+-export([resolve/3]).
 
 -include("nkservice.hrl").
 -include("nkservice_actor.hrl").
@@ -121,98 +116,6 @@ update(SrvId, Spec) ->
 
 
 %% @doc
-%% If we don't have an ui, we will contact the service
-%% If we have a uid(), we will try to find it in cache (but only on this node)
-% We don't retry, if the leader is not available, it is not going to have our actor
-% event if it restarts in the middle
-
--spec find_actor(#actor_id{}) ->
-    {ok, #actor_id{}} | {error, actor_not_found | term()}.
-
-find_actor(#actor_id{srv=SrvId, uid=undefined}=ActorId) ->
-    % We don't have a valid UID, use the path fields (class, type, name)
-    ActorId2 = ActorId#actor_id{vsn=undefined, hash=undefined},
-    case call_leader(SrvId, {nkservice_find_actor_id, ActorId2}, 5000) of
-        {ok, #actor_id{uid=UID}=ActorId3} ->
-            case is_cached_actor(UID) of
-                {true, _} ->
-                    ok;
-                false ->
-                    insert_uid_cache(ActorId3)
-            end,
-            {ok, ActorId3};
-        {error, Error} ->
-            {error, Error}
-    end;
-
-find_actor(#actor_id{srv=SrvId, uid=UID}) ->
-    % We have a valid UID
-    % First, look in cache in this node. If not cached, call the master.
-    case is_cached_actor(UID) of
-        {true, ActorId2} ->
-            % We may have added the pid()
-            {ok, ActorId2};
-        false ->
-            case call_leader(SrvId, {nkservice_find_actor_uid, UID}, 5000) of
-                {ok, ActorId2} ->
-                    insert_uid_cache(ActorId2),
-                    {ok, ActorId2};
-                {error, Error} ->
-                    {error, Error}
-            end
-    end.
-
-
-%% @doc
-is_cached_actor(UID) ->
-    % Do a direct-uuid search, only in local node's cache
-    is_uid_cached(UID).
-
-
-%% @doc
--spec register_actor(#actor_id{}) ->
-    {ok, Master::pid()} | {error, term()}.
-
-register_actor(#actor_id{srv=SrvId}=ActorId) ->
-    ActorId2 = ActorId#actor_id{vsn=undefined, hash=undefined},
-    case call_leader_retry(SrvId, {nkservice_register_actor, ActorId2}) of
-        {ok, MasterPid} ->
-            insert_uid_cache(ActorId2),
-            {ok, MasterPid};
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @doc
-get_all_counters(SrvId) ->
-    call_leader(SrvId, nkservice_get_all_counters).
-
-
-%% @doc
-get_group_counters(SrvId, Group) ->
-    call_leader(SrvId, {nkservice_get_group_counters, to_bin(Group)}).
-
-
-%% @doc
-get_type_counter(SrvId, Group, Type) ->
-    call_leader(SrvId, {nkservice_get_type_counter, to_bin(Group), to_bin(Type)}).
-
-
-%% @doc
-get_all_groups(SrvId) ->
-    call_leader(SrvId, nkservice_get_all_groups).
-
-
-%% @doc
-get_all_types(SrvId, Group) ->
-    call_leader(SrvId, {nkservice_get_all_types, to_bin(Group)}).
-
-
-%% @private (Using ETS)
-get_all_actors(SrvId) ->
-    call_leader(SrvId, nkservice_get_actors).
-
 
 %% @doc Gets the pid of current leader for this service
 -spec get_leader_pid(nkservice:id()) ->
@@ -222,24 +125,24 @@ get_leader_pid(SrvId) ->
     global:whereis_name(global_name(SrvId)).
 
 
-%% @private
-call_leader_retry(SrvId, Msg) ->
-    call_leader_retry(SrvId, Msg, 3).
-
-
-%% @private
-call_leader_retry(SrvId, Msg, Try) when is_atom(SrvId), Try > 0 ->
-    case call_leader(SrvId, Msg, 5000) of
-        {error, leader_not_found} ->
-            lager:notice("Leader for ~p not found, retrying (~p)", [SrvId, Msg]),
-            timer:sleep(1000),
-            call_leader_retry(SrvId, Msg, Try-1);
-        Other ->
-            Other
-    end;
-
-call_leader_retry(_SrvId, _Msg, _Try) ->
-    {error, leader_not_found}.
+%%%% @private
+%%call_leader_retry(SrvId, Msg) ->
+%%    call_leader_retry(SrvId, Msg, 3).
+%%
+%%
+%%%% @private
+%%call_leader_retry(SrvId, Msg, Try) when is_atom(SrvId), Try > 0 ->
+%%    case call_leader(SrvId, Msg, 5000) of
+%%        {error, leader_not_found} ->
+%%            lager:notice("Leader for ~p not found, retrying (~p)", [SrvId, Msg]),
+%%            timer:sleep(1000),
+%%            call_leader_retry(SrvId, Msg, Try-1);
+%%        Other ->
+%%            Other
+%%    end;
+%%
+%%call_leader_retry(_SrvId, _Msg, _Try) ->
+%%    {error, leader_not_found}.
 
 
 %% @doc
@@ -308,18 +211,6 @@ start_link(SrvId) ->
 %% gen_server
 %% ===================================================================
 
-% Stores all registered information by class and type
--type class_types() :: #{
-    nkservice_actor:class() => #{
-        nkservice_actor:type() => #{
-            nkservice_actor:name() => nkservice_actor:uid()}}}.
-
-% Stores counters for registered actors
-% Local information will have srv_id '<<>>'
--type counters() :: #{
-    nkservice_actor:class() => #{
-        nkservice_actor:type() => #{nkservice_actor:id()|<<>> => integer()}}}.
-
 
 -record(state, {
     id :: nkservice:id(),
@@ -329,11 +220,6 @@ start_link(SrvId) ->
     slaves :: #{node() => pid()},
     nodes :: #{node() => nkservice_node:node_info()},
     instances :: #{node() => nkservice:service_status()},
-    actor_ets :: ets:tid(),
-    actor_uids = #{} :: #{nkservice_actor:id() => boolean()},
-    actor_childs = #{} :: #{nkservice:id() => reference()},
-    actor_group_types = #{} :: class_types(),
-    counters = #{} :: counters(),
     user :: map()
 }).
 
@@ -354,7 +240,6 @@ init([SrvId]) ->
         nodes = Nodes,
         slaves = #{},
         instances = #{},
-        actor_ets = ets:new(nkservice_actor, []),
         user = UserState
     },
     self() ! nkservice_timed_check_leader,
@@ -385,70 +270,6 @@ handle_call(nkservice_get_info, _From, State) ->
 handle_call(nkservice_stop, _From, #state{id=SrvId}=State) ->
     rpc:eval_everywhere([node()|nodes()], nkservice_srv, stop, [SrvId]),
     {reply, ok, State};
-
-handle_call({nkservice_find_actor_id, ActorId}, _From, State) ->
-    case do_find_actor_id(ActorId, State) of
-        {ok, UID, Pid} ->
-            {reply, {ok, ActorId#actor_id{uid=UID, pid=Pid}}, State};
-        actor_not_found ->
-            {reply, {error, actor_not_found}, State}
-    end;
-
-handle_call({nkservice_find_actor_uid, UID}, _From, State) ->
-    case do_find_actor_uid(UID, State) of
-        #actor_id{}=ActorId ->
-            {reply, {ok, ActorId}, State};
-        actor_not_found ->
-            case handle(service_master_find_uid, [UID], State) of
-                {reply, #actor_id{}=ActorId, State2} ->
-                    {reply, {ok, ActorId}, State2};
-                {stop, Error, State2} ->
-                    {reply, {error, Error}, State2}
-            end
-    end;
-
-handle_call({nkservice_register_actor, ActorId}, _From, State) ->
-    case do_register_actor(ActorId, State) of
-        {ok, State2} ->
-            %?LLOG(debug, "Actor ~p registered", [ActorId], State),
-            {reply, {ok, self()}, State2};
-        {error, Error} ->
-            {reply, {error, Error}, State}
-    end;
-
-handle_call(nkservice_get_actors, _From, State) ->
-    #state{actor_ets = Ets} = State,
-    List = [
-        {Group, Type, Name, UID, Pid} ||
-        {{uid, UID}, Group, Type, Name, Pid} <-  ets:tab2list(Ets)
-    ],
-    {reply, List, State};
-
-handle_call(nkservice_get_all_counters, _From, State) ->
-    #state{counters=Counters} = State,
-    Data = lists:foldl(
-        fun(Group, Acc) ->
-            GroupCounters = maps:from_list(do_get_class_counters(Group, State)),
-            Acc#{Group => GroupCounters}
-        end,
-        #{},
-        maps:keys(Counters)),
-    {reply, {ok, Data}, State};
-
-handle_call({nkservice_get_group_counters, Group}, _From, State) ->
-    {reply, {ok, maps:from_list(do_get_class_counters(Group, State))}, State};
-
-handle_call({nkservice_get_type_counter, Group, Type}, _From, State) ->
-    {reply, {ok, do_get_type_counter(Group, Type, State)}, State};
-
-handle_call(nkservice_get_all_groups, _From, State) ->
-    #state{actor_group_types =GroupTypes} = State,
-    {reply, {ok, maps:keys(GroupTypes)}, State};
-
-handle_call({nkservice_get_all_types, Group}, _From, State) ->
-    #state{actor_group_types =GroupTypes} = State,
-    Types = maps:get(Group, GroupTypes, #{}),
-    {reply, {ok, maps:keys(Types)}, State};
 
 handle_call(Msg, From, State) ->
     handle(service_master_handle_call, [Msg, From], State).
@@ -492,18 +313,6 @@ handle_cast({nkservice_register_slave, Slave}, #state{is_leader=false}=State) ->
           [Slave, self()], State),
     {noreply, State};
 
-handle_cast({nkservice_child_counter, ChildId, ChildPid, Group, Type, Counter}, State) ->
-    #state{actor_childs = Childs} = State,
-    State2 = case maps:is_key(ChildId, Childs) of
-        true ->
-            State;
-        false ->
-            Childs2 = Childs#{ChildId => monitor(process, ChildPid)},
-            State#state{actor_childs = Childs2}
-    end,
-    State3 = do_child_counter(ChildId, Group, Type, Counter, State2),
-    {noreply, State3};
-
 handle_cast(Msg, State) ->
     handle(service_master_handle_cast, [Msg], State).
 
@@ -532,23 +341,6 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{leader_pid=Pid}=State)
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{node_pid=Pid}=State) ->
     ?LLOG(error, "node server has failed!", [], State),
     error(node_server_has_failed);
-
-handle_info({'DOWN', Ref, process, Pid, _Reason}=Msg, State) ->
-    case do_remove_actor(Pid, State) of
-        {true, State2} ->
-            {noreply, State2};
-        false ->
-            #state{actor_childs = Childs} = State,
-            case lists:keyfind(Ref, 2, maps:to_list(Childs)) of
-                {ChildId, Ref} ->
-                    Childs2 = maps:remove(ChildId, Childs),
-                    State2 = State#state{actor_childs = Childs2},
-                    State3 = do_remove_child(ChildId, State2),
-                    {noreply, State3};
-                _ ->
-                    handle(service_master_handle_info, [Msg], State)
-            end
-    end;
 
 handle_info(Msg, State) ->
     handle(service_master_handle_info, [Msg], State).
@@ -787,248 +579,8 @@ resolve({nkservice_leader, SrvId}, Pid1, Pid2) ->
 
 
 %% ===================================================================
-%% Internal - Actors
-%% ===================================================================
-
-%% @private
-do_register_actor(ActorId, #state{actor_ets=Ets}=State) ->
-    #actor_id{group=Group, type=Type, name=Name, uid=UID, pid=Pid} = ActorId,
-    case do_find_actor_id(ActorId, State) of
-        actor_not_found ->
-            Ref = monitor(process, Pid),
-            Objs = [
-                {{uid, UID}, Group, Type, Name, Pid},
-                {{name, Group, Type, Name}, UID, Pid},
-                {{pid, Pid}, UID, Ref}
-            ],
-            ets:insert(Ets, Objs),
-            State2 = do_rm_actor_counters(ActorId, State),
-            State3 = do_add_actor_counters(ActorId, State2),
-            {ok, send_counter_to_parent(Group, Type, State3)};
-        {UID, Pid} ->
-            %% We can change name
-            {true, State2} = do_remove_actor(Pid, State),
-            do_register_actor(ActorId, State2);
-        _ ->
-            {error, actor_already_registered}
-    end.
-
-
-%% @private
-do_find_actor_id(ActorId, #state{id=SrvId, actor_ets=Ets}=State) ->
-    case ActorId of
-        #actor_id{srv=SrvId, group=Group, type=Type, name=Name} ->
-            case ets:lookup(Ets, {name, Group, Type, Name}) of
-                [{_, UID, Pid}] ->
-                    case do_find_actor_uid(UID, State) of
-                        #actor_id{srv=SrvId, group=Group, type=Type, name=Name} ->
-                            {ok, UID, Pid};
-                        actor_not_found ->
-                            % TODO: remove after checks
-                            ?LLOG(warning, "Inconsistency in search for ~s", [UID], State),
-                            actor_not_found
-                    end;
-                [] ->
-                    actor_not_found
-            end;
-        #actor_id{srv=OtherSrvId} ->
-            ?LLOG(warning, "Invalid service ~s in search", [OtherSrvId], State),
-            actor_not_found
-    end.
-
-
-%% @private
-do_find_actor_uid(UID, #state{id=SrvId, actor_ets=Ets}) ->
-    case ets:lookup(Ets, {uid, UID}) of
-        [{{uid, UID}, Group, Type, Name, Pid}] ->
-            #actor_id{
-                srv = SrvId,
-                uid = UID,
-                group = Group,
-                type = Type,
-                name = Name,
-                pid = Pid
-            };
-        [] ->
-            actor_not_found
-    end.
-
-
-%% @private
-do_remove_actor(Pid, #state{actor_ets=Ets}=State) ->
-    case ets:lookup(Ets, {pid, Pid}) of
-        [{{pid, Pid}, UID, Ref}] ->
-            nklib_util:demonitor(Ref),
-            ets:delete(Ets, {pid, Pid}),
-            case do_find_actor_uid(UID, State) of
-                #actor_id{group=Group, type=Type, name=Name}=ActorId ->
-                    ets:delete(Ets, {name, Group, Type, Name}),
-                    State2 = do_rm_actor_counters(ActorId, State),
-                    ets:delete(Ets, {uid, UID}),
-                    {true, send_counter_to_parent(Group, Type, State2)};
-                actor_not_found ->
-                    % TODO: remove after checks
-                    ?LLOG(warning, "Inconsistency in deleting ~s: not_found", [UID], State),
-                    ets:delete(Ets, {uid, UID}),
-                    {true, State}
-            end;
-        _ ->
-            false
-    end.
-
-
-%% ===================================================================
-%% Counters
-%% ===================================================================
-
-
-%% @private
-do_add_actor_counters(ActorId, State) ->
-    #actor_id{uid=UID, group=Group, type=Type, name=Name} = ActorId,
-    #state{actor_uids=UIDs, actor_group_types=GroupTypes, counters=Counters} = State,
-    Types1 = maps:get(Group, GroupTypes, #{}),
-    Names1 = maps:get(Type, Types1, #{}),
-    Names2 = Names1#{Name => UID},
-    Types2 = Types1#{Type => Names2},
-    GroupTypes2 = GroupTypes#{Group => Types2},
-    Counters2 = case maps:is_key(UID, UIDs) of
-        false ->
-            GroupCounters1 = maps:get(Group, Counters, #{}),
-            TypeCounters1 = maps:get(Type, GroupCounters1, #{}),
-            OldCounter = maps:get(<<>>, TypeCounters1, 0),
-            % lager:error("NKLOG C1 ~p", [{Type, Counters, GroupCounters1, OldCounter+1}]),
-            TypeCounters2 = TypeCounters1#{<<>> => OldCounter+1},
-            GroupCounters2 = GroupCounters1#{Type => TypeCounters2},
-            Counters#{Group => GroupCounters2};
-        true ->
-            Counters
-    end,
-    State#state{
-        actor_uids = UIDs#{UID => true},
-        actor_group_types = GroupTypes2,
-        counters = Counters2
-    }.
-
-
-%% @private
-do_rm_actor_counters(ActorId, State) ->
-    #state{actor_uids=UIDs, actor_group_types=GroupTypes, counters=Counters} = State,
-    #actor_id{uid=UID, group=Group, type=Type, name=Name} = ActorId,
-    Types1 = maps:get(Group, GroupTypes, #{}),
-    Names1 = maps:get(Type, Types1, #{}),
-    Names2 = maps:remove(Name, Names1),
-    Types2 = case map_size(Names2) of
-        0 ->
-            maps:remove(Type, Types1);
-        _ ->
-            Types1#{Type => Names2}
-    end,
-    GroupTypes2 = GroupTypes#{Group => Types2},
-    Counters2 = case maps:is_key(UID, UIDs) of
-        true ->
-            GroupCounters1 = maps:get(Group, Counters),
-            TypeCounters1 = maps:get(Type, GroupCounters1),
-            OldCounter = maps:get(<<>>, TypeCounters1),
-            TypeCounters2 = TypeCounters1#{<<>> => OldCounter-1},
-            GroupCounters2 = GroupCounters1#{Type => TypeCounters2},
-            Counters#{Group => GroupCounters2};
-        false ->
-            Counters
-    end,
-    State#state{
-        actor_uids = maps:remove(UID, UIDs),
-        actor_group_types = GroupTypes2,
-        counters = Counters2
-    }.
-
-
-%% @private
-do_child_counter(ChildId, Group, Type, Counter, State) ->
-    #state{counters=Counters} = State,
-    GroupCounters1 = maps:get(Group, Counters, #{}),
-    TypeCounters1 = maps:get(Type, GroupCounters1, #{}),
-    TypeCounters2 = TypeCounters1#{ChildId => Counter},
-    GroupCounters2 = GroupCounters1#{Type => TypeCounters2},
-    Counters2 = Counters#{Group => GroupCounters2},
-    State2 = State#state{counters=Counters2},
-    send_counter_to_parent(Group, Type, State2).
-
-
-%% @private
-do_remove_child(ChildId, #state{counters=Counters}=State) ->
-    Counters2 = lists:foldl(
-        fun({Group, Types}, Acc) ->
-            Types2 = lists:foldl(
-                fun({Type, Entries}, Acc2) ->
-                    Acc2#{Type=>maps:remove(ChildId, Entries)}
-                end,
-                Acc,
-                maps:to_list(Types)),
-            Acc#{Group=>Types2}
-        end,
-        #{},
-        maps:to_list(Counters)),
-    State#state{counters = Counters2}.
-
-
-%% @private
-send_counter_to_parent(Group, Type, #state{id=SrvId}=State) ->
-    case ?CALL_SRV(SrvId, parent, []) of
-        undefined ->
-            ok;
-        ParentId ->
-            case get_leader_pid(ParentId) of
-                Pid when is_pid(Pid) ->
-                    Value = do_get_type_counter(Group, Type, State),
-                    ?LLOG(notice, "sent to parent ~p: ~p, ~p, ~p", [ParentId, Group, Type, Value], State),
-                    update_child_counters(Pid, SrvId, Group, Type, Value);
-                undefined ->
-                    ?LLOG(warning, "cannot send counter to parent: not avalable", [], State)
-            end
-    end,
-    State.
-
-
-%% @private
-do_get_class_counters(Group, #state{counters=Counters}=State) ->
-    Types = maps:get(Group, Counters, #{}),
-    [{Type, do_get_type_counter(Group, Type, State)} || Type <- maps:keys(Types)].
-
-
-%% @private
-do_get_type_counter(Group, Type, #state{counters=Counters}) ->
-    GroupCounters = maps:get(Group, Counters, #{}),
-    TypeCounters = maps:get(Type, GroupCounters, #{}),
-    lists:foldl(fun(Counter, Acc) -> Acc+Counter end, 0, maps:values(TypeCounters)).
-
-
-
-
-
-%% ===================================================================
 %% Util
 %% ===================================================================
-
-%% @private
-insert_uid_cache(#actor_id{uid=UID, pid=Pid}=ActorId) ->
-    nklib_proc:put({nkservice_actor_uid, UID}, ActorId, Pid),
-    nklib_proc:put(nkservice_actor_uid, UID, Pid).
-
-
-%% @private
-is_uid_cached(UID) ->
-    % Do a direct-uuid search, only in local node's cache
-    case nklib_proc:values({nkservice_actor_uid, to_bin(UID)}) of
-        [{ActorId, _Pid}|_] ->
-            {true, ActorId};
-        [] ->
-            false
-    end.
-
-
-%% @private
-get_uid_cached() ->
-    nklib_proc:values(nkservice_actor_uid).
 
 
 %% @private
@@ -1055,9 +607,9 @@ handle(Fun, Args, #state{id=SrvId, user=UserState}=State) ->
     end.
 
 
-%% @private
-to_bin(Term) when is_binary(Term) -> Term;
-to_bin(Term) -> nklib_util:to_binary(Term).
+%%%% @private
+%%to_bin(Term) when is_binary(Term) -> Term;
+%%to_bin(Term) -> nklib_util:to_binary(Term).
 
 
 

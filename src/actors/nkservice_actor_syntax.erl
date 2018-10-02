@@ -42,10 +42,10 @@ parse(ActorMap, Syntax) ->
     case nklib_syntax:parse(ActorMap, Syntax, #{}) of
         {ok, ActorMap2, []} ->
             #{
-                srv := Srv,
+                domain := Domain,
                 group := Group,
                 vsn := Vsn,
-                type := Type,
+                resource := Res,
                 name := Name,
                 data := Data,
                 metadata := Meta
@@ -53,15 +53,15 @@ parse(ActorMap, Syntax) ->
             Actor = #actor{
                 id = #actor_id{
                     uid = maps:get(uid, ActorMap2, undefined),
-                    srv = Srv,
+                    domain = Domain,
                     group = Group,
                     vsn = Vsn,
-                    type = Type,
-                    name = Name,
-                    hash = maps:get(hash, ActorMap2, undefined)
+                    resource = Res,
+                    name = Name
                 },
                 data = Data,
-                metadata = Meta
+                metadata = Meta,
+                hash = maps:get(hash, ActorMap2, undefined)
             },
             {ok, Actor};
         {ok, _, [Field|_]} ->
@@ -75,15 +75,16 @@ parse(ActorMap, Syntax) ->
 syntax() ->
     #{
         uid => binary,
-        srv => atom,
+        domain => binary,
         group => binary,
         vsn => binary,
-        type => binary,
+        resource => binary,
         name => binary,
+        srv => atom,
         hash => binary,
         data => map,
         metadata => meta_syntax(),
-        '__mandatory' => [srv, group, vsn, type, name],
+        '__mandatory' => [domain, group, vsn, resource, name],
         '__defaults' => #{
             data => #{},
             metadata => #{}

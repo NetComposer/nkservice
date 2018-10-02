@@ -35,7 +35,7 @@
 
 -type search_spec() ::
     #{
-        srv => nkservice:id(),
+        domain => nkservice_actor:domain(),
         deep => boolean(),
         from => pos_integer(),
         size => pos_integer(),
@@ -126,7 +126,7 @@ search_spec_syntax() ->
     #{
         from => pos_integer,
         size => pos_integer,
-        srv => atom,
+        domain => binary,
         deep => boolean,
         totals => boolean,
         filter => #{
@@ -135,7 +135,7 @@ search_spec_syntax() ->
             'not' => {list, search_spec_syntax_filter()}
         },
         sort => {list, search_spec_syntax_sort()},
-        '__mandatory' => [srv]
+        '__defaults' => #{domain => ?ROOT_DOMAIN}
     }.
 
 

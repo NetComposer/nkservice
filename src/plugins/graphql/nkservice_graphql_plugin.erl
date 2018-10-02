@@ -23,10 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_config/3, plugin_start/4, plugin_update/5]).
--export([get_actor_types/1, get_actor_config/2,
-         get_actor_queries/1, get_actor_query_meta/2,
-         get_actor_connections/1, get_actor_connection_meta/2,
-         get_actor_mutations/1, get_actor_mutation_meta/2]).
+-export([get_types/1, get_type/3, get_config/2,
+         get_queries/1, get_query_meta/2,
+         get_connections/1, get_connection_meta/2,
+         get_mutations/1, get_mutation_meta/2]).
 -export([has_graphiql/2]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkDOMAIN GraphQL Plugin: "++Txt, Args)).
@@ -129,7 +129,8 @@ plugin_update(_Class, _NewSpec, _OldSpec, _Pid, _Service) ->
 
 -type cache_key() ::
     types |
-    {type, Type::binary()} |       % Get config
+    {config, Type::binary()} |                                  % Get config
+    {resource_type, Group::binary(), resource:binary()} |       % Get type
     queries |
     {query_meta, Name::binary()} |
     connections |
@@ -147,42 +148,47 @@ get_domain_cache(SrvId, CacheKey) ->
 
 
 %% @doc
-get_actor_types(SrvId) ->
+get_types(SrvId) ->
     get_domain_cache(SrvId, types).
 
 
 %% @doc
-get_actor_config(SrvId, Type) when is_binary(Type) ->
-    get_domain_cache(SrvId, {type_config, Type}).
+get_type(SrvId, Group, Resource) ->
+    get_domain_cache(SrvId, {resource_type, to_bin(Group), to_bin(Resource)}).
+
+
+%% @doc
+get_config(SrvId, Type) when is_binary(Type) ->
+    get_domain_cache(SrvId, {config, Type}).
 
 
 %% @doc Get all queries
-get_actor_queries(SrvId) ->
+get_queries(SrvId) ->
     get_domain_cache(SrvId, queries).
 
 
 %% @doc Get query params
-get_actor_query_meta(SrvId, Name) when is_binary(Name) ->
+get_query_meta(SrvId, Name) when is_binary(Name) ->
     get_domain_cache(SrvId, {query_meta, Name}).
 
 
 %% @doc Get all connections
-get_actor_connections(SrvId) ->
+get_connections(SrvId) ->
     get_domain_cache(SrvId, connections).
 
 
 %% @doc Get connection params
-get_actor_connection_meta(SrvId, Name) when is_binary(Name) ->
+get_connection_meta(SrvId, Name) when is_binary(Name) ->
     get_domain_cache(SrvId, {connection_meta, Name}).
 
 
 %% @doc Get all mutations
-get_actor_mutations(SrvId) ->
+get_mutations(SrvId) ->
     get_domain_cache(SrvId, mutation).
 
 
 %% @doc Get mutation params
-get_actor_mutation_meta(SrvId, Name) when is_binary(Name) ->
+get_mutation_meta(SrvId, Name) when is_binary(Name) ->
     get_domain_cache(SrvId, {mutation_meta, Name}).
 
 
@@ -225,18 +231,22 @@ make_type_cache([Module|Rest], Cache) ->
         Config0 ->
             Config0
     end,
-    Type = to_bin(maps:get(type, Config)),
-    Config2 = #{
+    #{type:=Type0, actor_group:=Group0, actor_resource:=Resource0} = Config,
+    Type = to_bin(Type0),
+    Group = to_bin(Group0),
+    Resource = to_bin(Resource0),
+    Config2 = Config#{
         module => Module,
         type => Type,
-        actor_class => nklib_util:to_binary(maps:get(actor_class, Config)),
-        actor_type => nklib_util:to_binary(maps:get(actor_type, Config))
+        actor_group => Group,
+        actor_resource => Resource
     },
     Types1 = get_cache(types, Cache, []),
     Types2 = lists:usort([Type|Types1]),
     Cache2 = set_cache(types, Types2, Cache),
-    Cache3 = set_cache({type_config, Type}, Config2, Cache2),
-    make_type_cache(Rest, Cache3).
+    Cache3 = set_cache({config, Type}, Config2, Cache2),
+    Cache4 = set_cache({resource_type, Group, Resource}, Type, Cache3),
+    make_type_cache(Rest, Cache4).
 
 
 %% @private

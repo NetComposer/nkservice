@@ -38,8 +38,6 @@
 -export([load_schema/1, request/3, make_error/2]).
 -export_type([object/0, error/0]).
 
-% -include("nkdomain.hrl").
-
 -define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE GraphQL "++Txt, Args)).
 
 

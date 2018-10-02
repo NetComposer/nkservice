@@ -198,14 +198,14 @@ make_schema(SrvId, mutations) ->
 
 %% @private
 all_actor_types(SrvId) ->
-    nkservice_graphql_plugin:get_actor_types(SrvId).
+    nkservice_graphql_plugin:get_types(SrvId).
 
 
 %% @private
 all_actor_modules(SrvId) ->
     lists:map(
         fun(Type) ->
-            #{module:=Module} = nkservice_graphql_plugin:get_actor_config(SrvId, Type),
+            #{module:=Module} = nkservice_graphql_plugin:get_config(SrvId, Type),
             Module
         end,
         all_actor_types(SrvId)).

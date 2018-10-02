@@ -85,6 +85,7 @@
 	#{
         class => class(),                % Used to find similar services
         name => name(),                  % Optional name
+        domain => binary(),              % Optional domain (for actors)
         plugins => [binary()],           % Plugins to add to all packages
         uuid => binary(),                % Generated automatically
         packages => [package_spec()],
@@ -131,6 +132,7 @@
         id => atom(),
         class => class(),
         name => name(),
+        domain => binary(),
         uuid => binary(),
         plugins => [atom()],
         plugin_ids => [atom()],         % Expanded,bottom to top
