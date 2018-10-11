@@ -145,6 +145,10 @@ create_database_query() ->
             uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
             label_key STRING NOT NULL,
             label_value STRING NOT NULL,
+            domain STRING NOT NULL,
+            \"group\" STRING NOT NULL,
+            resource STRING NOT NULL,
+            name STRING NOT NULL,
             path STRING NOT NULL,
             PRIMARY KEY (uid, label_key),
             UNIQUE INDEX label_idx (label_key, uid)
@@ -154,6 +158,10 @@ create_database_query() ->
             uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
             link_type STRING NOT NULL,
             link_target STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            domain STRING NOT NULL,
+            \"group\" STRING NOT NULL,
+            resource STRING NOT NULL,
+            name STRING NOT NULL,
             path STRING NOT NULL,
             PRIMARY KEY (uid, link_target, link_type),
             UNIQUE INDEX link_idx (link_target, link_type, uid)
@@ -163,6 +171,10 @@ create_database_query() ->
             uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
             fts_word STRING NOT NULL,
             fts_field STRING NOT NULL,
+            domain STRING NOT NULL,
+            \"group\" STRING NOT NULL,
+            resource STRING NOT NULL,
+            name STRING NOT NULL,
             path STRING NOT NULL,
             PRIMARY KEY (uid, fts_word, fts_field),
             UNIQUE INDEX fts_idx (fts_word, fts_field, uid)
@@ -327,7 +339,7 @@ save(SrvId, PackageId, Mode, Actors) ->
                 [];
             _ ->
                 [
-                    <<"UPSERT INTO labels (uid,label_key,label_value,path) VALUES ">>,
+                    <<"UPSERT INTO labels (uid,label_key,label_value,domain,\"group\",resource,name,path) VALUES ">>,
                     nklib_util:bjoin(LabelFields), ?RETURN_NOTHING
                 ]
         end
@@ -339,7 +351,7 @@ save(SrvId, PackageId, Mode, Actors) ->
                 [];
             _ ->
                 [
-                    <<"UPSERT INTO links (uid,link_type,link_target,path) VALUES ">>,
+                    <<"UPSERT INTO links (uid,link_type,link_target,domain,\"group\",resource,name,path) VALUES ">>,
                     nklib_util:bjoin(LinkFields), ?RETURN_NOTHING
                 ]
         end
@@ -351,7 +363,7 @@ save(SrvId, PackageId, Mode, Actors) ->
                 [];
             _ ->
                 [
-                    <<"UPSERT INTO fts (uid,fts_word,fts_field,path) VALUES ">>,
+                    <<"UPSERT INTO fts (uid,fts_word,fts_field,domain,\"group\",resource,name,path) VALUES ">>,
                     nklib_util:bjoin(FtsFields), ?RETURN_NOTHING
                 ]
         end
@@ -443,13 +455,15 @@ populate_fields([Actor|Rest], SaveFields) ->
         Path,
         Updated,
         Expires,
-        [FtsWords2, <<" ">>]
+        list_to_binary([FtsWords2, <<" ">>])
     ]),
     Actors2 = [list_to_binary([<<"(">>, ActorFields, <<")">>]) | Actors],
     Labels2 = maps:fold(
         fun(Key, Val, Acc) ->
             L = list_to_binary([
-                <<"(">>, QUID, $,, quote(Key), $,, quote(to_bin(Val)), $,, QPath, <<")">>
+                <<"(">>, QUID, $,, quote(Key), $,, quote(to_bin(Val)), $,,
+                quote(Domain), $,, quote(Group), $,, quote(Res), $,, quote(Name), $,,
+                QPath, <<")">>
             ]),
             [L|Acc]
         end,
@@ -458,7 +472,9 @@ populate_fields([Actor|Rest], SaveFields) ->
     Links2 = maps:fold(
         fun(LinkType, UID2, Acc) ->
             L = list_to_binary([
-                <<"(">>, QUID, $,, quote(LinkType), $,, quote(UID2), $,, QPath, <<")">>
+                <<"(">>, QUID, $,, quote(LinkType), $,, quote(UID2), $,,
+                quote(Domain), $,, quote(Group), $,, quote(Res), $,, quote(Name), $,,
+                QPath, <<")">>
             ]),
             [L|Acc]
         end,
@@ -469,7 +485,9 @@ populate_fields([Actor|Rest], SaveFields) ->
             lists:foldl(
                 fun(Word, Acc2) ->
                     L = list_to_binary([
-                        <<"(">>, QUID, $,, quote(Word), $,, quote(Field), $,, QPath, <<")">>
+                        <<"(">>, QUID, $,, quote(Word), $,, quote(Field), $,,
+                        quote(Domain), $,, quote(Group), $,, quote(Res), $,, quote(Name), $,,
+                        QPath, <<")">>
                     ]),
                     [L|Acc2]
                 end,

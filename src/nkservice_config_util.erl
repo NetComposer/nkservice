@@ -23,6 +23,7 @@
 
 -export([get_cache_map/1, get_cache_key/4, get_cache_key/5, set_cache_key/5, set_cache_map/2]).
 -export([get_debug_map/1, get_debug_key/4, get_debug_key/5, set_debug_key/5, set_debug_map/2]).
+-export([set_cache_items/4, set_debug_items/4]).
 
 
 %% ===================================================================
@@ -54,6 +55,16 @@ set_cache_map(CacheMap, Spec) ->
     Spec#{cache_map => CacheMap}.
 
 
+%% @private
+set_cache_items(Group, Id, Items, Spec) ->
+    Cache1 = get_cache_map(Spec),
+    Cache2 = maps:fold(
+        fun(K, V, Acc) -> set_cache_key(Group, Id, K, V, Acc) end,
+        Cache1,
+        Items),
+    nkservice_config_util:set_cache_map(Cache2, Spec).
+
+
 %% @doc
 get_debug_map(Spec) ->
     maps:get(debug_map, Spec, #{}).
@@ -79,3 +90,11 @@ set_debug_map(DebugMap, Spec) ->
     Spec#{debug_map => DebugMap}.
 
 
+%% @private
+set_debug_items(Group, Id, Items, Spec) ->
+    Cache1 = get_debug_map(Spec),
+    Cache2 = maps:fold(
+        fun(K, V, Acc) -> set_debug_key(Group, Id, K, V, Acc) end,
+        Cache1,
+        Items),
+    nkservice_config_util:set_debug_map(Cache2, Spec).

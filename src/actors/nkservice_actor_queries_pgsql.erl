@@ -405,7 +405,9 @@ expand_filter([#{field:=Field, value:=Value}=Term|Rest], Acc) ->
         boolean when Op==values, is_list(Value) ->
             [to_boolean(V) || V <- Value];
         boolean ->
-            to_boolean(Value)
+            to_boolean(Value);
+        array ->
+            Value
     end,
     expand_filter(Rest, [{Field, Op, Value2, Type}|Acc]).
 
@@ -413,6 +415,27 @@ expand_filter([#{field:=Field, value:=Value}=Term|Rest], Acc) ->
 %% @private
 make_filter([], Acc) ->
     Acc;
+
+%% Generates data -> 'spec' -> 'phone' @> '[{"phone": "123"}]
+make_filter([{Field, eq, Val, array} | Rest], Acc) ->
+    Field2 = get_field_db_name(Field),
+    L = binary:split(Field2, <<".">>, [global]),
+    [Last|Base1] = lists:reverse(L),
+    Base2 = nklib_util:bjoin(lists:reverse(Base1), $.),
+    Val2 = if
+        is_binary(Val) -> [$", Val, $"];
+        is_list(Val) -> [$", Val, $"];
+        Val==true; Val==false -> to_bin(Val);
+        is_atom(Val) -> [$", to_bin(Val), $"];
+        true -> to_bin(Val)
+    end,
+    Json = [<<"'[{\"">>, Last, <<"\": ">>, Val2, <<"}]'">>],
+    Filter = [$(, json_value(Base2, json), <<" @> ">>, Json, $)],
+    make_filter(Rest, [list_to_binary(Filter) | Acc]);
+
+make_filter([{Field, _Op, _Val, array} | Rest], Acc) ->
+    lager:warning("using invalid array operator at ~p: ~p", [?MODULE, Field]),
+    make_filter(Rest, Acc);
 
 make_filter([{<<"group+resource">>, eq, Val, string} | Rest], Acc) ->
     [Group, Type] = binary:split(Val, <<"+">>),
@@ -465,6 +488,26 @@ make_filter([{Field, exists, Bool, _}|Rest], Acc)
             [<<"(TRUE = FALSE)">>|Acc]
     end,
     make_filter(Rest, Acc2);
+
+make_filter([{<<"metadata.links.", Ref/binary>>, exists, Bool, _}|Rest], Acc) ->
+    Filter = [
+        case Bool of
+            true -> <<"(">>;
+            false -> <<"(NOT ">>
+        end,
+        <<"metadata->'links' ? ">>, quote(Ref), <<")">>
+    ],
+    make_filter(Rest, [list_to_binary(Filter)|Acc]);
+
+make_filter([{<<"metadata.labels.", Ref/binary>>, exists, Bool, _}|Rest], Acc) ->
+    Filter = [
+        case Bool of
+            true -> <<"(">>;
+            false -> <<"(NOT ">>
+        end,
+        <<"metadata->'labels' ? ">>, quote(Ref), <<")">>
+    ],
+    make_filter(Rest, [list_to_binary(Filter)|Acc]);
 
 make_filter([{Field, exists, Bool, _}|Rest], Acc) ->
     Field2 = get_field_db_name(Field),
@@ -578,34 +621,47 @@ make_sort([{Order, Field, Type}|Rest], Acc) ->
     ],
     make_sort(Rest, [list_to_binary(Item)|Acc]).
 
+-compile(export_all).
+
 
 %% @private
 %% Extracts a field inside a JSON,  it and casts it to json, string, integer o boolean
 json_value(Field, Type) ->
-    json_value(Field, Type, []).
+    json_value(Field, Type, [], []).
 
 
 %% @private
-json_value(Field, Type, Acc) ->
+json_value(Field, Type, [<<"links">>, <<"metadata">>], Acc) ->
+    finish_json_value(Type, Field, Acc);
+
+json_value(Field, Type, [<<"labels">>, <<"metadata">>], Acc) ->
+    finish_json_value(Type, Field, Acc);
+
+json_value(Field, Type, Heads, Acc) ->
     case binary:split(Field, <<".">>) of
         [Single] when Acc==[] ->
+            % No "." at all
             Single;
         [Last] ->
-            case Type of
-                json ->
-                    Acc++[$', Last, $'];
-                string ->
-                    Acc++[$>, $', Last, $'];    % '>' finishes ->>
-                integer ->
-                    [$(|Acc] ++ [$>, $', Last, $', <<")::INTEGER">>];
-                boolean ->
-                    [$(|Acc] ++ [$>, $', Last, $', <<")::BOOLEAN">>]
-            end;
+            finish_json_value(Type, Last, Acc);
         [Base, Rest] when Acc==[] ->
-            json_value(Rest, Type, [Base, <<"->">>]);
+            json_value(Rest, Type, [Base|Heads], [Base, <<"->">>]);
         [Base, Rest] ->
-            json_value(Rest, Type, Acc++[$', Base, $', <<"->">>])
+            json_value(Rest, Type, [Base|Heads], Acc++[$', Base, $', <<"->">>])
     end.
+
+finish_json_value(Type, Last, Acc) ->
+    case Type of
+        json ->
+            Acc++[$', Last, $'];
+        string ->
+            Acc++[$>, $', Last, $'];    % '>' finishes ->>
+        integer ->
+            [$(|Acc] ++ [$>, $', Last, $', <<")::INTEGER">>];
+        boolean ->
+            [$(|Acc] ++ [$>, $', Last, $', <<")::BOOLEAN">>]
+    end.
+
 
 
 %% @private

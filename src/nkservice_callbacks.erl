@@ -141,6 +141,7 @@ msg(not_found) 				        -> "Not found";
 msg(not_started) 				    -> "Not yet started";
 msg(not_implemented) 		        -> "Not implemented";
 msg(nxdomain)       		        -> "DNS Error";
+msg(ok)                             -> "OK";
 msg(process_down)  			        -> "Process failed";
 msg(process_not_found) 		        -> "Process not found";
 msg(registered_down) 	            -> "Registered process stopped";
@@ -444,6 +445,8 @@ actor_srv_link_event(_Link, _LinkData, _Event, State) ->
 
 
 %% @doc
+%% If you reply with reply, and is_dirty is set to true, it will start a save
+%% timer if not in place yet
 -spec actor_srv_sync_op(term(), {pid(), reference()}, actor_st()) ->
     {reply, Reply::term(), actor_st()} | {reply_and_save, Reply::term(), actor_st()} |
     {noreply, actor_st()} | {noreply_and_save, actor_st()} |

@@ -22,7 +22,7 @@
 -module(nkservice_rest_http).
 -export([get_body/2, get_headers/1, get_qs/1, get_basic_auth/1]).
 -export([stream_start/3, stream_body/2, stream_stop/1]).
--export([get_accept/1]).
+-export([get_accept/1, get_external_url/1]).
 -export([reply_json/2, make_req_ext/2, reply_req_ext/2]).
 -export([init/4, terminate/3]).
 -export_type([method/0, reply/0, code/0, headers/0, body/0, req/0, path/0, http_qs/0]).
@@ -69,6 +69,7 @@
         method => method(),
         path => [binary()],
         peer => binary(),
+        external_url => binary(),
         content_type => binary(),
         cowboy_req => term()
     }.
@@ -289,6 +290,14 @@ reply_json({error, Error}, #{srv:=SrvId}) ->
     {http, 200, Hds, Body}.
 
 
+%% @doc
+-spec get_external_url(req()) ->
+    binary().
+
+get_external_url(#{external_url:=Url}) ->
+    Url.
+
+
 %% ===================================================================
 %% Callbacks
 %% ===================================================================
@@ -311,6 +320,7 @@ init(Paths, CowReq, Env, NkPort) ->
         method => Method,
         path => Paths,
         peer => Peer,
+        external_url => nkpacket:get_external_url(NkPort),
         content_type => cowboy_req:header(<<"content-type">>, CowReq),
         cowboy_req => CowReq
     },

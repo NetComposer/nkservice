@@ -354,7 +354,7 @@ init({SrvId, Op, Actor, StartOpts, Caller, Ref}) ->
         {false, State2} ->
             case do_register(1, State2) of
                 {ok, State3} ->
-                    ?DEBUG("registered", [], State3),
+                    ?ACTOR_DEBUG("registered", [], State3),
                     case handle(actor_srv_init, [SrvId, StartOpts], State3) of
                         {ok, State4} ->
                             do_init(Op, State4);
@@ -368,7 +368,7 @@ init({SrvId, Op, Actor, StartOpts, Caller, Ref}) ->
                     do_init_stop(Error, Caller, Ref)
             end;
         true ->
-            ?LLOG(warning, "actor is expired on load", [], State),
+            ?ACTOR_LLOG(warning, "actor is expired on load", [], State),
             % Call stop functions, probably will delete the actor
             _ = do_stop(actor_expired, State),
             do_init_stop(actor_not_found, Caller, Ref)
@@ -380,7 +380,7 @@ do_init(create, State) ->
     #actor_st{srv=SrvId, actor=Actor} = State,
     case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor]) of
         {ok, _Meta} ->
-            ?DEBUG("created (~p)", [self()], State),
+            ?ACTOR_DEBUG("created (~p)", [self()], State),
             State2 = do_event(created, State),
             do_post_init(State2);
         {error, Error} ->
@@ -425,7 +425,7 @@ handle_call({nkservice_sync_op, Op}, From, State) ->
         {continue, [Op2, _From2, #actor_st{}=State2]} ->
             do_sync_op(Op2, From, State2);
         Other ->
-            ?LLOG(error, "invalid response for sync op ~p: ~p", [Op, Other], State),
+            ?ACTOR_LLOG(error, "invalid response for sync op ~p: ~p", [Op, Other], State),
             error(invalid_sync_response)
     end;
 
@@ -451,7 +451,7 @@ handle_cast({nkservice_async_op, Op}, State) ->
         {continue, [Op2, #actor_st{}=State2]} ->
             do_async_op(Op2, State2);
         Other ->
-            ?LLOG(error, "invalid response for async op ~p: ~p", [Op, Other], State),
+            ?ACTOR_LLOG(error, "invalid response for async op ~p: ~p", [Op, Other], State),
             error(invalid_async_response)
     end;
 
@@ -491,10 +491,10 @@ handle_info(nkservice_heartbeat, State) ->
     do_heartbeat(State);
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{father_pid=Pid}=State) ->
-    ?LLOG(notice, "service leader is down", [], State),
+    ?ACTOR_LLOG(notice, "service leader is down", [], State),
     case do_register(1, State#actor_st{father_pid=undefined}) of
         {ok, State2} ->
-            ?LLOG(notice, "re-registered with service leader", [], State),
+            ?ACTOR_LLOG(notice, "re-registered with service leader", [], State),
             noreply(State2);
         {error, _Error} ->
             do_stop(leader_is_down, State)
@@ -503,7 +503,7 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{father_pid=Pid}=Sta
 handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, State) ->
     case link_down(Ref, State) of
         {ok, Link, LinkOpts, State2} ->
-            ?DEBUG("link ~p down (~p)", [Link, LinkOpts], State),
+            ?ACTOR_DEBUG("link ~p down (~p)", [Link, LinkOpts], State),
             {ok, State3} = handle(actor_srv_link_down, [Link], State2),
             noreply(State3);
         not_found ->
@@ -621,7 +621,7 @@ do_sync_op({link, Link, Opts}, _From, State) ->
         avoid_unload = maps:get(avoid_unload, Opts, false),
         data = maps:get(data, Opts, undefined)
     },
-    ?DEBUG("link ~p added (~p)", [Link, LinkData], State),
+    ?ACTOR_DEBUG("link ~p added (~p)", [Link, LinkData], State),
     {reply, ok, add_link(Link, LinkData, do_refresh_ttl(State))};
 
 do_sync_op({update, #actor{}=Actor}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
@@ -666,7 +666,7 @@ do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
 do_sync_op(Op, _From, State) ->
-    ?LLOG(notice, "unknown sync op: ~p", [Op], State),
+    ?ACTOR_LLOG(notice, "unknown sync op: ~p", [Op], State),
     reply({error, unknown_op}, State).
 
 
@@ -699,12 +699,12 @@ do_async_op(delete, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
             do_stop(actor_deleted, State2)
     end;
 do_async_op({stop, Reason}, State) ->
-    ?DEBUG("received stop: ~p", [Reason], State),
+    ?ACTOR_DEBUG("received stop: ~p", [Reason], State),
     do_stop(Reason, State);
 
 do_async_op({raw_stop, Reason}, State) ->
     % We don't send the deleted event here, since we may not be active at all
-    ?LLOG(warning, "received raw_stop: ~p", [Reason], State),
+    ?ACTOR_LLOG(warning, "received raw_stop: ~p", [Reason], State),
     {ok, State2} = handle(actor_srv_stop, [Reason], State),
     State3 = do_event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
@@ -716,7 +716,7 @@ do_async_op(clear_all_alarms, State) ->
     noreply(do_clear_all_alarms(State));
 
 do_async_op(Op, State) ->
-    ?LLOG(notice, "unknown async op: ~p", [Op], State),
+    ?ACTOR_LLOG(notice, "unknown async op: ~p", [Op], State),
     noreply(State).
 
 
@@ -759,14 +759,14 @@ do_pre_init(SrvId, StartOpts, Actor) ->
         %leader_pid = undefined               % "
     },
     set_debug(State),
-    ?DEBUG("actor server starting", [], State),
+    ?ACTOR_DEBUG("actor server starting", [], State),
     set_unload_policy(State).
 
 
 %% @private
 do_post_init(State) ->
     #actor_st{actor=#actor{id=ActorId}} = State,
-    ?DEBUG("started (~p)", [self()], State),
+    ?ACTOR_DEBUG("started (~p)", [self()], State),
     State3 = do_event(activated, State),
     State4 = do_check_alarms(State3),
     erlang:send_after(?HEARTBEAT_TIME, self(), nkservice_heartbeat),
@@ -801,7 +801,7 @@ set_debug(State) ->
             end
     end,
     put(nkservice_actor_debug, Debug),
-    ?DEBUG("debug activated", [], State).
+    ?ACTOR_DEBUG("debug activated", [], State).
 
 
 %% @private
@@ -815,7 +815,7 @@ set_unload_policy(#actor_st{config=Config}=State) ->
                 <<>> ->
                     % A TTL reseated after each operation
                     TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
-                    ?DEBUG("TTL is ~p", [TTL], State),
+                    ?ACTOR_DEBUG("TTL is ~p", [TTL], State),
                     {ttl, TTL};
                 Expires ->
                     {ok, Expires2} = nklib_date:to_epoch(Expires, msecs),
@@ -823,7 +823,7 @@ set_unload_policy(#actor_st{config=Config}=State) ->
                     {expires, Expires2}
             end
     end,
-    ?DEBUG("unload policy is ~p", [Policy], State),
+    ?ACTOR_DEBUG("unload policy is ~p", [Policy], State),
     State#actor_st{unload_policy=Policy}.
 
 
@@ -831,7 +831,7 @@ set_unload_policy(#actor_st{config=Config}=State) ->
 do_register(Tries, #actor_st{srv = SrvId} = State) ->
     case handle(actor_srv_register, [SrvId], State) of
         {ok, Pid, State2} when is_pid(Pid) ->
-            ?DEBUG("registered with master service (pid:~p)", [Pid]),
+            ?ACTOR_DEBUG("registered with master service (pid:~p)", [Pid]),
             monitor(process, Pid),
             {ok, State2#actor_st{father_pid = Pid}};
         {ok, undefined, State2} ->
@@ -839,12 +839,12 @@ do_register(Tries, #actor_st{srv = SrvId} = State) ->
         {error, Error} ->
             case Tries > 1 of
                 true ->
-                    ?LLOG(notice, "registered with master failed (~p) (~p tries left)",
+                    ?ACTOR_LLOG(notice, "registered with master failed (~p) (~p tries left)",
                         [Error, Tries], State),
                     timer:sleep(1000),
                     do_register(Tries - 1, State);
                 false ->
-                    ?LLOG(notice, "registered with master failed: ~p", [Error], State),
+                    ?ACTOR_LLOG(notice, "registered with master failed: ~p", [Error], State),
                     {error, Error}
             end
     end.
@@ -867,13 +867,13 @@ do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, actor=Actor, save_timer=Time
     State2 = State#actor_st{save_timer=undefined},
     case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor]) of
         {ok, DbMeta} ->
-            ?DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
             State3 = State2#actor_st{is_dirty=false},
             {ok, do_event(saved, State3)};
         {error, not_implemented, State2} ->
             {{error, not_implemented}, State2};
         {error, Error, State2} ->
-            ?LLOG(warning, "save error: ~p", [Error], State),
+            ?ACTOR_LLOG(warning, "save error: ~p", [Error], State),
             {{error, Error}, State2}
     end;
 
@@ -937,10 +937,10 @@ do_delete(#actor_st{srv=SrvId, actor=Actor}=State) ->
     #actor{id=#actor_id{uid=UID}} = Actor,
     case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
         {ok, _ActorIds, DbMeta} ->
-            ?DEBUG("object deleted: ~p", [DbMeta], State),
+            ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
             {ok, do_event(deleted, State#actor_st{is_dirty=deleted})};
         {error, Error} ->
-            ?LLOG(warning, "object could not be deleted: ~p", [Error], State),
+            ?ACTOR_LLOG(warning, "object could not be deleted: ~p", [Error], State),
             {{error, Error}, State#actor_st{actor=Actor}}
     end.
 
@@ -1146,7 +1146,7 @@ do_check_save(State) ->
 
 %% @private
 do_event(Event, State) ->
-    ?DEBUG("sending 'event': ~p", [Event], State),
+    ?ACTOR_DEBUG("sending 'event': ~p", [Event], State),
     State2 = do_event_link(Event, State),
     {ok, State3} = handle(actor_srv_event, [Event], State2),
     State3.
@@ -1226,7 +1226,7 @@ safe_handle(Fun, Args, State) ->
         {stop, _, #actor_st{}} ->
             Reply;
         Other ->
-            ?LLOG(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
+            ?ACTOR_LLOG(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
             error(invalid_handle_response)
     end.
 

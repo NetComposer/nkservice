@@ -167,8 +167,10 @@ set_net_ticktime(Time, Period) ->
     rpc:multicall(net_kernel, set_net_ticktime, [Time, Period]).
 
 
+
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;
 to_bin(Term) -> nklib_util:to_binary(Term).
+
 
 

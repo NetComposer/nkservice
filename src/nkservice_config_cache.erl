@@ -94,12 +94,16 @@ make_cache(#{id:=Id}=Service) ->
     PluginList = maps:get(plugin_ids, Service),
     PluginSyntax = plugin_callbacks_syntax(PluginList),
     FullSyntax = PluginSyntax ++ BaseSyntax,
+    ?LLOG(info, "starting module compilation...", [], Service),
     {ok, Tree} = nklib_code:compile(Id, FullSyntax),
     % Expansion functions are also removed from saved version in log
     % See nkservice:spec_with_secrets/1
     Tree2 = lists:filtermap(fun(T) -> filter_for_disk(T) end, Tree),
     LogPath = nkservice_app:get(logPath),
-    ok = nklib_code:write(Id, Tree2, LogPath).
+    ?LLOG(info, "saving to disk...", [], Service),
+    ok = nklib_code:write(Id, Tree2, LogPath),
+    ?LLOG(info, "compilation completed", [], Service),
+    ok.
 
 
 

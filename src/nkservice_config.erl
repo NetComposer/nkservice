@@ -108,7 +108,6 @@ config_secrets(Spec, Service) ->
     config_modules(Spec, Service#{secret=>Secrets2}).
 
 
-
 %% @private
 %% All modules described in spec are analyzed and compiled
 %% Old ones are left, can be deleted defining them again with remove=true

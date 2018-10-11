@@ -37,8 +37,8 @@ quote_list(List) ->
 
 
 %% @private
-quote(Field) when is_binary(Field) -> [$', Field, $'];
-quote(Field) when is_list(Field) -> [$', Field, $'];
+quote(Field) when is_binary(Field) -> [$', to_field(Field), $'];
+quote(Field) when is_list(Field) -> [$', to_field(Field), $'];
 quote(Field) when is_integer(Field); is_float(Field) -> to_bin(Field);
 quote(true) -> <<"TRUE">>;
 quote(false) -> <<"FALSE">>;
@@ -50,13 +50,13 @@ quote(Field) when is_map(Field) ->
             lager:error("Error enconding JSON: ~p", [Field]),
             error(json_encode_error);
         Json ->
-            [$', Json, $']
+            [$', to_field(Json), $']
     end.
 
 
 %% @private
-quote_double(Field) when is_binary(Field) -> [$", Field, $"];
-quote_double(Field) when is_list(Field) -> [$", Field, $"];
+quote_double(Field) when is_binary(Field) -> [$", to_field(Field), $"];
+quote_double(Field) when is_list(Field) -> [$", to_field(Field), $"];
 quote_double(Field) when is_integer(Field); is_float(Field) -> to_bin(Field);
 quote_double(true) -> <<"TRUE">>;
 quote_double(false) -> <<"FALSE">>;
@@ -68,9 +68,17 @@ quote_double(Field) when is_map(Field) ->
             lager:error("Error enconding JSON: ~p", [Field]),
             error(json_encode_error);
         Json ->
-            [$", Json, $"]
+            [$", to_field(Json), $"]
     end.
 
+to_field(Field) ->
+    Field2 = to_bin(Field),
+    case binary:match(Field2, <<$'>>) of
+        nomatch ->
+            Field2;
+        _ ->
+            re:replace(Field2, <<$'>>, <<$',$'>>, [global, {return, binary}])
+    end.
 
 %% @private
 to_bin(Term) when is_binary(Term) -> Term;

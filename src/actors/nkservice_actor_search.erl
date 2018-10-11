@@ -58,7 +58,10 @@
 
 % Field types are used to cast the correct value from JSON
 % Byt default, they will be extracted as strings (so they will be sorted incorrectly)
--type field_type() :: string | boolean | integer.
+% For arrays, for example, for field spec.phone.phone => array, the query
+%   #{field => "spec.phone.phone", eq=>"123} generates data->'spec'->'phone' @> '[{"phone": "123456"}]'
+
+-type field_type() :: string | boolean | integer | array.
 
 
 -type filter_spec() ::

@@ -26,6 +26,7 @@
 -export([start/0, start/1, start/2, stop/1]).
 -export([set_nodes/1]).
 -export([get/1, get/2, put/2, del/1]).
+-export([get_external_host/0]).
 
 -include("nkservice.hrl").
 
@@ -64,9 +65,12 @@ start(_Type, _Args) ->
         logPath => binary,
         nodes => {list, binary},
         ticktime => integer,
-        dbDefaultService => new_atom,
+        callbacksHttpUrl => binary,
+        externalHost => binary,
         '__defaults' => #{
-            logPath => <<"log">>
+            logPath => <<"log">>,
+            callbacksHttpUrl => <<"http://127.0.0.1:8000">>,
+            external_host => <<"127.0.0.1">>
         }
     },
     case nklib_config:load_env(?APP, Syntax) of
@@ -75,6 +79,8 @@ start(_Type, _Args) ->
             {ok, Pid} = nkservice_sup:start_link(),
             {ok, Vsn} = application:get_key(nkservice, vsn),
             register_packages(),
+            CallbacksHttpUrl = get(callbacksHttpUrl),
+            put(callbacksHttpUrl, nklib_url:norm(CallbacksHttpUrl)),
             lager:info("NkSERVICE v~s has started.", [Vsn]),
             ?MODULE:put(nkservice_start_time, nklib_util:l_timestamp()),
             {ok, Pid};
@@ -125,3 +131,6 @@ del(Key) ->
     nklib_config:del(?APP, Key).
 
 
+%% @doc
+get_external_host() ->
+    get(externalHost).

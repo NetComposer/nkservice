@@ -7,25 +7,25 @@
 
 -include("nkservice_actor.hrl").
 
--define(DEBUG(Txt, Args),
+-define(ACTOR_DEBUG(Txt, Args),
     case erlang:get(nkservice_actor_debug) of
-        true -> ?LLOG(debug, Txt, Args);
+        true -> ?ACTOR_LLOG(debug, Txt, Args);
         _ -> ok
     end).
 
 
--define(DEBUG(Txt, Args, State),
+-define(ACTOR_DEBUG(Txt, Args, State),
     case erlang:get(nkservice_actor_debug) of
-        true -> ?LLOG(debug, Txt, Args, State);
+        true -> ?ACTOR_LLOG(debug, Txt, Args, State);
         _ -> ok
     end).
 
 
--define(LLOG(Type, Txt, Args),
+-define(ACTOR_LLOG(Type, Txt, Args),
     lager:Type("NkSERVICE Actor " ++ Txt, Args)).
 
 
--define(LLOG(Type, Txt, Args, State),
+-define(ACTOR_LLOG(Type, Txt, Args, State),
     lager:Type(
         [
             {srv_id, State#actor_st.actor#actor.id#actor_id.domain},

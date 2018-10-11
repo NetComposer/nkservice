@@ -189,7 +189,7 @@ make_name(Id) ->
         _ ->
             nklib_util:luid()
     end,
-    normalized_name(binary:part(UUID, 0, 7)).
+    normalized_name(binary:part(UUID, 0, 12)).
 
 
 %% @private
