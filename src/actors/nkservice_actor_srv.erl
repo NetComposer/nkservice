@@ -355,7 +355,7 @@ init({SrvId, Op, Actor, StartOpts, Caller, Ref}) ->
             case do_register(1, State2) of
                 {ok, State3} ->
                     ?ACTOR_DEBUG("registered", [], State3),
-                    case handle(actor_srv_init, [SrvId, StartOpts], State3) of
+                    case handle(actor_srv_init, [StartOpts], State3) of
                         {ok, State4} ->
                             do_init(Op, State4);
                         {error, Error} ->
@@ -1013,7 +1013,7 @@ do_update(UpdActor, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
         IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
         case IsDataUpdated orelse IsMetaUpdated of
             true ->
-                % lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
+                %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
                 NewMeta2 = case UpdEnabled of
                     true ->
                         maps:remove(<<"isEnabled">>, NewMeta);

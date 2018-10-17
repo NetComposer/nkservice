@@ -314,13 +314,14 @@ init(Paths, CowReq, Env, NkPort) ->
     >>,
     {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
     Method = cowboy_req:method(CowReq),
+    {ok, ExtUrl} = nkpacket:get_external_url(NkPort),
     Req = #{
         srv => SrvId,
         plugin_id => Id,
         method => Method,
         path => Paths,
         peer => Peer,
-        external_url => nkpacket:get_external_url(NkPort),
+        external_url => ExtUrl,
         content_type => cowboy_req:header(<<"content-type">>, CowReq),
         cowboy_req => CowReq
     },

@@ -256,7 +256,7 @@ plugin_callbacks_syntax([{Fun, Arity}|Rest], Mod, Map) ->
                     Value = nklib_code:call_expr(Mod, Fun, Arity, Pos);
                 {ok, {Syntax, Pos0}} ->
                     Case = case Arity==2 andalso lists:reverse(FunStr) of
-                        "tini_"++_ -> case_expr_ok;         % Fun is ".._init"
+                        % "tini_"++_ -> case_expr_ok;         % Fun is ".._init"
                         % "etanimret_"++_ -> case_expr_ok;    % Fun is ".._terminate"
                         _ -> case_expr
                     end,

@@ -31,7 +31,7 @@
          service_master_terminate/2]).
 -export([actor_is_activated/2, actor_create/3, actor_activate/3,
          actor_external_event/3, actor_config/1]).
--export([actor_srv_init/3, actor_srv_register/2, actor_srv_terminate/2,
+-export([actor_srv_init/2, actor_srv_register/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_event/2,
          actor_srv_link_event/4,  actor_srv_link_down/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
@@ -99,6 +99,7 @@ msg(already_started)	            -> "Already started";
 msg(already_uploaded)   		    -> "Already uploaded";
 msg(api_delete) 				    -> "API delete received";
 msg(api_stop) 				        -> "API stop received";
+msg(auth_invalid) 	                -> "Auth token is not valid";
 msg(cannot_consume)                 -> "Actor cannot be consumed";
 msg(data_not_available)   	        -> "Data is not available";
 msg(data_value_invalid)   	        -> "Data value is not valid";
@@ -393,10 +394,10 @@ actor_external_event(_SrvId, _Event, _Actor) ->
 
 
 %% @doc Called when a new session starts
--spec actor_srv_init(nkservice:id(), map(), actor_st()) ->
+-spec actor_srv_init(map(), actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_srv_init(_SrvId, _StartOpts, State) ->
+actor_srv_init(_StartOpts, State) ->
     {ok, State}.
 
 
