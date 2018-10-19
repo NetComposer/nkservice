@@ -28,7 +28,7 @@
 -module(nkservice_actor).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([create/2]).
--export([get_actor/2, get_path/2, is_enabled/2, enable/3, update/3, remove/2,
+-export([get_actor/2, get_path/2, is_enabled/2, enable/3, update/4, remove/2,
          stop/2, stop/3]).
 -export([search_groups/3, search_resources/4]).
 -export([search_linked_to/5, search_fts/5, search/3, search_ids/3,
@@ -140,6 +140,12 @@
     }.
 
 
+-type update_opts() ::
+    #{
+        data_fields => [binary()]           % Fields in data to check for changes an update
+    }.
+
+
 %% ===================================================================
 %% Public
 %% ===================================================================
@@ -189,11 +195,11 @@ enable(SrvId, Id, Enable) ->
 
 
 %% @doc Updates an object
--spec update(nkservice:id(), id()|pid(), map()) ->
+-spec update(nkservice:id(), id()|pid(), map(), update_opts()) ->
     {ok, UnknownFields::[binary()]} | {error, term()}.
 
-update(SrvId, Id, Update) ->
-    nkservice_actor_srv:sync_op(SrvId, Id, {update, Update}).
+update(SrvId, Id, Update, Opts) ->
+    nkservice_actor_srv:sync_op(SrvId, Id, {update, Update, Opts}).
 
 
 %% @doc Remove an object

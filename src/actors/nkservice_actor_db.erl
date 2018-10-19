@@ -46,6 +46,7 @@
 #{
     ttl => integer(),               % For loading, changes default
     consume => boolean(),           % Remove actor after read (default: false)
+    update_opts => nkservice_actor:update_opts(),
     cascade => boolean(),           % For deletes, hard deletes, deletes all linked objects
     force => boolean()              % For hard delete, deletes even if linked objects
 }.
@@ -270,7 +271,8 @@ update(SrvId, Actor, Opts) ->
         true ->
             case activate(SrvId, Actor, Opts) of
                 {ok, ActorId, _} ->
-                    case nkservice_actor_srv:sync_op(SrvId, ActorId, {update, Actor}) of
+                    UpdOpts = maps:get(update_opts, Opts, #{}),
+                    case nkservice_actor:update(SrvId, ActorId, Actor, UpdOpts) of
                         ok ->
                             {ok, Actor2} = nkservice_actor_srv:sync_op(SrvId, ActorId, get_actor),
                             {ok, Actor2, #{}};

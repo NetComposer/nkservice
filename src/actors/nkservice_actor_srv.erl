@@ -62,7 +62,7 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([add_link/3, remove_link/2]).
 -export([get_all/0, unload_all/0, get_state/2, raw_stop/3]).
--export([do_stop/2, do_event/2, do_update/2, do_event_link/2]).
+-export([do_stop/2, do_event/2, do_update/3, do_event_link/2]).
 -export_type([event/0, save_reason/0]).
 
 
@@ -139,7 +139,7 @@
     {enable, boolean()} |
     is_enabled |
     {link, nklib:link(), link_opts()} |
-    {update, nkservice_actor:actor()} |
+    {update, nkservice_actor:actor(), nkservice_actor:update_opts()} |
     {update_name, binary()} |
     get_alarms |
     {set_alarm, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
@@ -368,7 +368,7 @@ init({SrvId, Op, Actor, StartOpts, Caller, Ref}) ->
                     do_init_stop(Error, Caller, Ref)
             end;
         true ->
-            ?ACTOR_LLOG(warning, "actor is expired on load", [], State),
+            ?ACTOR_LOG(warning, "actor is expired on load", [], State),
             % Call stop functions, probably will delete the actor
             _ = do_stop(actor_expired, State),
             do_init_stop(actor_not_found, Caller, Ref)
@@ -425,7 +425,7 @@ handle_call({nkservice_sync_op, Op}, From, State) ->
         {continue, [Op2, _From2, #actor_st{}=State2]} ->
             do_sync_op(Op2, From, State2);
         Other ->
-            ?ACTOR_LLOG(error, "invalid response for sync op ~p: ~p", [Op, Other], State),
+            ?ACTOR_LOG(error, "invalid response for sync op ~p: ~p", [Op, Other], State),
             error(invalid_sync_response)
     end;
 
@@ -451,7 +451,7 @@ handle_cast({nkservice_async_op, Op}, State) ->
         {continue, [Op2, #actor_st{}=State2]} ->
             do_async_op(Op2, State2);
         Other ->
-            ?ACTOR_LLOG(error, "invalid response for async op ~p: ~p", [Op, Other], State),
+            ?ACTOR_LOG(error, "invalid response for async op ~p: ~p", [Op, Other], State),
             error(invalid_async_response)
     end;
 
@@ -491,10 +491,10 @@ handle_info(nkservice_heartbeat, State) ->
     do_heartbeat(State);
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{father_pid=Pid}=State) ->
-    ?ACTOR_LLOG(notice, "service leader is down", [], State),
+    ?ACTOR_LOG(notice, "service leader is down", [], State),
     case do_register(1, State#actor_st{father_pid=undefined}) of
         {ok, State2} ->
-            ?ACTOR_LLOG(notice, "re-registered with service leader", [], State),
+            ?ACTOR_LOG(notice, "re-registered with service leader", [], State),
             noreply(State2);
         {error, _Error} ->
             do_stop(leader_is_down, State)
@@ -603,7 +603,7 @@ do_sync_op({enable, Enable}, _From, State) when is_boolean(Enable)->
         _ ->
             Meta2 = Meta#{<<"isEnabled">> => Enable},
             UpdActor = Actor#actor{metadata = Meta2},
-            case do_update(UpdActor, State) of
+            case do_update(UpdActor, #{}, State) of
                 {ok, State2} ->
                     reply(ok, do_refresh_ttl(State2));
                 {error, Error, State2} ->
@@ -624,12 +624,12 @@ do_sync_op({link, Link, Opts}, _From, State) ->
     ?ACTOR_DEBUG("link ~p added (~p)", [Link, LinkData], State),
     {reply, ok, add_link(Link, LinkData, do_refresh_ttl(State))};
 
-do_sync_op({update, #actor{}=Actor}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
+do_sync_op({update, #actor{}=Actor, Opts}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
         {false, #{dont_update_on_disabled:=true}} ->
             reply({error, object_is_disabled}, State);
         _ ->
-            case do_update(Actor, State) of
+            case do_update(Actor, Opts, State) of
                 {ok, State2} ->
                     reply(ok, do_refresh_ttl(State2));
                 {error, Error, State2} ->
@@ -666,7 +666,7 @@ do_sync_op({apply, Mod, Fun, Args}, From, State) ->
     apply(Mod, Fun, Args++[From, do_refresh_ttl(State)]);
 
 do_sync_op(Op, _From, State) ->
-    ?ACTOR_LLOG(notice, "unknown sync op: ~p", [Op], State),
+    ?ACTOR_LOG(notice, "unknown sync op: ~p", [Op], State),
     reply({error, unknown_op}, State).
 
 
@@ -704,7 +704,7 @@ do_async_op({stop, Reason}, State) ->
 
 do_async_op({raw_stop, Reason}, State) ->
     % We don't send the deleted event here, since we may not be active at all
-    ?ACTOR_LLOG(warning, "received raw_stop: ~p", [Reason], State),
+    ?ACTOR_LOG(warning, "received raw_stop: ~p", [Reason], State),
     {ok, State2} = handle(actor_srv_stop, [Reason], State),
     State3 = do_event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
@@ -716,7 +716,7 @@ do_async_op(clear_all_alarms, State) ->
     noreply(do_clear_all_alarms(State));
 
 do_async_op(Op, State) ->
-    ?ACTOR_LLOG(notice, "unknown async op: ~p", [Op], State),
+    ?ACTOR_LOG(notice, "unknown async op: ~p", [Op], State),
     noreply(State).
 
 
@@ -839,12 +839,12 @@ do_register(Tries, #actor_st{srv = SrvId} = State) ->
         {error, Error} ->
             case Tries > 1 of
                 true ->
-                    ?ACTOR_LLOG(notice, "registered with master failed (~p) (~p tries left)",
+                    ?ACTOR_LOG(notice, "registered with master failed (~p) (~p tries left)",
                         [Error, Tries], State),
                     timer:sleep(1000),
                     do_register(Tries - 1, State);
                 false ->
-                    ?ACTOR_LLOG(notice, "registered with master failed: ~p", [Error], State),
+                    ?ACTOR_LOG(notice, "registered with master failed: ~p", [Error], State),
                     {error, Error}
             end
     end.
@@ -873,7 +873,7 @@ do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, actor=Actor, save_timer=Time
         {error, not_implemented, State2} ->
             {{error, not_implemented}, State2};
         {error, Error, State2} ->
-            ?ACTOR_LLOG(warning, "save error: ~p", [Error], State),
+            ?ACTOR_LOG(warning, "save error: ~p", [Error], State),
             {{error, Error}, State2}
     end;
 
@@ -940,13 +940,13 @@ do_delete(#actor_st{srv=SrvId, actor=Actor}=State) ->
             ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
             {ok, do_event(deleted, State#actor_st{is_dirty=deleted})};
         {error, Error} ->
-            ?ACTOR_LLOG(warning, "object could not be deleted: ~p", [Error], State),
+            ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State),
             {{error, Error}, State#actor_st{actor=Actor}}
     end.
 
 
 %% @private
-do_update(UpdActor, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
+do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
     #actor_id{uid=UID, domain=Domain, group=Class, vsn=Vsn, resource=Res, name=Name} = Id,
     try
         case UpdActor#actor.id#actor_id.domain of
@@ -974,9 +974,22 @@ do_update(UpdActor, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
             Name -> ok;
             _ -> throw({updated_invalid_field, name})
         end,
+        DataFieldsList = maps:get(data_fields, Opts, all),
         #actor{data=Data, metadata=Meta} = Actor,
+        DataFields = case DataFieldsList of
+            all ->
+                Data;
+            _ ->
+                maps:with(DataFieldsList, Data)
+        end,
         UpdData = UpdActor#actor.data,
-        IsDataUpdated = UpdData /= Data,
+        UpdDataFields = case DataFieldsList of
+            all ->
+                UpdData;
+            _ ->
+                maps:with(DataFieldsList, UpdData)
+        end,
+        IsDataUpdated = UpdDataFields /= DataFields,
         UpdMeta = UpdActor#actor.metadata,
         CT = maps:get(<<"creationTime">>, Meta),
         case maps:get(<<"creationTime">>, UpdMeta, CT) of
@@ -1020,7 +1033,8 @@ do_update(UpdActor, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
                     false ->
                         NewMeta#{<<"isEnabled">>=>false}
                 end,
-                NewActor = Actor#actor{data=UpdData, metadata=NewMeta2},
+                Data2 = maps:merge(Data, UpdDataFields),
+                NewActor = Actor#actor{data=Data2, metadata=NewMeta2},
                 case nkservice_actor_util:update_check_fields(NewActor, State) of
                     ok ->
                         case handle(actor_srv_update, [NewActor], State) of
@@ -1226,7 +1240,7 @@ safe_handle(Fun, Args, State) ->
         {stop, _, #actor_st{}} ->
             Reply;
         Other ->
-            ?ACTOR_LLOG(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
+            ?ACTOR_LOG(error, "invalid response for ~p(~p): ~p", [Fun, Args, Other], State),
             error(invalid_handle_response)
     end.
 
