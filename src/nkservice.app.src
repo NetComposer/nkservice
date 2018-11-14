@@ -18,7 +18,8 @@
         jose,
         otter,
         pgsql,
-        graphql
+        graphql,
+        hackney
     ]},
     {env, [
     ]}

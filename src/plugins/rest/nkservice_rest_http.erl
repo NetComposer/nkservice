@@ -97,50 +97,51 @@ get_body(#{content_type:=CT, cowboy_req:=CowReq}=Req, Opts) ->
             Req2 = Req#{cowboy_req:=CowReq2},
             case maps:get(parse, Opts, false) of
                 true ->
-                    AllowList = maps:get(allow_list, Opts, false),
-                    case CT of
-                        <<"application/json", _/binary>> when is_binary(Body) ->
-                            case catch nklib_json:decode(Body) of
-                                {'EXIT', _} ->
-                                    {error, invalid_json};
-                                List when is_list(List), AllowList ->
-                                    {ok, List, Req};
-                                [Term] ->
-                                    {ok, Term, Req};
-                                List when is_list(List) ->
-                                    {error, invalid_json};
-                                Term ->
-                                    {ok, Term, Req}
-                            end;
-                        <<"application/json", _/binary>> ->
-                            {error, invalid_json};
-                        _ when is_binary(CT) ->
-                            case binary:split(CT, <<"yaml">>) of
-                                [_, _] when is_binary(Body) ->
-                                    case catch nklib_yaml:decode(Body) of
-                                        {'EXIT', _} ->
-                                            {error, invalid_yaml};
-                                        List when is_list(List), AllowList ->
-                                            {ok, List, Req};
-                                        [Term] ->
-                                            {ok, Term, Req};
-                                        _ ->
-                                            {error, invalid_yaml}
-                                    end;
-                                [_, _] ->
-                                    {error, invalid_yaml};
-                                _ ->
-                                    {ok, Body, Req2}
-                            end;
-                        _ ->
-                            {ok, Body, Req2}
-                    end;
+                    get_body_parse(CT, Body, Req2, Opts);
                 _ ->
                     {ok, Body, Req2}
             end;
         BL ->
             {error, {body_too_large, BL, MaxBody}}
     end.
+
+
+%% @private
+get_body_parse(<<"application/x-www-form-urlencoded">>, Body, Req, _Opts) when is_binary(Body) ->
+    {ok, nklib_url:form_urldecode(Body), Req};
+
+get_body_parse(<<"application/json", _/binary>>, Body, Req, Opts) when is_binary(Body) ->
+    AllowList = maps:get(allow_list, Opts, false),
+    case catch nklib_json:decode(Body) of
+        {'EXIT', _} ->
+            {error, invalid_json};
+        List when is_list(List), AllowList ->
+            {ok, List, Req};
+        [Term] ->
+            {ok, Term, Req};
+        List when is_list(List) ->
+            {error, invalid_json};
+        Term ->
+            {ok, Term, Req}
+    end;
+
+
+get_body_parse(<<"application/yaml", _/binary>>, Body, Req, Opts) when is_binary(Body) ->
+    AllowList = maps:get(allow_list, Opts, false),
+    case catch nklib_yaml:decode(Body) of
+        {'EXIT', _} ->
+            {error, invalid_yaml};
+        List when is_list(List), AllowList ->
+            {ok, List, Req};
+        [Term] ->
+            {ok, Term, Req};
+        _ ->
+            {error, invalid_yaml}
+    end;
+
+get_body_parse(_, Body, Req, _Opts) ->
+    {ok, Body, Req}.
+
 
 
 -spec get_headers(req()) ->

@@ -115,8 +115,8 @@
 
 -type start_opts() ::
     #{
-        %is_enabled => boolean(),        % Mark as disabled on load
-        config => config()              % Overrides config
+        config => config(),
+        module => module()
     }.
 
 
@@ -158,7 +158,9 @@
     {stop, Reason::nkservice:msg()} |
     term().
 
+
 -type state() :: #actor_st{}.
+
 
 -type save_reason() ::
     creation | user_op | user_order | unloaded | update | timer.
@@ -381,6 +383,10 @@ do_init(create, State) ->
     case ?CALL_SRV(SrvId, actor_db_create, [SrvId, Actor]) of
         {ok, _Meta} ->
             ?ACTOR_DEBUG("created (~p)", [self()], State),
+            State2 = do_event(created, State),
+            do_post_init(State2);
+        {error, actor_db_not_implemented} ->
+            ?ACTOR_LOG(notice, "actor will not be persisted!", State),
             State2 = do_event(created, State),
             do_post_init(State2);
         {error, Error} ->
@@ -745,7 +751,7 @@ do_pre_init(SrvId, StartOpts, Actor) ->
     end,
     State = #actor_st{
         srv = SrvId,
-        config = maps:get(config, StartOpts, undefined),
+        config = maps:get(config, StartOpts, #{}),
         module = maps:get(module, StartOpts, undefined),
         actor = Actor#actor{id=ActorId2},
         run_state = undefined,
@@ -782,24 +788,8 @@ do_post_init(State) ->
 
 
 %% @private
-set_debug(State) ->
-    #actor_st{srv=SrvId, actor=#actor{id=#actor_id{group=Group, resource=Res}}} = State,
-    Debug = case nkservice_util:get_debug(SrvId, nkservice_actor, <<"all">>, debug) of
-        true ->
-            true;
-        _ ->
-            case nkservice_util:get_debug(SrvId, nkservice_actor, {Group, <<"all">>}, debug) of
-                true ->
-                    true;
-                _ ->
-                    case nkservice_util:get_debug(SrvId, nkservice_actor, {Group, Res}, debug) of
-                        true ->
-                            true;
-                        _ ->
-                            false
-                    end
-            end
-    end,
+set_debug(#actor_st{srv=SrvId, actor=#actor{id=ActorId}}=State) ->
+    Debug = nkservice_actor_util:get_debug(SrvId, ActorId),
     put(nkservice_actor_debug, Debug),
     ?ACTOR_DEBUG("debug activated", [], State).
 

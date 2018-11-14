@@ -121,10 +121,10 @@ is_activated(SrvId, Id) ->
         {ok, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
             {true, ActorId};
         {ok, ActorId} ->
-            case ?CALL_SRV(SrvId, actor_is_activated, [SrvId, ActorId]) of
+            case nkservice_actor:find_registered(SrvId, ActorId) of
                 {true, #actor_id{pid=Pid}=ActorId2} when is_pid(Pid) ->
                     {true, ActorId2};
-                false ->
+                _ ->
                     false
             end;
         _ ->
@@ -466,14 +466,15 @@ id_to_actor_id(SrvId, Id) ->
         {true, #actor_id{}=ActorId} ->
             {ok, ActorId};
         false ->
-            % It is an UID
-            case ?CALL_SRV(SrvId, actor_is_activated, [SrvId, Id]) of
+            case nkservice_actor:find_registered(SrvId, Id) of
                 {true, ActorId} ->
                     {ok, ActorId};      % Has pid
-                false ->
+                _ ->
                     case ?CALL_SRV(SrvId, actor_db_find, [SrvId, Id]) of
                         {ok, #actor_id{}=ActorId, _Meta} ->
                             {ok, ActorId};
+                        {error, actor_db_not_implemented} ->
+                            {error, actor_not_found};
                         {error, Error} ->
                             {error, Error}
                     end
@@ -489,6 +490,8 @@ db_read(SrvId, Id) ->
             case ?CALL_SRV(SrvId, actor_db_read, [SrvId, ActorId]) of
                 {ok, #actor{}=Actor, DbMeta} ->
                     {ok, Actor, DbMeta};
+                {error, actor_db_not_implemented} ->
+                    {error, actor_not_found};
                 {error, Error} ->
                     {error, Error}
             end;

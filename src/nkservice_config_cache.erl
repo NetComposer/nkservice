@@ -67,6 +67,7 @@ make_cache(#{id:=Id}=Service) ->
     Spec1 = maps:map(
         fun(_K, V) -> {single, V} end,
         maps:with(FunKeys, Service2)),
+    PackageClasses = get_package_classes(Service),
     {Cache, ServiceCache} = get_cache(Service),
     {Debug, ServiceDebug} = get_debug(Service),
     {Callbacks, ServiceCBs} = get_callbacks(Service),
@@ -80,6 +81,7 @@ make_cache(#{id:=Id}=Service) ->
         maps:get(secret, Service, #{})),
     CacheSpec2 = Spec1#{
         service => {single, Service2},
+        package_classes => {single, PackageClasses},
         cache => {single, Cache},
         debug => {single, Debug},
         callbacks => {single, Callbacks},
@@ -106,6 +108,18 @@ make_cache(#{id:=Id}=Service) ->
     ok.
 
 
+%% @private
+get_package_classes(Service) ->
+    maps:fold(
+        fun(PackageId, Package, Acc) ->
+            Class = maps:get(class, Package),
+            Data1 = maps:get(Class, Acc, #{}),
+            Data2 = Data1#{PackageId => Package},
+            Acc#{Class => Data2}
+        end,
+        #{},
+        maps:get(packages, Service, #{})).
+
 
 %% @private
 %% Cache functions are service_cache(Class, PackageId, Type)
@@ -113,70 +127,71 @@ get_cache(Service) ->
     % lager:error("SRV: ~p\n", [Service]),
     Cache1 = maps:fold(
         fun(_PackageId, Package, Acc) ->
-            Acc ++ maps:to_list(maps:get(cache_map, Package, #{}))
+            PackageCache = maps:get(cache_map, Package, #{}),
+            add_unique_keys(PackageCache, Acc)
         end,
-        [],
+        #{},
         maps:get(packages, Service, #{})),
     Cache2 = maps:fold(
         fun(_ModuleId, Module, Acc) ->
-            % io:format("MODULES: ~p ~p ~p\n", [_ModuleId, maps:get(cache_map, Module, #{}), Module]),
-
-
-            Acc ++ maps:to_list(maps:get(cache_map, Module, #{}))
+            ModuleCache = maps:get(cache_map, Module, #{}),
+            add_unique_keys(ModuleCache, Acc)
         end,
         Cache1,
         maps:get(modules, Service, #{})),
-    ServiceCache = [{[Type], Val} || {Type, Val} <- Cache2],
-    {maps:from_list(Cache2), ServiceCache}.
-
+    ServiceCache = [{[Type], Val} || {Type, Val} <- maps:to_list(Cache2)],
+    {Cache2, ServiceCache}.
 
 
 %% @private
 get_callbacks(Service) ->
     CBs = maps:fold(
         fun(_ModuleId, Module, Acc) ->
-            Acc ++ maps:to_list(maps:get(callbacks, Module, #{}))
+            ModuleCallbacks = maps:get(cache_map, Module, #{}),
+            add_unique_keys(ModuleCallbacks, Acc)
         end,
-        [],
+        #{},
         maps:get(modules, Service, #{})),
     ServiceCBs = [{[Class, PackageId, Name], Val}
-                    || {{Class, PackageId, Name}, Val} <- CBs],
-    {maps:from_list(CBs), ServiceCBs}.
+                    || {{Class, PackageId, Name}, Val} <- maps:to_list(CBs)],
+    {CBs, ServiceCBs}.
 
 
 %% @private
 get_debug(Service) ->
     Debug1 = maps:fold(
         fun(_PackageId, Package, Acc) ->
-            Acc ++ maps:to_list(maps:get(debug_map, Package, #{}))
+            PackageDebug = maps:get(debug_map, Package, #{}),
+            add_unique_keys(PackageDebug, Acc)
         end,
-        [],
+        #{},
         maps:get(packages, Service, #{})),
     Debug2 = maps:fold(
         fun(_ModuleId, Module, Acc) ->
-            Acc ++ maps:to_list(maps:get(debug_map, Module, #{}))
+            ModuleDebug = maps:get(debug_map, Module, #{}),
+            add_unique_keys(ModuleDebug, Acc)
         end,
         Debug1,
         maps:get(modules, Service, #{})),
-    Debug3 = lists:foldl(
-        fun(Key, Acc) ->
-            Key2 = case Key of
-                <<"all">> ->
-                    <<"all">>;
-                _ ->
-                    case binary:split(Key, <<":">>) of
-                        [Class, Type] ->
-                            {Class, Type};
-                        [Class] ->
-                            {Class, <<"all">>}
-                    end
-            end,
-            Acc ++ [{{nkservice_actor, Key2, debug}, true}] end,
-        Debug2,
-        maps:get(debug_actors, Service, [])),
-    ServiceDebug = [{[Type], Val} || {Type, Val} <- Debug3],
-    {maps:from_list(Debug3), ServiceDebug}.
+    List = maps:get(debug_actors, Service, []),
+    All = #{{nkservice_actor, list, debug} => List},
+    Debug3 = add_unique_keys(All, Debug2),
+    ServiceDebug = [{[Type], Val} || {Type, Val} <- maps:to_list(Debug3)],
+    {Debug3, ServiceDebug}.
 
+
+%% @private
+add_unique_keys(Map, Acc) ->
+    MapSize = maps:size(Map),
+    AccSize = maps:size(Acc),
+    Acc2 = maps:merge(Acc, Map),
+    case maps:size(Acc2) == (MapSize+AccSize) of
+        true ->
+            ok;
+        false ->
+            lager:warning("Duplicated cache key: ~p, ~p", [maps:keys(Map), maps:keys(Acc)])
+    end,
+    Acc2.
 
 
 %% @private Re-generates service with secrets

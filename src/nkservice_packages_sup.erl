@@ -74,8 +74,12 @@ stop_package_sup(SrvId, PackageId) ->
 
 %% @doc
 start_child(SrvId, PackageId, Spec) ->
-    Pid = get_pid(SrvId, PackageId),
-    start_child(Pid, Spec).
+    case get_pid(SrvId, PackageId) of
+        Pid when is_pid(Pid) ->
+            start_child(Pid, Spec);
+        undefined ->
+            {error, service_not_started}
+    end.
 
 
 %% @doc
@@ -86,7 +90,7 @@ start_child(Pid, Spec) when is_pid(Pid) ->
         {error, {already_started, ChildPid}} ->
             {ok, ChildPid};
         {error, already_present} ->
-            case supervisor:delete_child(?MODULE, maps:get(id, Spec)) of
+            case supervisor:delete_child(Pid, maps:get(id, Spec)) of
                 ok ->
                     start_child(Pid, Spec);
                 {error, Error} ->

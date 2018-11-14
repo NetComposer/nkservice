@@ -28,6 +28,7 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
+-export([get_debug/2]).
 -export([send_external_event/3]).
 -export([put_create_fields/1, update/2, check_links/2, do_check_links/2]).
 -export([is_actor_id/1, actor_id_to_path/1]).
@@ -40,6 +41,22 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc Get debug
+-spec get_debug(nkservice:id(), #actor_id{}) ->
+    ok.
+
+get_debug(SrvId, #actor_id{group=Group, resource=Resource}) ->
+    case catch nkservice_util:get_debug(SrvId, nkservice_actor, list, debug) of
+        List when is_list(List) ->
+            lists:member(<<"all">>, List) orelse
+            lists:member(Group, List) orelse
+            lists:member(<<Group/binary, Resource/binary>>, List);
+        _ ->
+            false
+    end.
+
 
 
 %% @doc Sends an out-of-actor event

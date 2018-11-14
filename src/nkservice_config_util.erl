@@ -91,10 +91,13 @@ set_debug_map(DebugMap, Spec) ->
 
 
 %% @private
-set_debug_items(Group, Id, Items, Spec) ->
+set_debug_items(Group, Id, Items, Spec) when is_map(Items) ->
+    set_debug_items(Group, Id, maps:to_list(Items), Spec);
+
+set_debug_items(Group, Id, Items, Spec) when is_list(Items) ->
     Cache1 = get_debug_map(Spec),
-    Cache2 = maps:fold(
-        fun(K, V, Acc) -> set_debug_key(Group, Id, K, V, Acc) end,
+    Cache2 = lists:foldl(
+        fun({K, V}, Acc) -> set_debug_key(Group, Id, K, V, Acc) end,
         Cache1,
         Items),
     nkservice_config_util:set_debug_map(Cache2, Spec).

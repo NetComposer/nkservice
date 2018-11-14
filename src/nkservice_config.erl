@@ -80,7 +80,7 @@ config_core(#{id:=Id}=Spec, Service) ->
         _ ->
             update_uuid(Id, Spec)
     end,
-    General = maps:with([class, name, domain, plugins, debug_actors, meta, parent], Spec),
+    General = maps:with([class, name, domain, callback, plugins, debug_actors, meta, parent], Spec),
     Service2 = maps:merge(Service, General#{uuid=>UUID}),
     Defaults = #{
         class => <<>>,
@@ -169,7 +169,7 @@ config_packages(Spec, Service) ->
     SpecPackages1 = maps:get(packages, Spec, []),
     SpecPackages2 = lists:map(
         fun(#{class:=Class}=PSpec) ->
-            case nkservice_util:get_package_plugin(Class) of
+            case nkservice_util:get_package_class_module(Class) of
                 undefined ->
                     throw({unknown_package_class, Class});
                 Plugin ->
@@ -224,6 +224,8 @@ package_configure([], Service) ->
 package_configure([PackageId|Rest], #{packages:=Packages, plugin_ids:=PluginIds}=Service) ->
     Package = #{class:=Class} = maps:get(PackageId, Packages),
     ?LLOG(debug, "configuring package '~s' (~s)", [PackageId, Class], Service),
+    check_unique_classes(Class, Packages),
+
     % High to low
     Service3 = package_configure(lists:reverse(PluginIds), Package, Service),
     package_configure(Rest, Service3).
@@ -256,6 +258,30 @@ package_configure([PluginId|Rest], Package, #{packages:=Packages}=Service) ->
     Package4 = Package3#{hash=>Hash},
     Service4 = Service3#{packages:=Packages#{PackageId=>Package4}},
     package_configure(Rest, Package4, Service4).
+
+
+%% @private
+check_unique_classes(Class, Packages) ->
+    case nkservice_util:get_package_class_meta(Class) of
+        #{unique:=true} ->
+            % For unique classes, the id of the package, if supplied,
+            % must be identical to the class.
+            % Since we don't allow duplicated ids, we don't allow several packages
+            % with this class.
+            lists:foreach(
+                fun({Id, #{class:=C}}) ->
+                    case C==Class andalso Id/=C of
+                        true ->
+                            throw({invalid_package_id, Id});
+                        false ->
+                            ok
+                    end
+                end,
+                maps:to_list(Packages));
+        _ ->
+            ok
+    end.
+
 
 
 %% @doc

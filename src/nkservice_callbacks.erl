@@ -29,8 +29,8 @@
          service_master_handle_call/3, service_master_handle_cast/2,
          service_master_handle_info/2, service_leader_code_change/3,
          service_master_terminate/2]).
--export([actor_is_activated/2, actor_create/3, actor_activate/3,
-         actor_external_event/3, actor_config/1]).
+-export([actor_find_registered/2, actor_create/3, actor_activate/3,
+         actor_external_event/3]).
 -export([actor_srv_init/2, actor_srv_register/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_event/2,
          actor_srv_link_event/4,  actor_srv_link_down/2,
@@ -348,12 +348,14 @@ service_master_terminate(_Reason, _State) ->
 -type actor_id() :: #actor_id{}.
 
 
-%% @doc Called from nkservice_actor_db:is_activated/2
--spec actor_is_activated(nkservice:id(), #actor_id{}|binary()) ->
-    {true, #actor_id{}} | false | continue().
+%% @doc Called from nkservice_actor:find_registered to find a
+%% registered actor when not cached
+%% By default, it uses service master registrar
+-spec actor_find_registered(nkservice:id(), nkservice_actor:id()) ->
+    {true, actor_id()} | false | {error, nkservice:msg()} | continue().
 
-actor_is_activated(_SrvId, _ActorIdOrUID) ->
-    false.
+actor_find_registered(SrvId, Id) ->
+    nkservice_master:find_registered_actor(SrvId, Id).
 
 
 %% @doc Called from nkdomain_actor_db:create() when an actor is to be created
@@ -376,12 +378,12 @@ actor_activate(SrvId, Actor, StartOpts) ->
     nkservice_actor_srv:start(SrvId, Actor, StartOpts).
 
 
-%% @doc Called to get the default configuration for an actor
--spec actor_config(actor_id()) ->
-    nkservice_actor_srv:config().
-
-actor_config(_ActorId) ->
-    #{}.
+%%%% @doc Called to get the default configuration for an actor
+%%-spec actor_config(actor_id()) ->
+%%    nkservice_actor_srv:config().
+%%
+%%actor_config(_ActorId) ->
+%%    #{}.
 
 
 %% @doc Called from nkservice_actor_util:send_external_event/3 to send
@@ -397,32 +399,51 @@ actor_external_event(_SrvId, _Event, _Actor) ->
 -spec actor_srv_init(map(), actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_srv_init(_StartOpts, State) ->
-    {ok, State}.
+actor_srv_init(StartOpts, ActorSt) ->
+    nkservice_actor:actor_srv_init(StartOpts, ActorSt).
 
 
-%% @doc Called to register actor with a master process
+%% @doc Called to register actor with a global registry
+%% By default, it uses service master registrar
 -spec actor_srv_register(nkservice:id(), actor_st()) ->
     {ok, pid()|undefined, actor_st()} | {error, Reason::term()}.
 
-actor_srv_register(_SrvId, State) ->
-    {ok, undefined, State}.
+actor_srv_register(SrvId, #actor_st{actor=#actor{id=ActorId}}=ActorSt) ->
+    case nkservice_master:register_actor(SrvId, ActorId) of
+        {ok, Pid} ->
+            {ok, Pid, ActorSt};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
-%%  @doc Called update an actor with status
+%% @doc Called on a periodic basis
+-spec actor_srv_heartbeat(actor_st()) ->
+    {ok, actor_st()} | {error, nkservice_msg:msg(), actor_st()} | continue().
+
+actor_srv_heartbeat(ActorSt) ->
+    nkservice_actor:actor_srv_heartbeat(ActorSt).
+
+
+%%  @doc Called when get_actor is called
 -spec actor_srv_get(nkservice_actor:actor(), actor_st()) ->
     {ok, nkservice_actor:actor(), actor_st()} | continue().
 
-actor_srv_get(Actor, State) ->
-    {ok, Actor, State}.
+actor_srv_get(Actor, ActorSt) ->
+    case nkservice_actor:actor_srv_get(Actor, ActorSt) of
+        continue ->
+            {ok, Actor, ActorSt};
+        Other ->
+            Other
+    end.
 
 
 %%  @doc Called before finishing an update
 -spec actor_srv_update(nkservice_actor:actor(), actor_st()) ->
     {ok, nkservice_actor:actor(), actor_st()} | {error, nkservice:msg(), actor_st()} |continue().
 
-actor_srv_update(Actor, State) ->
-    {ok, Actor, State}.
+actor_srv_update(Actor, ActorSt) ->
+    nkservice_actor:actor_srv_update(Actor, ActorSt).
 
 
 %% @doc Called to send an event from inside an actor's process
@@ -431,8 +452,8 @@ actor_srv_update(Actor, State) ->
 -spec actor_srv_event(term(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_event(_Event, State) ->
-    {ok, State}.
+actor_srv_event(Event, ActorSt) ->
+    nkservice_actor:actor_srv_event(Event, ActorSt).
 
 
 %% @doc Called when an event is sent, for each registered process to the session
@@ -441,8 +462,8 @@ actor_srv_event(_Event, State) ->
 -spec actor_srv_link_event(nklib:link(), term(), nkservice_actor_srv:event(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_link_event(_Link, _LinkData, _Event, State) ->
-    {ok, State}.
+actor_srv_link_event(_Link, _LinkData, _Event, ActorSt) ->
+    {ok, ActorSt}.
 
 
 %% @doc
@@ -455,8 +476,8 @@ actor_srv_link_event(_Link, _LinkData, _Event, State) ->
     {stop, Reason::term(), actor_st()} |
     continue().
 
-actor_srv_sync_op(_Op, _From, _State) ->
-    continue.
+actor_srv_sync_op(Op, From, ActorSt) ->
+    nkservice_actor:actor_srv_sync_op(Op, From, ActorSt).
 
 
 %% @doc
@@ -465,48 +486,40 @@ actor_srv_sync_op(_Op, _From, _State) ->
     {stop, Reason::term(), actor_st()} |
     continue().
 
-actor_srv_async_op(_Op, _State) ->
-    continue.
+actor_srv_async_op(Op, ActorSt) ->
+    nkservice_actor:actor_srv_async_op(Op, ActorSt).
 
 
 %% @doc Called when a linked process goes down
 -spec actor_srv_link_down(nklib_links:link(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_link_down(_Link, State) ->
-    {ok, State}.
+actor_srv_link_down(_Link, ActorSt) ->
+    {ok, ActorSt}.
 
 
 %% @doc Called when an object is enabled/disabled
 -spec actor_srv_enabled(boolean(), actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_enabled(_Enabled, State) ->
-    {ok, State}.
-
-
-%% @doc Called when an object is enabled/disabled
--spec actor_srv_heartbeat(actor_st()) ->
-    {ok, actor_st()} | {error, nkservice_msg:msg(), actor_st()} | continue().
-
-actor_srv_heartbeat(State) ->
-    {ok, State}.
+actor_srv_enabled(Enabled, ActorSt) ->
+    nkservice_actor:actor_srv_enabled(Enabled, ActorSt).
 
 
 %% @doc Called when the timer in next_status_time is fired
 -spec actor_srv_next_status_timer(actor_st()) ->
     {ok, actor_st()} | continue().
 
-actor_srv_next_status_timer(State) ->
-    {ok, State}.
+actor_srv_next_status_timer(ActorSt) ->
+    {ok, ActorSt}.
 
 
 %% @doc Called when a object with alarms is loaded
 -spec actor_srv_alarms(actor_st()) ->
     {ok, actor_st()} | {error, term(), actor_st()} | continue().
 
-actor_srv_alarms(State) ->
-    {ok, State}.
+actor_srv_alarms(ActorSt) ->
+    {ok, ActorSt}.
 
 
 %% @doc
@@ -515,42 +528,41 @@ actor_srv_alarms(State) ->
     {stop, Reason::term(), Reply::term(), actor_st()} |
     {stop, Reason::term(), actor_st()} | continue().
 
-actor_srv_handle_call(Msg, _From, State) ->
-    lager:error("Module nkservice_actor_srv received unexpected call: ~p", [Msg]),
-    {noreply, State}.
+actor_srv_handle_call(Msg, From, ActorSt) ->
+    nkservice_actor:actor_srv_handle_call(Msg, From, ActorSt).
 
 
 %% @doc
 -spec actor_srv_handle_cast(term(), actor_st()) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
-actor_srv_handle_cast(Msg, State) ->
-    lager:error("Module nkservice_actor_srv received unexpected cast: ~p", [Msg]),
-    {noreply, State}.
+actor_srv_handle_cast(Msg, ActorSt) ->
+    nkservice_actor:actor_srv_handle_cast(Msg, ActorSt).
 
 
 %% @doc
 -spec actor_srv_handle_info(term(), actor_st()) ->
     {noreply, actor_st()} | {stop, term(), actor_st()} | continue().
 
-actor_srv_handle_info(Msg, State) ->
-    lager:warning("Module nkservice_actor_srv received unexpected info: ~p", [Msg]),
-    {noreply, State}.
+actor_srv_handle_info(Msg, ActorSt) ->
+    nkservice_actor:actor_srv_handle_info(Msg, ActorSt).
+
 
 %% @private Called on proper stop
 -spec actor_srv_stop(nkservice:msg(), actor_st()) ->
     {ok, actor_st()} | {delete, actor_st()} | continue().
 
-actor_srv_stop(_Reason, State) ->
-    {ok, State}.
+actor_srv_stop(Reason, ActorSt) ->
+    nkservice_actor:actor_srv_stop(Reason, ActorSt).
 
 
 %% @doc Called when the server terminate is called
 -spec actor_srv_terminate(Reason::term(), actor_st()) ->
     {ok, actor_st()}.
 
-actor_srv_terminate(_Reason, State) ->
-    {ok, State}.
+actor_srv_terminate(Reason, ActorSt) ->
+    nkservice_actor:actor_srv_terminate(Reason, ActorSt).
+
 
 
 %% ===================================================================
@@ -585,7 +597,7 @@ actor_do_expired(_Actor) ->
     {ok, #actor_id{}, Meta::map()} | {error, term()} | continue().
 
 actor_db_find(_SrvId, _Id) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc Called to save the actor to disk
@@ -593,7 +605,7 @@ actor_db_find(_SrvId, _Id) ->
     {ok, nkservice_actor:actor(), Meta::map()} | {error, term()} | continue().
 
 actor_db_read(_SrvId, _Id) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc Called to save the actor to disk
@@ -601,7 +613,7 @@ actor_db_read(_SrvId, _Id) ->
     {ok, Meta::map()} | {error, term()} | continue().
 
 actor_db_create(_SrvId, _Actor) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc Called to save the actor to disk
@@ -609,7 +621,7 @@ actor_db_create(_SrvId, _Actor) ->
     {ok, Meta::map()} | {error, term()} | continue().
 
 actor_db_update(_SrvId, _Actor) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc Called to delete the actor to disk
@@ -618,7 +630,7 @@ actor_db_update(_SrvId, _Actor) ->
     {ok, [#actor_id{}], Meta::map()} | {error, term()} | continue().
 
 actor_db_delete(_SrvId, _UID, _Opts) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc
@@ -627,7 +639,7 @@ actor_db_delete(_SrvId, _UID, _Opts) ->
     ok.
 
 actor_db_search(_SrvId, _SearchType, _Opts) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc
@@ -636,7 +648,7 @@ actor_db_search(_SrvId, _SearchType, _Opts) ->
     ok.
 
 actor_db_aggregate(_SrvId, _SearchType, _Opts) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc
@@ -657,7 +669,7 @@ actor_db_get_query(_SrvId, Backend, _SearchType, _Opts) ->
     {ok, nkservice_actor_db:service_info()} | {error, term()}.
 
 actor_db_get_service(_SrvId, _ActorSrvId) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 %% @doc
@@ -665,7 +677,7 @@ actor_db_get_service(_SrvId, _ActorSrvId) ->
     {ok, Meta::map()} | {error, term()}.
 
 actor_db_update_service(_SrvId, _ActorSrvId, _Cluster) ->
-    {error, not_implemented}.
+    {error, actor_db_not_implemented}.
 
 
 

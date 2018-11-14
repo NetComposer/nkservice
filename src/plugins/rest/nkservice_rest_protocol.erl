@@ -35,7 +35,7 @@
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkSERVICE REST (~s:~s) (~s) "++Txt,
+    lager:Type("NkSERVICE REST (~s:~p) (~s) "++Txt,
                [State#state.srv, State#state.plugin_id, State#state.remote|Args])).
 
 
@@ -102,11 +102,10 @@ stop(Pid) ->
 conn_init(NkPort) ->
     {ok, {nkservice_rest, SrvId, Id}} = nkpacket:get_class(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
-    State1 = #state{srv=SrvId, plugin_id =Id, remote=Remote},
-    set_debug(State1),
-    %% nkservice_util:register_for_changes(SrvId),
-    ?LLOG(info, "new connection (~s, ~p)", [Remote, self()], State1),
-    {ok, State2} = handle(nkservice_rest_init, [NkPort], State1),
+    State = #state{srv=SrvId, plugin_id =Id, remote=Remote},
+    set_debug(NkPort, State),
+    ?DEBUG("new connection (~s, ~p)", [Remote, self()], State),
+    {ok, State2} = handle(nkservice_rest_init, [NkPort], State),
     {ok, State2}.
 
 
@@ -219,8 +218,8 @@ call_rest_frame(Frame, NkPort, #state{plugin_id =Id, srv=SrvId, user_state=UserS
 
 
 %% @private
-set_debug(#state{srv=SrvId, plugin_id =Id}=State) ->
-    Debug = nkservice_util:get_debug(SrvId, nkservice_rest, Id, ws) == true,
+set_debug(NkPort, State) ->
+    Debug = nkpacket:get_debug(NkPort) == true,
     put(nkservice_rest_debug, Debug),
     ?DEBUG("debug system activated", [], State).
 

@@ -35,7 +35,8 @@
 
 -export([get_info/1, stop/1, update/2, replace/2]).
 -export([get_leader_pid/1]).
--export([updated_nodes_info/2, updated_service_status/2, update_child_counters/5]).
+-export([updated_nodes_info/2, updated_service_status/2]).
+-export([register_actor/2, find_registered_actor/2, get_registered_actors/1]).
 -export([call_leader/2, cast_leader/2]).
 -export([start_link/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
@@ -115,7 +116,29 @@ update(SrvId, Spec) ->
     end.
 
 
-%% @doc
+%% @doc Register an actor with the master server
+%% By default, nkservice registers all actors with the master server
+-spec register_actor(nkservice:id(), #actor_id{}) ->
+    {ok, pid()} | {error, nkservice:msg()}.
+
+register_actor(SrvId, #actor_id{uid=UID, pid=Pid}=ActorId) ->
+    true = is_binary(UID) andalso UID /= <<>>,
+    true = is_pid(Pid),
+    call_leader(SrvId, {register_actor, ActorId}).
+
+
+%% @doc Finds an actor loaded and registered with the service master
+-spec find_registered_actor(nkservice:id(), nkservice_actor:id()) ->
+    {true, #actor_id{}}| false | {error, nkservice:msg()}.
+
+find_registered_actor(SrvId, Id) ->
+    call_leader(SrvId, {find_registered_actor, Id}).
+
+
+get_registered_actors(SrvId) ->
+    call_leader(SrvId, get_registered_actors).
+
+
 
 %% @doc Gets the pid of current leader for this service
 -spec get_leader_pid(nkservice:id()) ->
@@ -187,11 +210,6 @@ updated_service_status(SrvId, Status) ->
     cast_leader(SrvId, {nkservice_update_status, Status}).
 
 
-%% @private
-update_child_counters(Pid, ChildId, Group, Type, Counter) ->
-    gen_server:cast(Pid, {nkservice_child_counter, ChildId, self(), Group, Type, Counter}).
-
-
 
 %% ===================================================================
 %% Private
@@ -220,6 +238,7 @@ start_link(SrvId) ->
     slaves :: #{node() => pid()},
     nodes :: #{node() => nkservice_node:node_info()},
     instances :: #{node() => nkservice:service_status()},
+    register_ets :: term(),
     user :: map()
 }).
 
@@ -240,6 +259,7 @@ init([SrvId]) ->
         nodes = Nodes,
         slaves = #{},
         instances = #{},
+        register_ets = ets:new(nkservice_master_register, []),
         user = UserState
     },
     self() ! nkservice_timed_check_leader,
@@ -270,6 +290,18 @@ handle_call(nkservice_get_info, _From, State) ->
 handle_call(nkservice_stop, _From, #state{id=SrvId}=State) ->
     rpc:eval_everywhere([node()|nodes()], nkservice_srv, stop, [SrvId]),
     {reply, ok, State};
+
+handle_call({register_actor, ActorId}, _From, State) ->
+    Reply = do_register_actor(ActorId, State),
+    {reply, Reply, State};
+
+handle_call({find_registered_actor, Id}, _From, State) ->
+    Reply = do_find_actor_id(Id, State),
+    {reply, Reply, State};
+
+handle_call(get_registered_actors, _From, #state{register_ets=Ets}=State) ->
+    List = [ActorId || {{uid, _}, ActorId} <- ets:tab2list(Ets)],
+    {reply, List, State};
 
 handle_call(Msg, From, State) ->
     handle(service_master_handle_call, [Msg, From], State).
@@ -341,6 +373,15 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{leader_pid=Pid}=State)
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{node_pid=Pid}=State) ->
     ?LLOG(error, "node server has failed!", [], State),
     error(node_server_has_failed);
+
+%% @private
+handle_info({'DOWN', _Ref, process, Pid, _Reason}=Msg, State) ->
+    case do_remove_actor(Pid, State) of
+        true ->
+            {noreply, State};
+        false ->
+            handle(service_master_handle_info, [Msg], State)
+    end;
 
 handle_info(Msg, State) ->
     handle(service_master_handle_info, [Msg], State).
@@ -576,6 +617,81 @@ resolve({nkservice_leader, SrvId}, Pid1, Pid2) ->
             gen_server:cast(Pid1, nkservice_other_is_leader),
             Pid2
     end.
+
+
+%% ===================================================================
+%% Register & Counters
+%% ===================================================================
+
+do_register_actor(ActorId, #state{register_ets=Ets}=State) ->
+    #actor_id{
+        domain = Domain,
+        group = Group,
+        resource = Res, name=Name,
+        uid = UID,
+        pid = Pid
+    } = ActorId,
+    case do_find_actor_id(ActorId, State) of
+        false ->
+            Ref = monitor(process, Pid),
+            Objs = [
+                {{name, Domain, Group, Res, Name}, ActorId},
+                {{uid, UID}, ActorId},
+                {{pid, Pid}, {name, Domain, Group, Res, Name}, UID, Ref}
+            ],
+            ets:insert(Ets, Objs),
+            {ok, self()};
+        {true, _OldActorId} ->
+            {error, actor_already_registered}
+    end.
+
+
+%% @private
+do_find_actor_id(#actor_id{}=ActorId, #state{register_ets=Ets}) ->
+    #actor_id{domain=Domain, group=Group, resource=Res, name=Name} = ActorId,
+    case ets:lookup(Ets, {name, Domain, Group, Res, Name}) of
+        [{_, ActorId2}] ->
+            {true, ActorId2};
+        [] ->
+            false
+    end;
+
+do_find_actor_id(UID, #state{register_ets=Ets}) ->
+    case ets:lookup(Ets, {uid, UID}) of
+        [{_, ActorId2}] ->
+            {true, ActorId2};
+        [] ->
+            false
+    end.
+
+
+%% @private
+do_remove_actor(Pid, #state{register_ets=Ets}) ->
+    case ets:lookup(Ets, {pid, Pid}) of
+        [{{pid, Pid}, {name, Domain, Group, Res, Name}, UID, Ref}] ->
+            nklib_util:demonitor(Ref),
+            ets:delete(Ets, {pid, Pid}),
+            ets:delete(Ets, {name, Domain, Group, Res, Name}),
+            ets:delete(Ets, {uid, UID}),
+            true;
+        [] ->
+            false
+    end.
+
+
+%%%% @private
+%%do_stop_all_actors(#state{register_ets=Ets}=State) ->
+%%    ets:foldl(
+%%        fun
+%%            ({{pid, Pid}, {name, _Domain, _Group, _Res, _Name}, _UID, _Ref}, Acc) ->
+%%                nkservice_actor_srv:async_op(none, Pid, {raw_stop, father_stopped}),
+%%                Acc+1;
+%%            (_Term, Acc) ->
+%%                Acc
+%%        end,
+%%        0,
+%%        Ets).
+
 
 
 %% ===================================================================

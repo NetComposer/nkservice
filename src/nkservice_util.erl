@@ -21,7 +21,8 @@
 -module(nkservice_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([register_package/2, get_package_plugin/1]).
+-export([register_package_class/2, register_package_class/3,
+         get_package_class_module/1, get_package_class_meta/1]).
 -export([get_cache/4, get_debug/4, get_secret/2, get_callback/4]).
 -export([name/1]).
 -export([get_srv_secret/2, set_srv_secret/3]).
@@ -38,24 +39,51 @@
 
 
 %% ===================================================================
+%% Types
+%% ===================================================================
+
+-type register_opts() ::
+    #{
+        unique => boolean()
+    }.
+
+
+
+%% ===================================================================
 %% Public
 %% ===================================================================
 
 
 %% @doc
--spec register_package(nkservice:package_class(), module()) ->
+-spec register_package_class(nkservice:package_class(), module()) ->
     ok.
 
-register_package(Class, Package) when is_atom(Package) ->
-    nklib_types:register_type(nkservice_package, to_bin(Class), Package).
+register_package_class(Class, Module) ->
+    register_package_class(Class, Module, #{}).
 
 
 %% @doc
--spec get_package_plugin(nkservice:package_class()) ->
+-spec register_package_class(nkservice:package_class(), module(), register_opts()) ->
+    ok.
+
+register_package_class(Class, Module, Opts) when is_atom(Module), is_map(Opts) ->
+    nklib_types:register_type(nkservice_package_class, to_bin(Class), Module, Opts).
+
+
+%% @doc
+-spec get_package_class_module(nkservice:package_class()) ->
     module() | undefined.
 
-get_package_plugin(Class) ->
-    nklib_types:get_module(nkservice_package, to_bin(Class)).
+get_package_class_module(Class) ->
+    nklib_types:get_module(nkservice_package_class, to_bin(Class)).
+
+
+%% @doc
+-spec get_package_class_meta(nkservice:package_class()) ->
+    module() | undefined.
+
+get_package_class_meta(Class) ->
+    nklib_types:get_meta(nkservice_package_class, to_bin(Class)).
 
 
 %% @doc Registers a pid to receive changes in service config
@@ -66,7 +94,7 @@ register_for_changes(SrvId) ->
     nklib_proc:put({notify_updated_service, SrvId}).
 
 
-%% @doc 
+%% @doc
 -spec notify_updated_service(nkservice:id()) ->
     ok.
 
@@ -133,9 +161,14 @@ set_srv_secret(Id, Value, Service) ->
 
 %% @doc Gets service config for a package
 get_config(SrvId, PackageId) ->
-    #{packages:=Packages} = ?CALL_SRV(SrvId, service),
-    DomainsPkg = maps:get(PackageId, Packages, #{}),
-    maps:get(config, DomainsPkg, #{}).
+    Packages = ?CALL_SRV(SrvId, packages),
+    case maps:find(PackageId, Packages) of
+        {ok, Package} ->
+            maps:get(config, Package, #{});
+        error ->
+            undefined
+    end.
+
 
 
 %% @doc
@@ -152,7 +185,7 @@ luerl_api(SrvId, PackageId, Mod, Fun, Args, St) ->
     catch
         Class:CError:Trace ->
             lager:notice("NkSERVICE LUERL ~s (~s, ~s:~s(~p)) API Error ~p:~p ~p",
-                         [SrvId, PackageId, Mod, Fun, Args, Class, CError, Trace]),
+                [SrvId, PackageId, Mod, Fun, Args, Class, CError, Trace]),
             {[nil], St}
     end.
 

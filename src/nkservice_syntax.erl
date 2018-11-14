@@ -64,6 +64,7 @@ syntax() ->
         domain => binary,
         uuid => binary,
         plugins => {list, atom},
+        callback => atom,
         packages => {list, #{
             id => binary,
             class => binary,
@@ -74,7 +75,8 @@ syntax() ->
             module_id => binary,
             module_class => {atom, [luerl]},
             '__defaults' => #{config=>#{}},
-            '__post_check' => fun ?MODULE:syntax_packages/1
+            '__post_check' => fun ?MODULE:syntax_packages/1,
+            '__unique_keys' => [id]
         }},
         modules => {list, #{
             id => binary,
