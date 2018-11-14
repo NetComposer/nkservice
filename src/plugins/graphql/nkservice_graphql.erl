@@ -35,7 +35,7 @@
 
 -module(nkservice_graphql).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([load_schema/1, request/3, make_error/2]).
+-export([load_schema/1, request/3, make_error/2, mapping_rules/0]).
 -export_type([object/0, error/0]).
 
 -define(LLOG(Type, Txt, Args), lager:Type("NkSERVICE GraphQL "++Txt, Args)).
