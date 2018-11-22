@@ -184,7 +184,8 @@ config_packages(Spec, Service) ->
     Packages2 = maps:without(ToRemove, Packages1),
     Plugins1 = maps:get(plugins, Service, []),
     Plugins2 = [Plugin || #{plugin:=Plugin} <- maps:values(Packages2)],
-    Plugins3 = expand_plugins(Plugins1++Plugins2),
+    Callback = maps:get(callback, Service, none),
+    Plugins3 = expand_plugins(Callback, Plugins1++Plugins2),
     Service2 = Service#{
         plugin_ids => Plugins3,             % down to top
         packages => Packages2
@@ -365,13 +366,22 @@ get_callback_mod(Plugin) ->
 %% First in the returned list will be the higher-level plugins, last one
 %% will be 'nkservice' usually
 
--spec expand_plugins([atom()]) ->
+-spec expand_plugins(none|module(), [atom()]) ->
     [module()].
 
-expand_plugins(ModuleList) ->
+expand_plugins(Callback, ModuleList) ->
+
     List1 = add_group_deps([nkservice|ModuleList]),
     List2 = add_all_deps(List1, [], []),
-    case nklib_sort:top_sort(List2) of
+    List3 = case Callback of
+        none ->
+            List2;
+        _ ->
+            Mods = [M || {M, _} <-List2],
+            [{Callback, Mods}|List2]
+    end,
+    % lager:error("NKLOG LIST3 ~p", [List3]),
+    case nklib_sort:top_sort(List3) of
         {ok, Sorted} ->
             % Optional plugins could still appear in dependencies, and show up here
             Sorted2 = [Plugin || Plugin <- Sorted, get_plugin_mod_check(Plugin) /= undefined],
