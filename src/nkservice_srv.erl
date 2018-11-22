@@ -44,10 +44,10 @@
 
 -export([start/1, stop/1, replace/2, update/2, do_update/1, get_status/1]).
 -export([get_events/1, send_event/2, launch_check_status/1]).
--export([get_all/0, get_all/1]).
+-export([get_all/0, get_all/1, stop_all/0, stop_all/1]).
 -export([call_module/4]).
 -export([call/2, call/3, cast/2]).
--export([start_link/1, stop_all/1, do_event/2]).
+-export([start_link/1, do_stop_all/1, do_event/2]).
 -export([get_packages/1, get_package_childs/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2,
          handle_info/2]).
@@ -254,6 +254,22 @@ get_all(Class) ->
     [{SrvId, Name, Pid} || {SrvId, Name, C, _H, Pid} <- get_all(), C==Class2].
 
 
+%% @doc Stops all started services
+-spec stop_all() ->
+    ok.
+
+stop_all() ->
+    lists:foreach(fun({SrvId, _Name, _Class, _Hash, _Pid}) -> stop(SrvId) end, get_all()).
+
+
+%% @doc Gets all started services
+-spec stop_all(nkservice:class()) ->
+    ok.
+
+stop_all(Class) ->
+    lists:foreach(fun({SrvId, _Name, _Pid}) -> stop(SrvId) end, get_all(Class)).
+
+
 %% @private
 get_packages(SrvId) ->
     nkservice_packages_sup:get_packages(SrvId).
@@ -280,10 +296,10 @@ start_link(#{id:=Id}=Spec) ->
 
 
 %% @private
--spec stop_all(pid()) ->
+-spec do_stop_all(pid()) ->
     ok.
 
-stop_all(Pid) ->
+do_stop_all(Pid) ->
     nklib_util:call(Pid, nkservice_stop_all, 30000).
 
 
