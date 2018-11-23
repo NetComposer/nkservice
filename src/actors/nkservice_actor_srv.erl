@@ -58,10 +58,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([create/3, start/3, sync_op/3, sync_op/4, async_op/3, delayed_async_op/4]).
+-export([create/3, start/3, sync_op/2, sync_op/3, async_op/2, delayed_async_op/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([add_link/3, remove_link/2]).
--export([get_all/0, unload_all/0, get_state/2, raw_stop/3]).
+-export([get_all/0, unload_all/0, get_state/1, raw_stop/2]).
 -export([do_stop/2, do_event/2, do_update/3, do_event_link/2]).
 -export_type([event/0, save_reason/0]).
 
@@ -83,20 +83,6 @@
 %% ===================================================================
 
 
--type config() ::
-    #{
-        permanent => boolean(),
-        save_time => integer(),                         %% msecs for auto-save
-        ttl => integer(),                               %% msecs
-        dont_update_on_disabled => boolean(),           %% Default false
-        dont_delete_on_disabled => boolean(),           %% Default false
-        activable => boolean(),                         %% Default true
-        immutable_fields => [binary()],
-        module => module(),                             %% Not used by this module
-        atom() => term()                                %% User config
-    }.
-
-
 -type event() ::
     created |
     activated |
@@ -111,13 +97,6 @@
     {alarm_fired, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
     alarms_all_cleared |
     {stopped, nkservice:msg()}.
-
-
--type start_opts() ::
-    #{
-        config => config(),
-        module => module()
-    }.
 
 
 -type link_opts() ::
@@ -173,37 +152,88 @@
 
 %% @private
 %% Call SrvId:actor_create/2 instead calling this directly!
--spec create(nkservice:id(), nkservice_actor:actor(), start_opts()) ->
+-spec create(nkservice:id(), nkservice_actor:actor(), nkservice_actor:config()) ->
     {ok, #actor_id{}} | {error, term()}.
 
-create(SrvId, Actor, StartOpts) ->
-    do_start(SrvId, create, Actor, StartOpts).
+create(SrvId, Actor, Config) ->
+    do_start(SrvId, create, Actor, Config).
 
 
 %% @private
 %% Call SrvId:actor_activate/2 instead calling this directly!
--spec start(nkservice:id(), nkservice_actor:actor(), start_opts()) ->
+-spec start(nkservice:id(), nkservice_actor:actor(), nkservice_actor:config()) ->
     {ok, #actor_id{}} | {error, term()}.
 
-start(SrvId, Actor, StartOpts) ->
-    do_start(SrvId, start, Actor, StartOpts).
+start(SrvId, Actor, Config) ->
+    do_start(SrvId, start, Actor, Config).
 
 
 %% @private
-do_start(_SrvId, _Op, _Actor, #{config:=#{activable:=false}}) ->
-    {error, actor_is_not_activable};
+do_start(SrvId, Op, #actor{id=ActorId}=Actor, Config) ->
+    case ?CALL_SRV(SrvId, actor_get_config, [SrvId, ActorId, Config]) of
+        {ok, _Module, #{activable:=false}} ->
+            {error, actor_is_not_activable};
+        {ok, Module, Config2} ->
+            Ref = make_ref(),
+            Opts = {SrvId, Op, Module, Actor, Config2, self(), Ref},
+            case gen_server:start(?MODULE, Opts, []) of
+                {ok, Pid} ->
+                    {ok, ActorId#actor_id{pid = Pid}};
+                ignore ->
+                    receive
+                        {do_start_ignore, Ref, Result} ->
+                            Result
+                    after 5000 ->
+                        error(do_start_ignore)
+                    end;
+                {error, Error} ->
+                    {error, Error}
+            end
+    end.
 
-do_start(SrvId, Op, #actor{id=ActorId}=Actor, StartOpts) ->
-    Ref = make_ref(),
-    case gen_server:start(?MODULE, {SrvId, Op, Actor, StartOpts, self(), Ref}, []) of
-        {ok, Pid} ->
-            {ok, ActorId#actor_id{pid = Pid}};
-        ignore ->
-            receive
-                {do_start_ignore, Ref, Result} ->
-                    Result
-            after 5000 ->
-                error(do_start_ignore)
+
+
+%% @doc
+-spec sync_op(nkservice_actor:id()|pid(), sync_op()) ->
+    term() | {error, timeout|process_not_found|object_not_found|term()}.
+
+sync_op(Id, Op) ->
+    sync_op(Id, Op, ?DEF_SYNC_CALL).
+
+
+%% @doc
+-spec sync_op(nkservice_actor:id()|pid(), sync_op(), timeout()) ->
+    term() | {error, timeout|process_not_found|object_not_found|term()}.
+
+sync_op(Pid, Op, Timeout) when erlang:is_pid(Pid) ->
+    nklib_util:call2(Pid, {nkservice_sync_op, Op}, Timeout);
+
+sync_op(Id, Op, Timeout) ->
+    sync_op(Id, Op, Timeout, 5).
+
+
+%% @private
+sync_op(_Id, _Op, _Timeout, 0) ->
+    {error, process_not_found};
+
+sync_op(Id, Op, Timeout, Tries) ->
+    case nkservice_actor_util:id_to_actor_id(Id) of
+        {ok, SrvId, #actor_id{pid=Pid}=ActorId} when is_pid(Pid) ->
+            case sync_op(Pid, Op, Timeout) of
+                {error, process_not_found} ->
+                    ActorId2 = ActorId#actor_id{pid=undefined},
+                    timer:sleep(250),
+                    lager:warning("NkSERVICE SynOP failed (~p), retrying...", [ActorId2]),
+                    sync_op({SrvId, ActorId2}, Op, Timeout, Tries-1);
+                Other ->
+                    Other
+            end;
+        {ok, SrvId, ActorId} ->
+            case nkservice_actor:activate({SrvId, ActorId}) of
+                {ok, #actor_id{pid=Pid}=ActorId2, _} when is_pid(Pid) ->
+                    sync_op({SrvId, ActorId2}, Op, Timeout, Tries);
+                Other ->
+                    Other
             end;
         {error, Error} ->
             {error, Error}
@@ -212,83 +242,42 @@ do_start(SrvId, Op, #actor{id=ActorId}=Actor, StartOpts) ->
 
 
 %% @doc
--spec sync_op(nkservice:id(), nkservice_actor:id()|pid(), sync_op()) ->
-    term() | {error, timeout|process_not_found|object_not_found|term()}.
-
-sync_op(SrvId, Id, Op) ->
-    sync_op(SrvId, Id, Op, ?DEF_SYNC_CALL).
-
-
-%% @doc
--spec sync_op(nkservice:id(), nkservice_actor:id()|pid(), sync_op(), timeout()) ->
-    term() | {error, timeout|process_not_found|object_not_found|term()}.
-
-sync_op(_SrvId, Pid, Op, Timeout) when is_pid(Pid) ->
-    nklib_util:call2(Pid, {nkservice_sync_op, Op}, Timeout);
-
-sync_op(SrvId, Id, Op, Timeout) ->
-    sync_op(SrvId, Id, Op, Timeout, 5).
-
-
-%% @private
-sync_op(_SrvId, _Id, _Op, _Timeout, 0) ->
-    {error, process_not_found};
-
-sync_op(SrvId, #actor_id{pid=Pid}=ActorId, Op, Timeout, Tries) when is_atom(SrvId), is_pid(Pid) ->
-    case sync_op(SrvId, Pid, Op, Timeout) of
-        {error, process_not_found} ->
-            ActorId2 = ActorId#actor_id{pid=undefined},
-            timer:sleep(250),
-            lager:warning("NkSERVICE SynOP failed (~p), retrying...", [ActorId2]),
-            sync_op(SrvId, ActorId2, Op, Timeout, Tries-1);
-        Other ->
-            Other
-    end;
-
-sync_op(SrvId, Id, Op, Timeout, Tries) when is_atom(SrvId) ->
-    case nkservice_actor_db:activate(SrvId, Id, #{}) of
-        {ok, #actor_id{pid=Pid}=ActorId, _} when is_pid(Pid) ->
-            sync_op(SrvId, ActorId, Op, Timeout, Tries);
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @doc
--spec async_op(nkservice:id(), pid(), async_op()) ->
+-spec async_op(nkservice_actor:id()|pid(), async_op()) ->
     ok | {error, process_not_found|object_not_found|term()}.
 
-async_op(_SrvId, Pid, Op) when is_pid(Pid) ->
+async_op(Pid, Op) when is_pid(Pid) ->
     gen_server:cast(Pid, {nkservice_async_op, Op});
 
-async_op(SrvId, Id, Op) when is_atom(SrvId) ->
-    case nkservice_actor_db:activate(SrvId, Id, #{}) of
+async_op(Id, Op) ->
+    case nkservice_actor:activate(Id) of
         {ok, #actor_id{pid=Pid}, _} when is_pid(Pid) ->
-            async_op(SrvId, Pid, Op);
+            async_op(Pid, Op);
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc
--spec delayed_async_op(nkservice:id(), pid(), async_op(), pos_integer()) ->
+-spec delayed_async_op(nkservice_actor:id()|pid(), async_op(), pos_integer()) ->
     ok | {error, process_not_found|object_not_found|term()}.
 
-delayed_async_op(SrvId, Pid, Op, Time) when is_pid(Pid), Time > 0 ->
+delayed_async_op(Pid, Op, Time) when is_pid(Pid), Time > 0 ->
     _ = spawn(
         fun() ->
             timer:sleep(Time),
-            async_op(SrvId, Pid, Op)
+            async_op(Pid, Op)
         end),
     ok;
 
-delayed_async_op(SrvId, Id, Op, Time) when is_atom(SrvId) ->
-    case nkservice_actor_db:activate(SrvId, Id, #{}) of
+delayed_async_op(Id, Op, Time) ->
+    case nkservice_actor:activate(Id) of
         {ok, #actor_id{pid=Pid}, _} when is_pid(Pid) ->
-            delayed_async_op(SrvId, Pid, Op, Time);
+            delayed_async_op(Pid, Op, Time);
         {error, Error} ->
             {error, Error}
     end.
+
+
 
 %%%% @private Disabled the actor, only if it is activated
 %%%% used before external deletion
@@ -304,18 +293,18 @@ delayed_async_op(SrvId, Id, Op, Time) when is_atom(SrvId) ->
 %% @private
 %% If the object is activated, it will be unloaded without saving
 %% before launching the deletion
-raw_stop(SrvId, Id, Reason) ->
-    case nkservice_actor_db:is_activated(SrvId, Id) of
+raw_stop(Id, Reason) ->
+    case nkservice_actor_db:is_activated(Id) of
         {true, #actor_id{pid=Pid}} ->
-            async_op(SrvId, Pid, {raw_stop, Reason});
+            async_op(Pid, {raw_stop, Reason});
         false ->
             ok
     end.
 
 
 %% @private
-get_state(SrvId, Id) ->
-    sync_op(SrvId, Id, get_state).
+get_state(Id) ->
+    sync_op(Id, get_state).
 
 
 %% @doc
@@ -329,7 +318,7 @@ get_all() ->
 %% @private
 unload_all() ->
     lists:foreach(
-        fun(#actor_id{pid=Pid}) -> async_op(none, Pid, {stop, normal}) end,
+        fun(#actor_id{pid=Pid}) -> async_op(Pid, {stop, normal}) end,
         get_all()).
 
 
@@ -350,14 +339,14 @@ unload_all() ->
 -spec init(term()) ->
     {ok, state()} | {stop, term()}.
 
-init({SrvId, Op, Actor, StartOpts, Caller, Ref}) ->
-    State = do_pre_init(SrvId, StartOpts, Actor),
+init({SrvId, Op, Module, Actor, Config, Caller, Ref}) ->
+    State = do_pre_init(SrvId, Module, Actor, Config),
     case do_check_expired(State) of
         {false, State2} ->
             case do_register(1, State2) of
                 {ok, State3} ->
                     ?ACTOR_DEBUG("registered", [], State3),
-                    case handle(actor_srv_init, [StartOpts], State3) of
+                    case handle(actor_srv_init, [], State3) of
                         {ok, State4} ->
                             do_init(Op, State4);
                         {error, Error} ->
@@ -732,7 +721,7 @@ do_async_op(Op, State) ->
 
 
 %% @private
-do_pre_init(SrvId, StartOpts, Actor) ->
+do_pre_init(SrvId, Module, Actor, Config) ->
     #actor{id=#actor_id{uid=UID}=ActorId, metadata=Meta} = Actor,
     ActorId2 = ActorId#actor_id{pid=self()},
     true = is_binary(UID) andalso UID /= <<>>,
@@ -751,8 +740,8 @@ do_pre_init(SrvId, StartOpts, Actor) ->
     end,
     State = #actor_st{
         srv = SrvId,
-        config = maps:get(config, StartOpts, #{}),
-        module = maps:get(module, StartOpts, undefined),
+        module = Module,
+        config = Config,
         actor = Actor#actor{id=ActorId2},
         run_state = undefined,
         links = nklib_links:new(),

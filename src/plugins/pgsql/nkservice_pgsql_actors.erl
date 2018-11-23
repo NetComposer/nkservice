@@ -531,7 +531,7 @@ delete(SrvId, PackageId, UIDs, Opts) ->
                 % real deletion
 %%                lists:foreach(
 %%                    fun(#actor_id{uid=DUID}) ->
-%%                        nkservice_actor_srv:raw_stop(SrvId, DUID, actor_deleted)
+%%                        nkservice_actor_srv:raw_stop({SrvId, DUID}, actor_deleted)
 %%                    end,
 %%                    DeletedActorIds),
                 {ok, DeletedActorIds, DeletedMeta};
@@ -579,7 +579,7 @@ delete_actors(_SrvId, [], _CheckChilds, _Pid, _QueryMeta, ActorIds, QueryAcc) ->
     {ActorIds, QueryAcc};
 
 delete_actors(SrvId, [UID|Rest], CheckChilds, Pid, QueryMeta, ActorIds, QueryAcc) ->
-    nkservice_actor_srv:raw_stop(SrvId, UID, pre_delete),
+    nkservice_actor_srv:raw_stop({SrvId, UID}, pre_delete),
     QUID = quote(UID),
     case CheckChilds of
         true ->

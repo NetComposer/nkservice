@@ -25,7 +25,8 @@
 
 
 %% 'run_state' is populated when reading the object from the server process
-%% if would be undefined if read from db. It will never be saved.
+%% It will be undefined if read from db. It will never be saved.
+%% 'hash' represents a version, it is not updated by nkservice
 -record(actor, {
     id :: #actor_id{},
     data = #{} :: nkservice_actor:data(),
@@ -37,10 +38,9 @@
 
 -record(actor_st, {
     srv :: nkservice:id(),
-    actor :: #actor{},
-    config :: nkservice_actor_srv:config(),
     module :: module(),
-    % leader_pid :: pid() | undefined,
+    config :: nkservice_actor:config(),
+    actor :: #actor{},
     run_state :: term(),
     father_pid :: pid() | undefined,
     is_dirty :: true | false | deleted,

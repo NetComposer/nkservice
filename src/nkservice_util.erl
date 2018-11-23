@@ -30,6 +30,8 @@
 -export([luerl_api/6]).
 -export([register_for_changes/1, notify_updated_service/1]).
 -export([get_net_ticktime/0, set_net_ticktime/2]).
+-export([call_services/2]).
+
 
 -include("nkservice.hrl").
 -include_lib("nkpacket/include/nkpacket.hrl").
@@ -198,6 +200,38 @@ get_net_ticktime() ->
 %% @private
 set_net_ticktime(Time, Period) ->
     rpc:multicall(net_kernel, set_net_ticktime, [Time, Period]).
+
+
+%% @doc Calls a fun if defined in all service callbacks
+%% If it returns 'continue' it will jump to next service
+
+-spec call_services(atom(), list()) ->
+    {ok, nkservice:id(), term()} | no_services.
+
+call_services(Fun, Args) ->
+    Services = [SrvId || {SrvId, _Name, _Class, _Hash, _Pid} <- nkservice_srv:get_all()],
+    call_services(Services, Fun, Args).
+
+
+%% @private
+call_services([], _Fun, _Args) ->
+    no_services;
+
+
+call_services([SrvId|Rest], Fun, Args) ->
+    Pid = whereis(SrvId),
+    case is_pid(Pid) andalso erlang:function_exported(SrvId, Fun, length(Args)) of
+        true ->
+            case apply(SrvId, Fun, Args) of
+                continue ->
+                    call_services(Rest, Fun, Args);
+                Data ->
+                    {ok, SrvId, Data}
+            end;
+        false ->
+            call_services(Rest, Fun, Args)
+    end.
+
 
 
 

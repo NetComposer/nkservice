@@ -29,9 +29,9 @@
          service_master_handle_call/3, service_master_handle_cast/2,
          service_master_handle_info/2, service_leader_code_change/3,
          service_master_terminate/2]).
--export([actor_find_registered/2, actor_create/3, actor_activate/3,
-         actor_external_event/3]).
--export([actor_srv_init/2, actor_srv_register/2, actor_srv_terminate/2,
+-export([actor_find_registered/2, actor_get_config/3, actor_create/3, actor_activate/3,
+         actor_external_event/3, actor_is_managed/2]).
+-export([actor_srv_init/1, actor_srv_register/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_event/2,
          actor_srv_link_event/4,  actor_srv_link_down/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
@@ -90,6 +90,7 @@ msg(actor_deleted)                  -> "Actor has been deleted";
 msg({actors_deleted, N})            -> {"Actors (~p) have been deleted", [N]};
 msg(actor_not_found)                -> "Actor not found";
 msg({actor_invalid, _})             -> "Actor is invalid";
+msg(actor_id_invalid)               -> "Actor ID is invalid";
 msg(actor_expired)	                -> "Actor has expired";
 msg(actor_updated)                  -> "Actor updated";
 msg(actor_has_linked_actors)	    -> "Actor has linked actors";
@@ -125,7 +126,7 @@ msg(invalid_role)			        -> "Invalid role";
 msg(invalid_session_id)		        -> "Invalid session";
 msg(invalid_state) 			        -> "Invalid state";
 msg(invalid_uri) 			        -> "Invalid Uri";
-msg(invalid_object_id) 		        -> "Invalid ObjectId";
+msg(invalid_actor_id) 		        -> "Invalid Actor ID";
 msg(json_encode_error)              -> "JSON encode error";
 msg(leader_is_down)                 -> "Service leader is down";
 msg(linked_actor_unknown)           -> "Linked actor not found";
@@ -358,32 +359,34 @@ actor_find_registered(SrvId, Id) ->
     nkservice_master:find_registered_actor(SrvId, Id).
 
 
-%% @doc Called from nkdomain_actor_db:create() when an actor is to be created
+%% @doc Called when activating an actor to get it's config and module
+%% Config is the added config used when calling the function
+-spec actor_get_config(nkservice:id(), actor_id(), nkservice_actor:config()) ->
+    {ok, module(), nkservice_actor:config()} | {error, term()}.
+
+actor_get_config(_SrvId, _ActorId, _Config) ->
+    {error, actor_unknown}.
+
+
+%% @doc Called from nkservice_actor_db:create() when an actor is to be created
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
--spec actor_create(nkservice:id(), nkservice:actor(), nkservice_actor_srv:start_opts()) ->
+-spec actor_create(nkservice:id(), nkservice:actor(), nkservice_actor:config()) ->
     {ok, actor_id()} | {error, term()}.
 
-actor_create(SrvId, Actor, StartOpts) ->
-    nkservice_actor_srv:create(SrvId, Actor, StartOpts).
+actor_create(SrvId, Actor, Config) ->
+    nkservice_actor_srv:create(SrvId, Actor, Config).
 
 
 %% @doc Called from nkdomain_actor_db:load() when an actor has been read and must be activated
 %% Can be used to select a different node, etc()
 %% By default we start it at this node
--spec actor_activate(nkservice:id(), nkservice:actor(), nkservice_actor_srv:start_opts()) ->
+-spec actor_activate(nkservice:id(), nkservice:actor(), nkservice_actor:config()) ->
     {ok, actor_id()} | {error, term()}.
 
-actor_activate(SrvId, Actor, StartOpts) ->
-    nkservice_actor_srv:start(SrvId, Actor, StartOpts).
+actor_activate(SrvId, Actor, Config) ->
+    nkservice_actor_srv:start(SrvId, Actor, Config).
 
-
-%%%% @doc Called to get the default configuration for an actor
-%%-spec actor_config(actor_id()) ->
-%%    nkservice_actor_srv:config().
-%%
-%%actor_config(_ActorId) ->
-%%    #{}.
 
 
 %% @doc Called from nkservice_actor_util:send_external_event/3 to send
@@ -395,12 +398,21 @@ actor_external_event(_SrvId, _Event, _Actor) ->
     ok.
 
 
+%% @doc Called from id_to_actor_id() when no service is indicated, to
+%% see if this service can manage this nkservice:id()
+-spec actor_is_managed(nkservice:id(), nkservice_actor:id()) ->
+    boolean() | continue().
+
+actor_is_managed(_SrvId, _Id) ->
+    false.
+
+
 %% @doc Called when a new session starts
--spec actor_srv_init(map(), actor_st()) ->
+-spec actor_srv_init(actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_srv_init(StartOpts, ActorSt) ->
-    nkservice_actor:actor_srv_init(StartOpts, ActorSt).
+actor_srv_init(ActorSt) ->
+    nkservice_actor:actor_srv_init(ActorSt).
 
 
 %% @doc Called to register actor with a global registry
@@ -430,12 +442,7 @@ actor_srv_heartbeat(ActorSt) ->
     {ok, nkservice_actor:actor(), actor_st()} | continue().
 
 actor_srv_get(Actor, ActorSt) ->
-    case nkservice_actor:actor_srv_get(Actor, ActorSt) of
-        continue ->
-            {ok, Actor, ActorSt};
-        Other ->
-            Other
-    end.
+    nkservice_actor:actor_srv_get(Actor, ActorSt).
 
 
 %%  @doc Called before finishing an update

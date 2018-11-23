@@ -621,8 +621,6 @@ make_sort([{Order, Field, Type}|Rest], Acc) ->
     ],
     make_sort(Rest, [list_to_binary(Item)|Acc]).
 
--compile(export_all).
-
 
 %% @private
 %% Extracts a field inside a JSON,  it and casts it to json, string, integer o boolean

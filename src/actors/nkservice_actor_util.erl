@@ -28,10 +28,12 @@
 -include("nkservice_actor_debug.hrl").
 -include_lib("nkevent/include/nkevent.hrl").
 
+-export([id_to_actor_id/1]).
 -export([get_debug/2]).
 -export([send_external_event/3]).
 -export([put_create_fields/1, update/2, check_links/2, do_check_links/2]).
 -export([is_actor_id/1, actor_id_to_path/1]).
+-export([parse/2, parse_actor/2]).
 -export([make_path/1]).
 -export([make_plural/1, make_singular/1, normalized_name/1]).
 -export([fts_normalize_word/1, fts_normalize_multi/1]).
@@ -41,6 +43,75 @@
 %% ===================================================================
 %% Public
 %% ===================================================================
+
+
+%% @doc Canonizes id to #actor_id{} and selects service
+%% %% - if we pass an actor_id() or path, the actor_id() version will be returned
+%% - if it is an uid, it will returned as binary
+%% - if we use the short form (without service) a service is found to manage the term,
+%%   or it will return error
+-spec id_to_actor_id(nkservice_actor:id()) ->
+    {ok, nkservice:id(), #actor_id{}|binary()} | {error, term()}.
+
+id_to_actor_id({SrvId, Term}) when is_atom(SrvId) ->
+    id_to_actor_id(SrvId, Term);
+
+id_to_actor_id(Term) ->
+    id_to_actor_id(undefined, Term).
+
+
+%% @private
+id_to_actor_id(SrvId, #actor_id{}=ActorId) ->
+    id_check_service(SrvId, ActorId);
+
+id_to_actor_id(SrvId, <<$/, Path/binary>>) ->
+    case binary:split(Path, <<$/>>, [global]) of
+        [Domain, Group, Res, Name] ->
+            ActorId = #actor_id{
+                domain = Domain,
+                group = Group,
+                resource = Res,
+                name = Name
+            },
+            id_check_service(SrvId, ActorId);
+        _ ->
+            {error, actor_id_invalid}
+    end;
+
+id_to_actor_id(SrvId, Path) when is_list(Path); is_atom(Path) ->
+    id_to_actor_id(SrvId, to_bin(Path));
+
+id_to_actor_id(SrvId, UID) ->
+    id_check_service(SrvId, UID).
+
+
+%% @private Only to be used when no service is specified
+id_check_service(undefined, Term) ->
+    Services = [SrvId || {SrvId, _Name, _Class, _Hash, _Pid} <- nkservice_srv:get_all()],
+    id_check_service_iter(Services, Term);
+
+id_check_service(SrvId, Term) ->
+    {ok, SrvId, Term}.
+
+
+%% @private
+id_check_service_iter([], _Term) ->
+    {error, actor_id_invalid};
+
+id_check_service_iter([SrvId|Rest], Term) ->
+    Pid = whereis(SrvId),
+    case is_pid(Pid) andalso erlang:function_exported(SrvId, actor_is_managed, 2) of
+        true ->
+            case ?CALL_SRV(SrvId, actor_is_managed, [SrvId, Term]) of
+                true ->
+                    {ok, SrvId, Term};
+                false ->
+                    id_check_service_iter(Rest, Term)
+            end;
+        false ->
+            id_check_service_iter(Rest, Term)
+    end.
+
 
 
 %% @doc Get debug
@@ -95,7 +166,6 @@ put_create_fields(Actor) ->
     update(Actor2, Time).
 
 
-
 %% @private
 update(#actor{id=ActorId, data=Data, metadata=Meta}=Actor, Time3339) ->
     #actor_id{domain=Domain, group=Group, vsn=Vsn, resource=Res, name=Name} = ActorId,
@@ -106,6 +176,41 @@ update(#actor{id=ActorId, data=Data, metadata=Meta}=Actor, Time3339) ->
         <<"generation">> => Gen+1
     },
     Actor#actor{hash=to_bin(Hash), metadata=Meta2}.
+
+
+%% @private
+-spec parse_actor(#actor{}, nklib_syntax:syntax()) ->
+    {ok, #actor{}} | nklib_syntax:error().
+
+parse_actor(#actor{data=Data}=Actor, Syntax) ->
+    case parse(Data, Syntax) of
+        {ok, Data2} ->
+            {ok, Actor#actor{data=Data2}};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @private Generic parse with standard errors
+-spec parse(map(), nklib_syntax:syntax()) ->
+    {ok, map()} | nklib_syntax:error().
+
+parse(Data, Syntax) ->
+    % lager:error("NKLOG SYN Data:~p\n Syntax:~p", [Data, Syntax]),
+    case nklib_syntax:parse(Data, Syntax) of
+        {ok, Data2, []} ->
+            {ok, Data2};
+        {ok, _, [Field | _]} ->
+            {error, {field_unknown, Field}};
+        {error, {syntax_error, Field}} ->
+            % lager:error("NKLOG Data ~p Syntax ~p", [Data, Syntax]),
+            {error, {field_invalid, Field}};
+        {error, {field_missing, Field}} ->
+            {error, {field_missing, Field}};
+        {error, Error} ->
+            lager:error("Unexpected parse error at ~p: ~p", [?MODULE, Error]),
+            {error, Error}
+    end.
 
 
 %% @doc
@@ -136,7 +241,7 @@ do_check_links(_SrvId, [], Acc) ->
     {ok, maps:from_list(Acc)};
 
 do_check_links(SrvId, [{Type, Id}|Rest], Acc) ->
-    case nkservice_actor_db:find(SrvId, Id) of
+    case nkservice_actor:find({SrvId, Id}) of
         {ok, #actor_id{uid=UID}, _} ->
             true = is_binary(UID),
             do_check_links(SrvId, Rest, [{Type, UID}|Acc]);
