@@ -8,7 +8,6 @@
         kernel,
         stdlib,
         crypto,
-        sasl,
         ssl,
         luerl,
         lager,
