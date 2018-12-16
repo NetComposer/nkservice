@@ -62,7 +62,8 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([add_link/3, remove_link/2]).
 -export([get_all/0, unload_all/0, get_state/1, raw_stop/2]).
--export([do_stop/2, do_event/2, do_update/3, do_event_link/2]).
+-export([do_stop/2, do_event/2, do_update/3, do_delete/1, do_event_link/2,
+         do_set_next_status_time/2]).
 -export_type([event/0, save_reason/0]).
 
 
@@ -75,7 +76,7 @@
 -define(DEF_SYNC_CALL, 5000).
 -define(HEARTBEAT_TIME, 5000).
 -define(DEFAULT_SAVE_TIME, 5000).
-
+-define(MAX_STATUS_TIME, 24*60*60*1000).
 
 
 %% ===================================================================
@@ -130,6 +131,7 @@
     {unlink, nklib:link()} |
     {send_info, atom()|binary(), map()} |
     {send_event, event()} |
+    {set_next_status_time, binary()|integer()} |
     {set_alarm, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
     clear_all_alarms |
     save |
@@ -346,7 +348,7 @@ init({SrvId, Op, Module, Actor, Config, Caller, Ref}) ->
             case do_register(1, State2) of
                 {ok, State3} ->
                     ?ACTOR_DEBUG("registered", [], State3),
-                    case handle(actor_srv_init, [], State3) of
+                    case handle(actor_srv_init, [Op], State3) of
                         {ok, State4} ->
                             do_init(Op, State4);
                         {error, Error} ->
@@ -675,6 +677,9 @@ do_async_op({send_info, Info, Meta}, State) ->
 do_async_op({send_event, Event}, State) ->
     noreply(do_event(Event, do_refresh_ttl(State)));
 
+do_async_op({set_next_status_time, Time}, State) ->
+    noreply(do_set_next_status_time(Time, State));
+
 do_async_op({set_dirty, IsDirty}, State) when is_boolean(IsDirty)->
     noreply(do_refresh_ttl(State#actor_st{is_dirty=IsDirty}));
 
@@ -719,26 +724,12 @@ do_async_op(Op, State) ->
 %% Internals
 %% ===================================================================
 
-
 %% @private
 do_pre_init(SrvId, Module, Actor, Config) ->
     #actor{id=#actor_id{uid=UID}=ActorId, metadata=Meta} = Actor,
     ActorId2 = ActorId#actor_id{pid=self()},
     true = is_binary(UID) andalso UID /= <<>>,
-    Now = nklib_date:epoch(msecs),
-    NextStatusTimer = case Meta of
-        #{<<"nextStatusTime">>:=NextStatusTime} ->
-            case NextStatusTime - Now of
-                Step when Step=<0 ->
-                    self() ! nkservice_next_status_timer,
-                    undefined;
-                Step ->
-                    erlang:send_after(Step, self(), nkservice_next_status_timer)
-            end;
-        _ ->
-            undefined
-    end,
-    State = #actor_st{
+    State1 = #actor_st{
         srv = SrvId,
         module = Module,
         config = Config,
@@ -748,14 +739,18 @@ do_pre_init(SrvId, Module, Actor, Config) ->
         is_dirty = false,
         is_enabled = maps:get(<<"isEnabled">>, Meta, true),
         save_timer = undefined,
-        activated_time = Now,
-        status_timer = NextStatusTimer,
+        activated_time = nklib_date:epoch(usecs),
         unload_policy = permanent           % Updated later
-        %leader_pid = undefined               % "
     },
-    set_debug(State),
-    ?ACTOR_DEBUG("actor server starting", [], State),
-    set_unload_policy(State).
+    set_debug(State1),
+    State2 =  case Meta of
+        #{<<"nextStatusTime">>:=NextStatusTime} ->
+            do_set_next_status_time(NextStatusTime, State1);
+        _ ->
+            State1
+    end,
+    ?ACTOR_DEBUG("actor server starting", [], State2),
+    set_unload_policy(State2).
 
 
 %% @private
@@ -785,22 +780,22 @@ set_debug(#actor_st{srv=SrvId, actor=#actor{id=ActorId}}=State) ->
 
 %% @private
 set_unload_policy(#actor_st{config=Config}=State) ->
-    Policy = case maps:get(permanent, Config, false) of
-        true ->
+    #actor_st{actor=#actor{metadata=Meta}} = State,
+    ExpiresTime = maps:get(<<"expiresTime">>, Meta, <<>>),
+    Policy = case Config of
+        #{permanent:=true} ->
             permanent;
-        false ->
-            #actor_st{actor=#actor{metadata=Meta}} = State,
-            case maps:get(<<"expiresTime">>, Meta, <<>>) of
-                <<>> ->
-                    % A TTL reseated after each operation
-                    TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
-                    ?ACTOR_DEBUG("TTL is ~p", [TTL], State),
-                    {ttl, TTL};
-                Expires ->
-                    {ok, Expires2} = nklib_date:to_epoch(Expires, msecs),
-                    % self() ! nkservice_check_expire,
-                    {expires, Expires2}
-            end
+        _ when ExpiresTime /= <<>> ->
+            {ok, Expires2} = nklib_date:to_epoch(ExpiresTime, msecs),
+            % self() ! nkservice_check_expire,
+            {expires, Expires2};
+        #{auto_activate:=true} ->
+            permanent;
+        _ ->
+            % A TTL reseated after each operation
+            TTL = maps:get(ttl, Config, ?DEFAULT_TTL),
+            ?ACTOR_DEBUG("TTL is ~p", [TTL], State),
+            {ttl, TTL}
     end,
     ?ACTOR_DEBUG("unload policy is ~p", [Policy], State),
     State#actor_st{unload_policy=Policy}.
@@ -827,6 +822,23 @@ do_register(Tries, #actor_st{srv = SrvId} = State) ->
                     {error, Error}
             end
     end.
+
+
+%% @private
+do_set_next_status_time(NextTime, State) ->
+    #actor_st{status_timer = Timer1} = State,
+    nklib_util:cancel_timer(Timer1),
+    Now = nklib_date:epoch(secs),
+    NextTime2 = nklib_date:to_epoch(NextTime, secs),
+    Timer2 = case NextTime2 - Now of
+        Step when Step=<0 ->
+            self() ! nkservice_next_status_timer,
+            undefined;
+        Step ->
+            Step2 = min(Step, ?MAX_STATUS_TIME),
+            erlang:send_after(Step2, self(), nkservice_next_status_timer)
+    end,
+    State#actor_st{status_timer = Timer2}.
 
 
 %% @private
@@ -914,13 +926,18 @@ do_delete(#actor_st{is_dirty=deleted}=State) ->
 
 do_delete(#actor_st{srv=SrvId, actor=Actor}=State) ->
     #actor{id=#actor_id{uid=UID}} = Actor,
-    case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
-        {ok, _ActorIds, DbMeta} ->
-            ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
-            {ok, do_event(deleted, State#actor_st{is_dirty=deleted})};
-        {error, Error} ->
-            ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State),
-            {{error, Error}, State#actor_st{actor=Actor}}
+    case handle(actor_srv_delete, [Actor], State) of
+        {ok, State2} ->
+            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
+                {ok, _ActorIds, DbMeta} ->
+                    ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
+                    {ok, do_event(deleted, State2#actor_st{is_dirty=deleted})};
+                {error, Error} ->
+                    ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State),
+                    {{error, Error}, State2#actor_st{actor=Actor}}
+            end;
+        {error, Error, State2} ->
+            {{error, Error}, State2}
     end.
 
 

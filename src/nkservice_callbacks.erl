@@ -31,8 +31,9 @@
          service_master_terminate/2]).
 -export([actor_find_registered/2, actor_get_config/3, actor_create/3, actor_activate/3,
          actor_external_event/3, actor_is_managed/2]).
--export([actor_srv_init/1, actor_srv_register/2, actor_srv_terminate/2,
-         actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_event/2,
+-export([actor_srv_init/2, actor_srv_register/2, actor_srv_terminate/2,
+         actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/2,
+         actor_srv_event/2,
          actor_srv_link_event/4,  actor_srv_link_down/2,
          actor_srv_sync_op/3, actor_srv_async_op/2,
          actor_srv_enabled/2, actor_srv_next_status_timer/1,
@@ -408,11 +409,11 @@ actor_is_managed(_SrvId, _Id) ->
 
 
 %% @doc Called when a new session starts
--spec actor_srv_init(actor_st()) ->
+-spec actor_srv_init(create|start, actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
-actor_srv_init(ActorSt) ->
-    nkservice_actor:actor_srv_init(ActorSt).
+actor_srv_init(Op, ActorSt) ->
+    nkservice_actor:actor_srv_init(Op, ActorSt).
 
 
 %% @doc Called to register actor with a global registry
@@ -451,6 +452,15 @@ actor_srv_get(Actor, ActorSt) ->
 
 actor_srv_update(Actor, ActorSt) ->
     nkservice_actor:actor_srv_update(Actor, ActorSt).
+
+
+
+%%  @doc Called before finishing a deletion
+-spec actor_srv_delete(nkservice_actor:actor(), actor_st()) ->
+    {ok, actor_st()} | {error, nkservice:msg(), actor_st()} |continue().
+
+actor_srv_delete(Actor, ActorSt) ->
+    nkservice_actor:actor_srv_delete(Actor, ActorSt).
 
 
 %% @doc Called to send an event from inside an actor's process
@@ -518,7 +528,7 @@ actor_srv_enabled(Enabled, ActorSt) ->
     {ok, actor_st()} | continue().
 
 actor_srv_next_status_timer(ActorSt) ->
-    {ok, ActorSt}.
+    nkservice_actor:actor_srv_next_status_timer(ActorSt).
 
 
 %% @doc Called when a object with alarms is loaded

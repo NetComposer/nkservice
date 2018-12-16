@@ -29,10 +29,12 @@
 -export([search_linked_to/5, search_fts/5, search/3, search_ids/3,
          delete_all/3, delete_old/6]).
 -export([config/1, parse/4, request/4, make_external/4]).
--export([actor_srv_init/1, actor_srv_sync_op/3, actor_srv_async_op/2,
-         actor_srv_heartbeat/1, actor_srv_get/2, actor_srv_enabled/2, actor_srv_update/2,
+-export([actor_srv_init/2, actor_srv_sync_op/3, actor_srv_async_op/2,
+         actor_srv_heartbeat/1, actor_srv_get/2, actor_srv_enabled/2,
+         actor_srv_update/2, actor_srv_delete/2,
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2,
-         actor_srv_event/2, actor_srv_stop/2, actor_srv_terminate/2]).
+         actor_srv_event/2, actor_srv_next_status_timer/1,
+         actor_srv_stop/2, actor_srv_terminate/2]).
 -export([filter_fields/0, sort_fields/0, field_type/0, field_trans/0]).
 -export_type([actor/0, id/0, uid/0, domain/0, resource/0, path/0, name/0,
               vsn/0, group/0, hash/0,
@@ -229,7 +231,7 @@
 
 
 %% @doc Called when a new actor starts
--callback init(actor_st()) ->
+-callback init(create|start, actor_st()) ->
     {ok, actor_st()} | {error, Reason::term()}.
 
 
@@ -257,6 +259,11 @@
 %% @doc Called when an event is sent inside the actor process
 %% Can be used to launch API events, calling
 -callback event(term(), actor_st()) ->
+    {ok, actor_st()} | continue().
+
+
+%% @doc Called when next_status_timer is fired
+-callback next_status_timer(actor_st()) ->
     {ok, actor_st()} | continue().
 
 
@@ -311,9 +318,9 @@
 %% @doc
 -optional_callbacks([
     parse/3, request/5, make_external/3,
-    init/1, get/2, update/2, sync_op/3, async_op/2, enabled/2, heartbeat/1,
-    event/2, link_event/4, handle_call/3, handle_cast/2, handle_info/2,
-    stop/2, terminate/2]).
+    init/2, get/2, update/2, sync_op/3, async_op/2, enabled/2, heartbeat/1,
+    event/2, link_event/4, next_status_timer/1,
+    handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
 
 
 %% ===================================================================
@@ -321,7 +328,12 @@
 %% ===================================================================
 
 
-%% @doc
+%% @doc Finds and actor from UUID or Path, in memory or disk
+%% It also checks if it is currently activated, returning the pid
+%% Id must use the form including the service to find unloaded UIDs
+-spec find(nkservice_actor:id()) ->
+    {ok, #actor_id{}, Meta::map()} | {error, actor_not_found|term()}.
+
 find(Id) ->
     nkservice_actor_db:find(Id).
 
@@ -405,8 +417,16 @@ stop(Id) ->
 -spec stop(id()|pid(), Reason::nkservice:msg()) ->
     ok | {error, term()}.
 
+stop(Pid, Reason) when is_pid(Pid) ->
+    nkservice_actor_srv:async_op(Pid, {stop, Reason});
+
 stop(Id, Reason) ->
-    nkservice_actor_srv:async_op(Id, {stop, Reason}).
+    case nkservice_actor_db:is_activated(Id) of
+        {true, #actor_id{pid=Pid}} when is_pid(Pid) ->
+            stop(Pid, Reason);
+        false ->
+            {error, not_activated}
+    end.
 
 
 %% @doc Counts classes and objects of each class
@@ -597,8 +617,8 @@ make_external(Module, SrvId, Actor, Vsn) ->
 
 
 %% @doc Called after successful registration
-actor_srv_init(ActorSt) ->
-    case call_actor(init, [ActorSt], ActorSt) of
+actor_srv_init(Op, ActorSt) ->
+    case call_actor(init, [Op, ActorSt], ActorSt) of
         continue ->
             {ok, ActorSt};
         Other ->
@@ -647,6 +667,16 @@ actor_srv_update(Actor, ActorSt) ->
     end.
 
 
+%% @doc Called after approving an update, to change the updated actor
+actor_srv_delete(Actor, ActorSt) ->
+    case call_actor(delete, [Actor, ActorSt], ActorSt) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
+
+
 %% @doc Called for sync operations
 actor_srv_sync_op(Op, From, ActorSt) ->
     call_actor(sync_op, [Op, From, ActorSt], ActorSt).
@@ -660,6 +690,16 @@ actor_srv_async_op(Op, ActorSt) ->
 %% @doc Called when a event is sent, after linked events
 actor_srv_event(Op, ActorSt) ->
     case call_actor(event, [Op,  ActorSt], ActorSt) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
+
+
+%% @doc Called when next_status_timer is fired
+actor_srv_next_status_timer(ActorSt) ->
+    case call_actor(next_status_timer, [ActorSt], ActorSt) of
         continue ->
             {ok, ActorSt};
         Other ->
