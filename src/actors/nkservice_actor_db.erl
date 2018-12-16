@@ -22,7 +22,7 @@
 -module(nkservice_actor_db).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([find/1, is_activated/1, read/2, activate/2]).
+-export([find/1, is_activated/1, read/2, db_read/1, activate/2]).
 -export([create/3, delete/2, delete_multi/2, update/3]).
 -export([search/2, search/3, aggregation/2, aggregation/3]).
 -export([check_service/4]).

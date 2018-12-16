@@ -123,7 +123,7 @@ get_debug(SrvId, #actor_id{group=Group, resource=Resource}) ->
         List when is_list(List) ->
             lists:member(<<"all">>, List) orelse
             lists:member(Group, List) orelse
-            lists:member(<<Group/binary, Resource/binary>>, List);
+            lists:member(<<Group/binary, $/, Resource/binary>>, List);
         _ ->
             false
     end.

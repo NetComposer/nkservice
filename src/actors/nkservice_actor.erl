@@ -448,7 +448,7 @@ search_resources(SrvId, Domain, Group, Opts) ->
 %% @doc Gets objects pointing to another
 -spec search_linked_to(nkservice:id(), domain(), id(), binary()|any,
                        #{deep=>boolean(), from=>pos_integer(), size=>pos_integer()}) ->
-    {ok, #{UID::binary() => LinkType::binary()}} | {error, term()}.
+    {ok, [{UID::binary(), LinkType::binary()}]} | {error, term()}.
 
 search_linked_to(SrvId, Domain, Id, LinkType, Opts) ->
     case nkservice_actor:find({SrvId, Id}) of

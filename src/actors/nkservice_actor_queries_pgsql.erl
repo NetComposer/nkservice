@@ -75,9 +75,9 @@ get_query(_SrvId, {service_search_linked, Domain, UID, LinkType, Params}, _Opts)
     ResultFun = fun(Ops, Meta) ->
         case Ops of
             [{{select, _}, [], _OpMeta}] ->
-                {ok, #{}, Meta};
+                {ok, [], Meta};
             [{{select, Size}, Rows, _OpMeta}] ->
-                {ok, maps:from_list(Rows), Meta#{size=>Size}}
+                {ok, Rows, Meta#{size=>Size}}
         end
     end,
     {ok, {pgsql, Query, #{result_fun=>ResultFun}}};
