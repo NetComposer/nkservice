@@ -49,8 +49,8 @@ plugin_deps() ->
 
 plugin_config(_, #{id:=Id, config:=Config}=Spec, #{id:=SrvId}) ->
     Syntax = #{
-        openapilUrl => binary,
-        openapilUrl_opts => nkpacket_syntax:safe_syntax(),
+        openapiUrl => binary,
+        openapiUrl_opts => nkpacket_syntax:safe_syntax(),
         openapi_debug => {list, {atom, [http, nkpacket]}},
         '__allow_unknown' => true
     },
@@ -79,6 +79,7 @@ plugin_config(_Class, _Package, _Service) ->
 %% @doc
 plugin_start(_, #{id:=Id, config:=Config}, Pid, #{id:=SrvId}) ->
     {ok, Listeners} =  make_listen(SrvId, Id, Config),
+    lager:error("NKLOG PLUGIN START: ~p", [Config]),
     insert_listeners(Id, Pid, Listeners);
 
 plugin_start(_Id, _Spec, _Pid, _Service) ->
@@ -115,6 +116,7 @@ set_debug(Id, Type, Debug) ->
 %% @private
 make_listen(SrvId, _Id, #{openapiUrl:=Url}=Entry) ->
     ResolveOpts = #{resolve_type=>listen, protocol=>nkservice_rest_protocol},
+    lager:error("NKLOG URL ~p", [Url]),
     case nkpacket_resolve:resolve(Url, ResolveOpts) of
         {ok, Conns} ->
             Opts1 = maps:get(openapiUrl_opts, Entry, #{}),
