@@ -22,7 +22,7 @@
 -module(nkservice_rest_http).
 -export([get_body/2, get_headers/1, get_qs/1, get_basic_auth/1]).
 -export([stream_start/3, stream_body/2, stream_stop/1]).
--export([get_accept/1, get_external_url/1]).
+-export([get_accept/1, get_full_path/1, get_external_url/1]).
 -export([reply_json/2, make_req_ext/2, reply_req_ext/2]).
 -export([init/4, terminate/3]).
 -export_type([method/0, reply/0, code/0, headers/0, body/0, req/0, path/0, http_qs/0]).
@@ -165,6 +165,14 @@ get_qs(#{cowboy_req:=CowReq}) ->
 
 get_accept(#{cowboy_req:=CowReq}) ->
     cowboy_req:parse_header(<<"accept">>, CowReq).
+
+
+%% @doc
+-spec get_full_path(req()) ->
+    binary().
+
+get_full_path(#{cowboy_req:=CowReq}) ->
+    cowboy_req:path(CowReq).
 
 
 %% @doc
