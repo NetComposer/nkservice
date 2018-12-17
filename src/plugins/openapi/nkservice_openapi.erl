@@ -58,8 +58,8 @@ rest_http([], _Req) ->
 rest_http([<<"index.html">>], Req) ->
     Path = filename:join([code:priv_dir(nkservice), "swagger-ui", "index.html"]),
     {ok, Index1} = file:read_file(Path),
-    UrlPath1 = nkservice_rest_http:get_full_path(Req),
-    UrlPath2 = binary:replace(UrlPath1, <<"index.html">>, <<"openapi.json">>),
+    UrlPath1 = nkservice_rest_http:get_external_url(Req),
+    UrlPath2 = <<UrlPath1/binary, "/openapi.json">>,
     Substs = [
         {
             <<"SwaggerUIStandalonePreset">>,
@@ -67,8 +67,7 @@ rest_http([<<"index.html">>], Req) ->
         },
         {
             <<"url: \"https://petstore.swagger.io/v2/swagger.json\"">>,
-            <<"url: window.location.protocol + '//' + window.location.host + '",
-                UrlPath2/binary, "'">>
+            <<"url: \"", UrlPath2/binary, "\"">>
         }
     ],
     Index2 = lists:foldl(
@@ -76,7 +75,6 @@ rest_http([<<"index.html">>], Req) ->
         Index1,
         Substs
     ),
-
     {http, 200, [{<<"content-type">>, <<"text/html">>}], Index2, Req};
 
 rest_http([<<"openapi.json">>], #{srv:=SrvId}=Req) ->

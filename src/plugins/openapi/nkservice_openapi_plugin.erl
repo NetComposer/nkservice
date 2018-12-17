@@ -114,8 +114,9 @@ set_debug(Id, Type, Debug) ->
 
 %% @private
 make_listen(SrvId, _Id, #{openapiUrl:=Url}=Entry) ->
-    ResolveOpts = #{resolve_type=>listen, protocol=>nkservice_rest_protocol},
-    case nkpacket_resolve:resolve(Url, ResolveOpts) of
+    ResolveOpts1 = #{resolve_type=>listen, protocol=>nkservice_rest_protocol},
+    ResolveOpts2 = nkservice_util:add_external_host(ResolveOpts1),
+    case nkpacket_resolve:resolve(Url, ResolveOpts2) of
         {ok, Conns} ->
             Opts1 = maps:get(openapiUrl_opts, Entry, #{}),
             Debug = maps:get(openapi_debug, Entry, []),

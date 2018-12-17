@@ -30,7 +30,7 @@
 -export([luerl_api/6]).
 -export([register_for_changes/1, notify_updated_service/1]).
 -export([get_net_ticktime/0, set_net_ticktime/2]).
--export([call_services/2]).
+-export([call_services/2, add_external_host/1]).
 
 
 -include("nkservice.hrl").
@@ -231,6 +231,32 @@ call_services([SrvId|Rest], Fun, Args) ->
         false ->
             call_services(Rest, Fun, Args)
     end.
+
+
+
+
+%% @doc Addes external configuration for transports
+add_external_host(Config) ->
+    Config2 = case nkservice_app:get(externalHost) of
+        undefined ->
+            Config;
+        Host ->
+            Config#{external_host => Host}
+    end,
+    Config3 = case nkservice_app:get(externalPort) of
+        undefined ->
+            Config2;
+        Port ->
+            Config2#{external_port => Port}
+    end,
+    Config4 = case nkservice_app:get(externalPath) of
+        undefined ->
+            Config3;
+        Path ->
+            Config3#{external_path => Path}
+    end,
+    Config4.
+
 
 
 

@@ -26,7 +26,6 @@
 -export([start/0, start/1, start/2, stop/1]).
 -export([set_nodes/1]).
 -export([get/1, get/2, put/2, del/1]).
--export([get_external_host/0]).
 
 -include("nkservice.hrl").
 
@@ -67,10 +66,11 @@ start(_Type, _Args) ->
         ticktime => integer,
         callbacksHttpUrl => binary,
         externalHost => binary,
+        externalPort => integer,
+        externalPath => binary,
         '__defaults' => #{
             logPath => <<"log">>,
-            callbacksHttpUrl => <<"http://127.0.0.1:8000">>,
-            external_host => <<"127.0.0.1">>
+            callbacksHttpUrl => <<"http://127.0.0.1:8000">>
         }
     },
     case nklib_config:load_env(?APP, Syntax) of
@@ -129,8 +129,3 @@ put(Key, Value) ->
 %% @doc updates a configuration value
 del(Key) ->
     nklib_config:del(?APP, Key).
-
-
-%% @doc
-get_external_host() ->
-    get(externalHost).
