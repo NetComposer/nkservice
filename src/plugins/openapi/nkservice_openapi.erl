@@ -89,8 +89,8 @@ rest_http([<<"openapi.json">>], #{srv:=SrvId}=Req) ->
 
 rest_http(_Path, _Req) ->
     Dir = code:priv_dir(nkservice),
-    _File = filename:join([Dir, <<"swagger-ui">>, _Path]),
-    {ok, Bin} = file:read_file(_File),
+    File = filename:join([Dir, <<"swagger-ui">>, _Path]),
+    {ok, Bin} = file:read_file(File),
     {http, 200, [], Bin, _Req}.
 
 

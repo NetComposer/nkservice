@@ -65,9 +65,6 @@ start(_Type, _Args) ->
         nodes => {list, binary},
         ticktime => integer,
         callbacksHttpUrl => binary,
-        externalHost => binary,
-        externalPort => integer,
-        externalPath => binary,
         '__defaults' => #{
             logPath => <<"log">>,
             callbacksHttpUrl => <<"http://127.0.0.1:8000">>
