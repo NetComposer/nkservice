@@ -121,7 +121,6 @@ make_listen(SrvId, _Id, #{openapiUrl:=Url}=Entry) ->
     },
     case nkpacket_resolve:resolve(Url, ResolveOpts) of
         {ok, Conns} ->
-            lager:error("NKLOG CONNS ~p", [Conns]),
             Debug = maps:get(openapiDebug, Entry, []),
             ApiOpts2 = ApiOpts#{
                 debug=>lists:member(nkpacket, Debug)
