@@ -97,7 +97,11 @@ get_body(#req{req=Req}=State, Opts) ->
     case cowboy_req:body_length(Req) of
         BL when is_integer(BL), BL =< MaxBody ->
             %% https://ninenines.eu/docs/en/cowboy/1.0/guide/req_body/
-            {ok, Body, Req2} = cowboy_req:body(Req, [{length, infinity}]),
+            %{ok, Body, Req2} = cowboy_req:body(Req, [{length, infinity}]),
+            Length = nkservice_app:get(body_length),
+            ReadLength = nkservice_app:get(body_read_length),
+            ReadTimeout = nkservice_app:get(body_read_timeout),
+            {ok, Body, Req2} = read_body_in_chunks(Req, [{length, Length}, {read_length, ReadLength}, {read_timeout, ReadTimeout}]),
             case maps:get(parse, Opts, false) of
                 true ->
                     case CT of
@@ -116,6 +120,19 @@ get_body(#req{req=Req}=State, Opts) ->
             end;
         BL ->
             {error, {body_too_large, BL, MaxBody}}
+    end.
+
+
+%% @private
+read_body_in_chunks(Req, Opts) ->
+    read_body_in_chunks(<<>>, Opts, Req).
+
+read_body_in_chunks(Data1, Opts, Req) ->
+    case cowboy_req:body(Req, Opts) of
+        {ok, Data2, Req2} ->
+            {ok, <<Data1/binary, Data2/binary>>, Req2};
+        {more, Data2, Req2} ->
+            read_body_in_chunks(<<Data1/binary, Data2/binary>>, Opts, Req2)
     end.
 
 
