@@ -61,8 +61,14 @@ start(Type) ->
 start(_Type, _Args) ->
     Syntax = #{
         log_path => binary,
+        body_length => integer,
+        body_read_length => integer,
+        body_read_timeout => integer,
         '__defaults' => #{
-            log_path => <<"log">>
+            log_path => <<"log">>,
+            body_length => 1000000,
+            body_read_length => 8000000,
+            body_read_timeout => 15000
         }
     },
     case nklib_config:load_env(?APP, Syntax) of
