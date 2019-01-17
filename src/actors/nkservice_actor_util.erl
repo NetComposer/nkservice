@@ -31,6 +31,7 @@
 -export([id_to_actor_id/1]).
 -export([get_debug/2]).
 -export([send_external_event/3]).
+-export([get_linked_uids/2]).
 -export([put_create_fields/1, update/2, check_links/2, do_check_links/2]).
 -export([is_actor_id/1, actor_id_to_path/1]).
 -export([parse/2, parse_actor/2]).
@@ -213,6 +214,30 @@ parse(Data, Syntax) ->
     end.
 
 
+%% @doc Finds all linked objects with this type
+get_linked_uids(Type, #actor{metadata=Meta}) ->
+    maps:fold(
+        fun(UID, FunType, Acc) ->
+            case Type==FunType of
+                true -> [UID|Acc];
+                false -> Acc
+            end
+        end,
+        [],
+        maps:get(<<"links">>, Meta, #{}));
+
+get_linked_uids(Type, #{<<"metadata">>:=#{<<"links">>:=Links}}) ->
+    maps:fold(
+        fun(UID, FunType, Acc) ->
+            case Type==FunType of
+                true -> [UID|Acc];
+                false -> Acc
+            end
+        end,
+        [],
+        Links).
+
+
 %% @doc
 check_links(SrvId, #actor{metadata=Meta1}=Actor) ->
     case do_check_links(SrvId, Meta1) of
@@ -240,11 +265,11 @@ do_check_links(_SrvId, Meta) ->
 do_check_links(_SrvId, [], Acc) ->
     {ok, maps:from_list(Acc)};
 
-do_check_links(SrvId, [{Type, Id}|Rest], Acc) ->
+do_check_links(SrvId, [{Id, Type}|Rest], Acc) ->
     case nkservice_actor:find({SrvId, Id}) of
         {ok, #actor_id{uid=UID}, _} ->
             true = is_binary(UID),
-            do_check_links(SrvId, Rest, [{Type, UID}|Acc]);
+            do_check_links(SrvId, Rest, [{UID, Type}|Acc]);
         {error, actor_not_found} ->
             {error, linked_actor_unknown};
         {error, Error} ->

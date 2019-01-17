@@ -156,8 +156,8 @@ create_database_query() ->
         INSERT INTO versions VALUES ('labels', '1');
         CREATE TABLE links (
             uid STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
-            link_type STRING NOT NULL,
             link_target STRING NOT NULL REFERENCES actors(uid) ON DELETE CASCADE,
+            link_type STRING NOT NULL,
             domain STRING NOT NULL,
             \"group\" STRING NOT NULL,
             resource STRING NOT NULL,
@@ -470,7 +470,7 @@ populate_fields([Actor|Rest], SaveFields) ->
         Labels,
         maps:get(<<"labels">>, Meta, #{})),
     Links2 = maps:fold(
-        fun(LinkType, UID2, Acc) ->
+        fun(UID2, LinkType, Acc) ->
             L = list_to_binary([
                 <<"(">>, QUID, $,, quote(LinkType), $,, quote(UID2), $,,
                 quote(Domain), $,, quote(Group), $,, quote(Res), $,, quote(Name), $,,
@@ -700,7 +700,7 @@ update_service(SrvId, PackageId, ActorSrvId, Cluster) ->
 get_links(SrvId, PackageId, UID, Type) ->
     UID2 = to_bin(UID),
     Query = [
-        <<"SELECT type,uid2 FROM links">>,
+        <<"SELECT uid2,type FROM links">>,
         <<" WHERE uid1=">>, quote(UID2),
         case Type of
             <<>> ->
@@ -719,11 +719,11 @@ get_links(SrvId, PackageId, UID, Type) ->
 
 
 %% @doc
-%% Returns {Type, UID}
+%% Returns {UID, Type}
 get_linked(SrvId, PackageId, UID, Type) ->
     UID2 = to_bin(UID),
     Query = [
-        <<"SELECT type,uid1 FROM links">>,
+        <<"SELECT uid1,type FROM links">>,
         <<" WHERE uid2=">>, quote(UID2),
         case Type of
             <<>> ->
