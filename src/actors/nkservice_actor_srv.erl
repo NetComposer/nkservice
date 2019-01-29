@@ -705,7 +705,7 @@ do_async_op({stop, Reason}, State) ->
 do_async_op({raw_stop, Reason}, State) ->
     % We don't send the deleted event here, since we may not be active at all
     ?ACTOR_LOG(warning, "received raw_stop: ~p", [Reason], State),
-    {ok, State2} = handle(actor_srv_stop, [Reason], State),
+    {_, State2} = handle(actor_srv_stop, [Reason], State),
     State3 = do_event({stopped, Reason}, State2),
     {stop, normal, State3#actor_st{stop_reason=raw_stop}};
 
