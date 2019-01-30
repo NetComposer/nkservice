@@ -33,7 +33,7 @@
          actor_srv_heartbeat/1, actor_srv_get/2, actor_srv_enabled/2,
          actor_srv_update/2, actor_srv_delete/2,
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2,
-         actor_srv_event/2, actor_srv_next_status_timer/1,
+         actor_srv_event/2, actor_srv_next_status_timer/1, actor_srv_link_down/3,
          actor_srv_stop/2, actor_srv_terminate/2]).
 -export([filter_fields/0, sort_fields/0, field_type/0, field_trans/0]).
 -export_type([actor/0, id/0, uid/0, domain/0, resource/0, path/0, name/0,
@@ -700,6 +700,16 @@ actor_srv_event(Op, ActorSt) ->
 %% @doc Called when next_status_timer is fired
 actor_srv_next_status_timer(ActorSt) ->
     case call_actor(next_status_timer, [ActorSt], ActorSt) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
+
+
+%% @doc Called when next_status_timer is fired
+actor_srv_link_down(Link, Data, ActorSt) ->
+    case call_actor(link_down, [Link, Data, ActorSt], ActorSt) of
         continue ->
             {ok, ActorSt};
         Other ->

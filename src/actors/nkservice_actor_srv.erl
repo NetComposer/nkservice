@@ -60,10 +60,9 @@
 
 -export([create/3, start/3, sync_op/2, sync_op/3, async_op/2, delayed_async_op/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
--export([add_link/3, remove_link/2]).
 -export([get_all/0, unload_all/0, get_state/1, raw_stop/2]).
--export([do_stop/2, do_event/2, do_update/3, do_delete/1, do_event_link/2,
-         do_set_next_status_time/2]).
+-export([do_event/2, do_event_link/2, do_update/3, do_delete/1, do_set_next_status_time/2,
+         do_get_links/1, do_add_link/3, do_remove_link/2]).
 -export_type([event/0, save_reason/0]).
 
 
@@ -92,8 +91,8 @@
     deleted |
     {enabled, boolean()} |
     {info, binary(), Meta::map()} |
-    {link_added, Type::binary()} |
-    {link_removed, Type::binary()} |
+    {link_added, nklib_links:link()} |
+    {link_removed, nklib_links:link()} |
     {link_down, Type::binary()} |
     {alarm_fired, nkservice_actor:alarm_class(), nkservice_actor:alarm_body()} |
     alarms_all_cleared |
@@ -145,6 +144,14 @@
 
 -type save_reason() ::
     creation | user_op | user_order | unloaded | update | timer.
+
+
+-record(link_info, {
+    get_events :: boolean(),
+    gen_events :: boolean(),
+    avoid_unload :: boolean(),
+    data :: term()
+}).
 
 
 
@@ -324,17 +331,233 @@ unload_all() ->
         get_all()).
 
 
+
+%% ===================================================================
+%% In-process API
+%% ===================================================================
+
+%% @private
+do_event(Event, State) ->
+    ?ACTOR_DEBUG("sending 'event': ~p", [Event], State),
+    State2 = do_event_link(Event, State),
+    {ok, State3} = handle(actor_srv_event, [Event], State2),
+    State3.
+
+
+
+%% @private
+do_event_link(Event, #actor_st{links=Links}=State) ->
+    nklib_links:fold_values(
+        fun
+            (Link, #link_info{get_events=true, data=Data}, Acc) ->
+                {ok, Acc2} = handle(actor_srv_link_event, [Link, Data, Event], Acc),
+                Acc2;
+            (_Link, _LinkOpts, Acc) ->
+                Acc
+        end,
+        State,
+        Links).
+
+
+%% @private
+do_set_next_status_time(NextTime, State) ->
+    #actor_st{status_timer = Timer1} = State,
+    nklib_util:cancel_timer(Timer1),
+    Now = nklib_date:epoch(secs),
+    NextTime2 = nklib_date:to_epoch(NextTime, secs),
+    Timer2 = case NextTime2 - Now of
+        Step when Step=<0 ->
+            self() ! nkservice_next_status_timer,
+            undefined;
+        Step ->
+            Step2 = min(Step, ?MAX_STATUS_TIME),
+            erlang:send_after(Step2, self(), nkservice_next_status_timer)
+    end,
+    State#actor_st{status_timer = Timer2}.
+
+
+%% @private
+do_get_links(#actor_st{links=Links}) ->
+    nklib_links:fold_values(
+        fun(Link, #link_info{data=Data}, Acc) -> [{Link, Data}|Acc] end,
+        [],
+        Links).
+
+
+%% @private
+do_add_link(Link, Opts, #actor_st{links=Links}=State) ->
+    LinkInfo = #link_info{
+        get_events = maps:get(get_events, Opts, false),
+        gen_events = maps:get(gen_events, Opts, true),
+        avoid_unload = maps:get(avoid_unload, Opts, false),
+        data = maps:get(data, Opts, undefined)
+    },
+    State2 = case LinkInfo#link_info.gen_events of
+        true ->
+            do_event({link_added, Link}, State);
+        _ ->
+            State
+    end,
+    State2#actor_st{links=nklib_links:add(Link, LinkInfo, Links)}.
+
+
+%% @private
+do_remove_link(Link, #actor_st{links=Links}=State) ->
+    case nklib_links:get_value(Link, Links) of
+        {ok, #link_info{gen_events=true}} ->
+            State2 = do_event({link_removed, Link}, State),
+            State3 = State2#actor_st{links=nklib_links:remove(Link, Links)},
+            {true, State3};
+        not_found ->
+            false
+    end.
+
+
+%% @private
+do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
+    #actor_id{uid=UID, domain=Domain, group=Class, vsn=Vsn, resource=Res, name=Name} = Id,
+    try
+        case UpdActor#actor.id#actor_id.domain of
+            Domain -> ok;
+            _ -> throw({updated_invalid_field, domain})
+        end,
+        case UpdActor#actor.id#actor_id.uid of
+            undefined -> ok;
+            UID -> ok;
+            _ -> throw({updated_invalid_field, uid})
+        end,
+        case UpdActor#actor.id#actor_id.group of
+            Class -> ok;
+            _ -> throw({updated_invalid_field, group})
+        end,
+        case UpdActor#actor.id#actor_id.vsn of
+            Vsn -> ok;
+            _ -> throw({updated_invalid_field, vsn})
+        end,
+        case UpdActor#actor.id#actor_id.resource of
+            Res -> ok;
+            _ -> throw({updated_invalid_field, resource})
+        end,
+        case UpdActor#actor.id#actor_id.name of
+            Name -> ok;
+            _ -> throw({updated_invalid_field, name})
+        end,
+        DataFieldsList = maps:get(data_fields, Opts, all),
+        #actor{data=Data, metadata=Meta} = Actor,
+        DataFields = case DataFieldsList of
+            all ->
+                Data;
+            _ ->
+                maps:with(DataFieldsList, Data)
+        end,
+        UpdData = UpdActor#actor.data,
+        UpdDataFields = case DataFieldsList of
+            all ->
+                UpdData;
+            _ ->
+                maps:with(DataFieldsList, UpdData)
+        end,
+        IsDataUpdated = UpdDataFields /= DataFields,
+        UpdMeta = UpdActor#actor.metadata,
+        CT = maps:get(<<"creationTime">>, Meta),
+        case maps:get(<<"creationTime">>, UpdMeta, CT) of
+            CT -> ok;
+            _ -> throw({updated_invalid_field, metadata})
+        end,
+        SubType = maps:get(<<"subtype">>, Meta, <<>>),
+        case maps:get(<<"subtype">>, UpdMeta, <<>>) of
+            SubType -> ok;
+            _ -> throw({updated_invalid_field, subtype})
+        end,
+        Links = maps:get(<<"links">>, Meta, #{}),
+        UpdLinks = maps:get(<<"links">>, UpdMeta, Links),
+        UpdMeta2 = case UpdLinks == Links of
+            true ->
+                UpdMeta;
+            false ->
+                case nkservice_actor_util:do_check_links(SrvId, UpdMeta) of
+                    {ok, UpdMetaLinks} ->
+                        UpdMetaLinks;
+                    {error, Error} ->
+                        throw(Error)
+                end
+        end,
+        Enabled = maps:get(<<"isEnabled">>, Meta, true),
+        UpdEnabled = maps:get(<<"isEnabled">>, UpdMeta2, true),
+        UpdMeta3 = case maps:get(<<"isEnabled">>, UpdMeta2, true) of
+            true ->
+                maps:remove(<<"isEnabled">>, UpdMeta2);
+            false ->
+                UpdMeta2
+        end,
+        NewMeta = maps:merge(Meta, UpdMeta3),
+        IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
+        case IsDataUpdated orelse IsMetaUpdated of
+            true ->
+                %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
+                NewMeta2 = case UpdEnabled of
+                    true ->
+                        maps:remove(<<"isEnabled">>, NewMeta);
+                    false ->
+                        NewMeta#{<<"isEnabled">>=>false}
+                end,
+                Data2 = maps:merge(Data, UpdDataFields),
+                NewActor = Actor#actor{data=Data2, metadata=NewMeta2},
+                case nkservice_actor_util:update_check_fields(NewActor, State) of
+                    ok ->
+                        case handle(actor_srv_update, [NewActor], State) of
+                            {ok, NewActor2, State2} ->
+                                State3 = State2#actor_st{actor=NewActor2, is_dirty=true},
+                                State4 = do_update_version(State3),
+                                State5 = do_enabled(UpdEnabled, State4),
+                                State6 = set_unload_policy(State5),
+                                case do_save(update, State6) of
+                                    {ok, State7} ->
+                                        {ok, do_event({updated, UpdActor}, State7)};
+                                    {{error, SaveError}, State6} ->
+                                        {error, SaveError, State6}
+                                end;
+                            {error, UpdError, State2} ->
+                                {error, UpdError, State2}
+                        end;
+                    {error, StaticFieldError} ->
+                        {error, StaticFieldError, State}
+                end;
+            false ->
+                % lager:error("NKLOG NO UPDATE"),
+                {ok, State}
+        end
+    catch
+        throw:Throw ->
+            {error, Throw, State}
+    end.
+
+
+%% @private
+do_delete(#actor_st{is_dirty=deleted}=State) ->
+    {ok, State};
+
+do_delete(#actor_st{srv=SrvId, actor=Actor}=State) ->
+    #actor{id=#actor_id{uid=UID}} = Actor,
+    case handle(actor_srv_delete, [Actor], State) of
+        {ok, State2} ->
+            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
+                {ok, _ActorIds, DbMeta} ->
+                    ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
+                    {ok, do_event(deleted, State2#actor_st{is_dirty=deleted})};
+                {error, Error} ->
+                    ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State),
+                    {{error, Error}, State2#actor_st{actor=Actor}}
+            end;
+        {error, Error, State2} ->
+            {{error, Error}, State2}
+    end.
+
+
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
 
-
--record(link_info, {
-    get_events :: boolean(),
-    gen_events :: boolean(),
-    avoid_unload :: boolean(),
-    data :: term()
-}).
 
 
 %% @private
@@ -497,11 +720,12 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #actor_st{father_pid=Pid}=Sta
             do_stop(leader_is_down, State)
     end;
 
-handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, State) ->
+handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, State) ->
     case link_down(Ref, State) of
-        {ok, Link, LinkOpts, State2} ->
-            ?ACTOR_DEBUG("link ~p down (~p)", [Link, LinkOpts], State),
-            {ok, State3} = handle(actor_srv_link_down, [Link], State2),
+        {ok, Link, #link_info{data=Data}=LinkInfo, State2} ->
+            ?ACTOR_LOG(warning, "link ~p down (~p) (~p)", [Link, LinkInfo, Reason], State),
+            ?ACTOR_DEBUG("link ~p down (~p) (~p)", [Link, LinkInfo, Reason], State),
+            {ok, State3} = handle(actor_srv_link_down, [Link, Data], State2),
             noreply(State3);
         not_found ->
             safe_handle(actor_srv_handle_info, [Info], State)
@@ -558,11 +782,8 @@ do_sync_op(consume_actor, From, #actor_st{actor=Actor, run_state=RunState}=State
 do_sync_op(get_state, _From, State) ->
     reply({ok, State}, State);
 
-do_sync_op(get_links, _From, #actor_st{links=Links}=State) ->
-    Data = nklib_links:fold_values(
-        fun(Link, #link_info{data=Data}, Acc) -> [{Link, Data}|Acc] end,
-        [],
-        Links),
+do_sync_op(get_links, _From, State) ->
+    Data = do_get_links(State),
     reply({ok, Data}, State);
 
 do_sync_op(save, _From, State) ->
@@ -612,14 +833,8 @@ do_sync_op(is_enabled, _From, #actor_st{is_enabled=IsEnabled}=State) ->
     reply({ok, IsEnabled}, State);
 
 do_sync_op({link, Link, Opts}, _From, State) ->
-    LinkData = #link_info{
-        get_events = maps:get(get_events, Opts, false),
-        gen_events = maps:get(gen_events, Opts, true),
-        avoid_unload = maps:get(avoid_unload, Opts, false),
-        data = maps:get(data, Opts, undefined)
-    },
-    ?ACTOR_DEBUG("link ~p added (~p)", [Link, LinkData], State),
-    {reply, ok, add_link(Link, LinkData, do_refresh_ttl(State))};
+    State2 = do_add_link(Link, Opts, State),
+    {reply, ok, do_refresh_ttl(State2)};
 
 do_sync_op({update, #actor{}=Actor, Opts}, _From, #actor_st{is_enabled=IsEnabled, config=Config}=State) ->
     case {IsEnabled, Config} of
@@ -669,7 +884,12 @@ do_sync_op(Op, _From, State) ->
 
 %% @private
 do_async_op({unlink, Link}, State) ->
-    {ok, remove_link(Link, State)};
+    case do_remove_link(Link, State) of
+        {true, State2} ->
+            {ok, State2};
+        false ->
+            {ok, State}
+    end;
 
 do_async_op({send_info, Info, Meta}, State) ->
     noreply(do_event({info, nklib_util:to_binary(Info), Meta}, do_refresh_ttl(State)));
@@ -825,23 +1045,6 @@ do_register(Tries, #actor_st{srv = SrvId} = State) ->
 
 
 %% @private
-do_set_next_status_time(NextTime, State) ->
-    #actor_st{status_timer = Timer1} = State,
-    nklib_util:cancel_timer(Timer1),
-    Now = nklib_date:epoch(secs),
-    NextTime2 = nklib_date:to_epoch(NextTime, secs),
-    Timer2 = case NextTime2 - Now of
-        Step when Step=<0 ->
-            self() ! nkservice_next_status_timer,
-            undefined;
-        Step ->
-            Step2 = min(Step, ?MAX_STATUS_TIME),
-            erlang:send_after(Step2, self(), nkservice_next_status_timer)
-    end,
-    State#actor_st{status_timer = Timer2}.
-
-
-%% @private
 do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
     case Meta of
         #{<<"isInAlarm">>:=true} ->
@@ -898,6 +1101,18 @@ do_check_expired(State) ->
     {false, State}.
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 %% @private
 do_stop(Reason, State) ->
     {stop, normal, do_stop2(Reason, State)}.
@@ -919,146 +1134,6 @@ do_stop2(Reason, #actor_st{stop_reason=false}=State) ->
 do_stop2(_Reason, State) ->
     State.
 
-
-%% @private
-do_delete(#actor_st{is_dirty=deleted}=State) ->
-    {ok, State};
-
-do_delete(#actor_st{srv=SrvId, actor=Actor}=State) ->
-    #actor{id=#actor_id{uid=UID}} = Actor,
-    case handle(actor_srv_delete, [Actor], State) of
-        {ok, State2} ->
-            case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
-                {ok, _ActorIds, DbMeta} ->
-                    ?ACTOR_DEBUG("object deleted: ~p", [DbMeta], State),
-                    {ok, do_event(deleted, State2#actor_st{is_dirty=deleted})};
-                {error, Error} ->
-                    ?ACTOR_LOG(warning, "object could not be deleted: ~p", [Error], State),
-                    {{error, Error}, State2#actor_st{actor=Actor}}
-            end;
-        {error, Error, State2} ->
-            {{error, Error}, State2}
-    end.
-
-
-%% @private
-do_update(UpdActor, Opts, #actor_st{srv=SrvId, actor=#actor{id=Id}=Actor}=State) ->
-    #actor_id{uid=UID, domain=Domain, group=Class, vsn=Vsn, resource=Res, name=Name} = Id,
-    try
-        case UpdActor#actor.id#actor_id.domain of
-            Domain -> ok;
-            _ -> throw({updated_invalid_field, domain})
-        end,
-        case UpdActor#actor.id#actor_id.uid of
-            undefined -> ok;
-            UID -> ok;
-            _ -> throw({updated_invalid_field, uid})
-        end,
-        case UpdActor#actor.id#actor_id.group of
-            Class -> ok;
-            _ -> throw({updated_invalid_field, group})
-        end,
-        case UpdActor#actor.id#actor_id.vsn of
-            Vsn -> ok;
-            _ -> throw({updated_invalid_field, vsn})
-        end,
-        case UpdActor#actor.id#actor_id.resource of
-            Res -> ok;
-            _ -> throw({updated_invalid_field, resource})
-        end,
-        case UpdActor#actor.id#actor_id.name of
-            Name -> ok;
-            _ -> throw({updated_invalid_field, name})
-        end,
-        DataFieldsList = maps:get(data_fields, Opts, all),
-        #actor{data=Data, metadata=Meta} = Actor,
-        DataFields = case DataFieldsList of
-            all ->
-                Data;
-            _ ->
-                maps:with(DataFieldsList, Data)
-        end,
-        UpdData = UpdActor#actor.data,
-        UpdDataFields = case DataFieldsList of
-            all ->
-                UpdData;
-            _ ->
-                maps:with(DataFieldsList, UpdData)
-        end,
-        IsDataUpdated = UpdDataFields /= DataFields,
-        UpdMeta = UpdActor#actor.metadata,
-        CT = maps:get(<<"creationTime">>, Meta),
-        case maps:get(<<"creationTime">>, UpdMeta, CT) of
-            CT -> ok;
-            _ -> throw({updated_invalid_field, metadata})
-        end,
-        SubType = maps:get(<<"subtype">>, Meta, <<>>),
-        case maps:get(<<"subtype">>, UpdMeta, <<>>) of
-            SubType -> ok;
-            _ -> throw({updated_invalid_field, subtype})
-        end,
-        Links = maps:get(<<"links">>, Meta, #{}),
-        UpdLinks = maps:get(<<"links">>, UpdMeta, Links),
-        UpdMeta2 = case UpdLinks == Links of
-            true ->
-                UpdMeta;
-            false ->
-                case nkservice_actor_util:do_check_links(SrvId, UpdMeta) of
-                    {ok, UpdMetaLinks} ->
-                        UpdMetaLinks;
-                    {error, Error} ->
-                        throw(Error)
-                end
-        end,
-        Enabled = maps:get(<<"isEnabled">>, Meta, true),
-        UpdEnabled = maps:get(<<"isEnabled">>, UpdMeta2, true),
-        UpdMeta3 = case maps:get(<<"isEnabled">>, UpdMeta2, true) of
-            true ->
-                maps:remove(<<"isEnabled">>, UpdMeta2);
-            false ->
-                UpdMeta2
-        end,
-        NewMeta = maps:merge(Meta, UpdMeta3),
-        IsMetaUpdated = (Meta /= NewMeta) orelse (Enabled /= UpdEnabled),
-        case IsDataUpdated orelse IsMetaUpdated of
-            true ->
-                %lager:error("NKLOG UPDATE Data:~p, Meta:~p", [IsDataUpdated, IsMetaUpdated]),
-                NewMeta2 = case UpdEnabled of
-                    true ->
-                        maps:remove(<<"isEnabled">>, NewMeta);
-                    false ->
-                        NewMeta#{<<"isEnabled">>=>false}
-                end,
-                Data2 = maps:merge(Data, UpdDataFields),
-                NewActor = Actor#actor{data=Data2, metadata=NewMeta2},
-                case nkservice_actor_util:update_check_fields(NewActor, State) of
-                    ok ->
-                        case handle(actor_srv_update, [NewActor], State) of
-                            {ok, NewActor2, State2} ->
-                                State3 = State2#actor_st{actor=NewActor2, is_dirty=true},
-                                State4 = do_update_version(State3),
-                                State5 = do_enabled(UpdEnabled, State4),
-                                State6 = set_unload_policy(State5),
-                                case do_save(update, State6) of
-                                    {ok, State7} ->
-                                        {ok, do_event({updated, UpdActor}, State7)};
-                                    {{error, SaveError}, State6} ->
-                                        {error, SaveError, State6}
-                                end;
-                            {error, UpdError, State2} ->
-                                {error, UpdError, State2}
-                        end;
-                    {error, StaticFieldError} ->
-                        {error, StaticFieldError, State}
-                end;
-            false ->
-                % lager:error("NKLOG NO UPDATE"),
-                {ok, State}
-        end
-    catch
-        throw:Throw ->
-            {error, Throw, State}
-    end.
 
 
 %%%% @private
@@ -1155,28 +1230,6 @@ do_check_save(State) ->
 
 
 %% @private
-do_event(Event, State) ->
-    ?ACTOR_DEBUG("sending 'event': ~p", [Event], State),
-    State2 = do_event_link(Event, State),
-    {ok, State3} = handle(actor_srv_event, [Event], State2),
-    State3.
-
-
-%% @private
-do_event_link(Event, #actor_st{links=Links}=State) ->
-    nklib_links:fold_values(
-        fun
-            (Link, #link_info{get_events=true, data=Data}, Acc) ->
-                {ok, Acc2} = handle(actor_srv_link_event, [Link, Data, Event], Acc),
-                Acc2;
-            (_Link, _LinkOpts, Acc) ->
-                Acc
-        end,
-        State,
-        Links).
-
-
-%% @private
 do_ttl_timeout(#actor_st{unload_policy={ttl, _}, links=Links, status_timer=undefined}=State) ->
     Avoid = nklib_links:fold_values(
         fun
@@ -1242,32 +1295,9 @@ safe_handle(Fun, Args, State) ->
 
 
 %% @private
-add_link(Link, LinkInfo, #actor_st{links=Links}=State) ->
-    #link_info{gen_events=GenEvents, data=Data} = LinkInfo,
-    State2 = case GenEvents of
-        true ->
-            do_event({link_added, Data}, State);
-        _ ->
-            State
-    end,
-    State2#actor_st{links=nklib_links:add(Link, LinkInfo, Links)}.
-
-
-%% @private
-remove_link(Link, #actor_st{links=Links}=State) ->
-    State2 = case nklib_links:get_value(Link, Links) of
-        {ok, #link_info{gen_events=true, data=Data}} ->
-            do_event({link_removed, Data}, State);
-        _ ->
-            State
-    end,
-    State2#actor_st{links=nklib_links:remove(Link, Links)}.
-
-
-%% @private
 link_down(Mon, #actor_st{links=Links}=State) ->
     case nklib_links:down(Mon, Links) of
-        {ok, Link, LinkInfo, Links2} ->
+        {ok, Link, #link_info{data=Data}=LinkInfo, Links2} ->
             case LinkInfo of
                 #link_info{gen_events=true, data=Data} ->
                     State2 = do_event({link_down, Data}, State),
