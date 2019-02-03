@@ -539,7 +539,7 @@ do_delete(#actor_st{is_dirty=deleted}=State) ->
 
 do_delete(#actor_st{srv=SrvId, actor=Actor}=State) ->
     #actor{id=#actor_id{uid=UID}} = Actor,
-    case handle(actor_srv_delete, [Actor], State) of
+    case handle(actor_srv_delete, [], State) of
         {ok, State2} ->
             case ?CALL_SRV(SrvId, actor_db_delete, [SrvId, UID, #{}]) of
                 {ok, _ActorIds, DbMeta} ->
@@ -1023,7 +1023,7 @@ set_unload_policy(#actor_st{config=Config}=State) ->
 
 %% @private
 do_register(Tries, #actor_st{srv = SrvId} = State) ->
-    case handle(actor_srv_register, [SrvId], State) of
+    case handle (actor_srv_register, [SrvId], State) of
         {ok, Pid, State2} when is_pid(Pid) ->
             ?ACTOR_DEBUG("registered with master service (pid:~p)", [Pid]),
             monitor(process, Pid),
@@ -1058,17 +1058,21 @@ do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
 %% @private
 do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, actor=Actor, save_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
-    State2 = State#actor_st{save_timer=undefined},
-    case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor]) of
-        {ok, DbMeta} ->
-            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
-            State3 = State2#actor_st{is_dirty=false},
-            {ok, do_event(saved, State3)};
-        {error, not_implemented, State2} ->
-            {{error, not_implemented}, State2};
-        {error, Error, State2} ->
-            ?ACTOR_LOG(warning, "save error: ~p", [Error], State),
-            {{error, Error}, State2}
+    case handle(actor_srv_pre_save, [], State#actor_st{save_timer=undefined}) of
+        {ok, State2} ->
+            case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor]) of
+                {ok, DbMeta} ->
+                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+                    State3 = State2#actor_st{is_dirty=false},
+                    {ok, do_event(saved, State3)};
+                {error, not_implemented} ->
+                    {{error, not_implemented}, State2};
+                {error, Error} ->
+                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State2),
+                    {{error, Error}, State2}
+            end;
+        {ignore, State2} ->
+            {ok, State2}
     end;
 
 do_save(_Reason, State) ->

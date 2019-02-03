@@ -31,7 +31,8 @@
 -export([config/1, parse/4, request/4, make_external/4]).
 -export([actor_srv_init/2, actor_srv_sync_op/3, actor_srv_async_op/2,
          actor_srv_heartbeat/1, actor_srv_get/2, actor_srv_enabled/2,
-         actor_srv_update/2, actor_srv_delete/2,
+         actor_srv_pre_save/1,
+         actor_srv_update/2, actor_srv_delete/1,
          actor_srv_handle_call/3, actor_srv_handle_cast/2, actor_srv_handle_info/2,
          actor_srv_event/2, actor_srv_next_status_timer/1, actor_srv_link_down/3,
          actor_srv_stop/2, actor_srv_terminate/2]).
@@ -240,6 +241,11 @@
     {ok, nkservice:actor(), actor_st()} | {error, nkservice:msg(), actor_st()}.
 
 
+%% @doc Called when
+-callback delete(actor_st()) ->
+    {ok, actor_st()} | {error, nkservice:msg(), actor_st()}.
+
+
 %% @doc Called to process sync operations
 -callback sync_op(term(), {pid(), reference()}, actor_st()) ->
     {reply, Reply::term(), actor_st()} | {reply_and_save, Reply::term(), actor_st()} |
@@ -283,6 +289,11 @@
     {ok, actor_st()} | {error, nkservice:msg(), actor_st()} | continue().
 
 
+%% @doc Called when about to save
+-callback pre_save(actor_st()) ->
+    {ok, actor_st()} | {ignore, actor_st()} | continue().
+
+
 %% @doc Called when
 -callback get(actor(), actor_st()) ->
     {ok, actor(), actor_st()} | {error, nkservice_msg:msg(), actor_st()} | continue().
@@ -317,8 +328,8 @@
 
 %% @doc
 -optional_callbacks([
-    parse/3, request/5, make_external/3,
-    init/2, get/2, update/2, sync_op/3, async_op/2, enabled/2, heartbeat/1,
+    parse/3, request/5, make_external/3, pre_save/1,
+    init/2, get/2, update/2, delete/1, sync_op/3, async_op/2, enabled/2, heartbeat/1,
     event/2, link_event/4, next_status_timer/1,
     handle_call/3, handle_cast/2, handle_info/2, stop/2, terminate/2]).
 
@@ -668,8 +679,8 @@ actor_srv_update(Actor, ActorSt) ->
 
 
 %% @doc Called after approving an update, to change the updated actor
-actor_srv_delete(Actor, ActorSt) ->
-    case call_actor(delete, [Actor, ActorSt], ActorSt) of
+actor_srv_delete(ActorSt) ->
+    case call_actor(delete, [ActorSt], ActorSt) of
         continue ->
             {ok, ActorSt};
         Other ->
@@ -710,6 +721,16 @@ actor_srv_next_status_timer(ActorSt) ->
 %% @doc Called when next_status_timer is fired
 actor_srv_link_down(Link, Data, ActorSt) ->
     case call_actor(link_down, [Link, Data, ActorSt], ActorSt) of
+        continue ->
+            {ok, ActorSt};
+        Other ->
+            Other
+    end.
+
+
+%% @doc Called before saving the actor
+actor_srv_pre_save(ActorSt) ->
+    case call_actor(pre_save, [ActorSt], ActorSt) of
         continue ->
             {ok, ActorSt};
         Other ->
