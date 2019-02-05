@@ -31,7 +31,7 @@
 -export([id_to_actor_id/1]).
 -export([get_debug/2]).
 -export([send_external_event/3]).
--export([get_linked_uids/2]).
+-export([get_linked_type/2, get_linked_uids/2]).
 -export([put_create_fields/1, update/2, check_links/2, do_check_links/2]).
 -export([is_actor_id/1, actor_id_to_path/1]).
 -export([parse/2, parse_actor/2]).
@@ -212,6 +212,17 @@ parse(Data, Syntax) ->
             lager:error("Unexpected parse error at ~p: ~p", [?MODULE, Error]),
             {error, Error}
     end.
+
+
+%% @doc
+get_linked_type(UID, #actor{metadata=#{<<"links">>:=Links}}) ->
+    maps:get(UID, Links, <<>>);
+
+get_linked_type(UID, #{<<"metadata">>:=#{<<"links">>:=Links}}) ->
+    maps:get(UID, Links, <<>>);
+
+get_linked_type(_UID, _) ->
+    <<>>.
 
 
 %% @doc Finds all linked objects with this type

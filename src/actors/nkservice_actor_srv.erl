@@ -58,7 +58,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([create/3, start/3, sync_op/2, sync_op/3, async_op/2, delayed_async_op/3]).
+-export([create/3, start/3, sync_op/2, sync_op/3, async_op/2, live_async_op/2, delayed_async_op/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,  handle_cast/2, handle_info/2]).
 -export([get_all/0, unload_all/0, get_state/1, raw_stop/2]).
 -export([do_event/2, do_event_link/2, do_update/3, do_delete/1, do_set_next_status_time/2,
@@ -263,6 +263,22 @@ async_op(Id, Op) ->
             async_op(Pid, Op);
         {error, Error} ->
             {error, Error}
+    end.
+
+
+%% @doc
+-spec live_async_op(nkservice_actor:id()|pid(), async_op()) ->
+    ok | {error, term()}.
+
+live_async_op(Pid, Op) when is_pid(Pid) ->
+    async_op(Pid, {nkservice_async_op, Op});
+
+live_async_op(Id, Op) ->
+    case nkservice_actor:find(Id) of
+        {ok, #actor_id{pid=Pid}, _} when is_pid(Pid) ->
+            async_op(Pid, Op);
+        _ ->
+            ok
     end.
 
 
@@ -790,6 +806,10 @@ do_sync_op(save, _From, State) ->
     {Reply, State2} = do_save(user_order, State),
     reply(Reply, do_refresh_ttl(State2));
 
+do_sync_op(force_save, _From, State) ->
+    {Reply, State2} = do_save(user_order, State#actor_st{is_dirty=true}),
+    reply(Reply, do_refresh_ttl(State2));
+
 do_sync_op(get_unload_policy, _From, #actor_st{unload_policy=Policy}=State) ->
     reply({ok, Policy}, State);
 
@@ -1056,20 +1076,36 @@ do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
 
 
 %% @private
-do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, actor=Actor, save_timer=Timer}=State) ->
+do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, save_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
     case handle(actor_srv_pre_save, [], State#actor_st{save_timer=undefined}) of
-        {ok, State2} ->
-            case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor]) of
-                {ok, DbMeta} ->
-                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
-                    State3 = State2#actor_st{is_dirty=false},
-                    {ok, do_event(saved, State3)};
-                {error, not_implemented} ->
-                    {{error, not_implemented}, State2};
-                {error, Error} ->
-                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State2),
-                    {{error, Error}, State2}
+        {ok, #actor_st{config=Config, actor=Actor2}=State2} ->
+            case Config of
+                #{async_save:=true} ->
+                    Self = self(),
+                    spawn_link(
+                        fun() ->
+                            case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor2]) of
+                                {ok, DbMeta} ->
+                                    ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+                                    async_op(Self, {send_event, saved});
+                                {error, Error} ->
+                                    ?ACTOR_LOG(warning, "save error: ~p", [Error], State2)
+                            end
+                        end),
+                    {ok, State2#actor_st{is_dirty = false}};
+                _ ->
+                    case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor2]) of
+                        {ok, DbMeta} ->
+                            ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
+                            State3 = State2#actor_st{is_dirty=false},
+                            {ok, do_event(saved, State3)};
+                        {error, not_implemented} ->
+                            {{error, not_implemented}, State2};
+                        {error, Error} ->
+                            ?ACTOR_LOG(warning, "save error: ~p", [Error], State2),
+                            {{error, Error}, State2}
+                    end
             end;
         {ignore, State2} ->
             {ok, State2}

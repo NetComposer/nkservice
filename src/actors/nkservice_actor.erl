@@ -165,6 +165,7 @@
         dont_update_on_disabled => boolean(),           %% Default false
         dont_delete_on_disabled => boolean(),           %% Default false
         immutable_fields => [nkservice_actor_search:field_name()],  %% Don't allow updates
+        async_save => boolean(),
 
         % Fields not used by nkservice directly
         group => group(),
