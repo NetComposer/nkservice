@@ -34,7 +34,7 @@
 -export([actor_srv_init/2, actor_srv_register/2, actor_srv_terminate/2,
          actor_srv_stop/2, actor_srv_get/2, actor_srv_update/2, actor_srv_delete/1,
          actor_srv_event/2,
-         actor_srv_link_event/4, actor_srv_link_down/3, actor_srv_pre_save/1,
+         actor_srv_link_event/4, actor_srv_link_down/3, actor_srv_save/1,
          actor_srv_sync_op/3, actor_srv_async_op/2,
          actor_srv_enabled/2, actor_srv_next_status_timer/1,
          actor_srv_alarms/1, actor_srv_heartbeat/1,
@@ -484,11 +484,11 @@ actor_srv_link_event(_Link, _LinkData, _Event, ActorSt) ->
 
 
 %% @doc
--spec actor_srv_pre_save(actor_st()) ->
+-spec actor_srv_save(actor_st()) ->
     {ok, actor_st()} | {ignore, actor_st()} | continue().
 
-actor_srv_pre_save(ActorSt) ->
-    nkservice_actor:actor_srv_pre_save(ActorSt).
+actor_srv_save(ActorSt) ->
+    nkservice_actor:actor_srv_save(ActorSt).
 
 
 %% @doc

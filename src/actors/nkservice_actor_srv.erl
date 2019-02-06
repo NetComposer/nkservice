@@ -1078,7 +1078,7 @@ do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
 %% @private
 do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, save_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
-    case handle(actor_srv_pre_save, [], State#actor_st{save_timer=undefined}) of
+    case handle(actor_srv_save, [], State#actor_st{save_timer=undefined}) of
         {ok, #actor_st{config=Config, actor=Actor2}=State2} ->
             case Config of
                 #{async_save:=true} ->
