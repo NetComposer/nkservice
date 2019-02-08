@@ -1076,16 +1076,16 @@ do_check_alarms(#actor_st{actor=#actor{metadata=Meta}}=State) ->
 
 
 %% @private
-do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, save_timer=Timer}=State) ->
+do_save(Reason, #actor_st{srv=SrvId, actor=Actor, is_dirty=true, save_timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
-    case handle(actor_srv_save, [], State#actor_st{save_timer=undefined}) of
-        {ok, #actor_st{config=Config, actor=Actor2}=State2} ->
+    case handle(actor_srv_save, [Actor], State#actor_st{save_timer=undefined}) of
+        {ok, SaveActor, #actor_st{config=Config}=State2} ->
             case Config of
                 #{async_save:=true} ->
                     Self = self(),
                     spawn_link(
                         fun() ->
-                            case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor2]) of
+                            case ?CALL_SRV(SrvId, actor_db_update, [SrvId, SaveActor]) of
                                 {ok, DbMeta} ->
                                     ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
                                     async_op(Self, {send_event, saved});
@@ -1095,7 +1095,7 @@ do_save(Reason, #actor_st{srv=SrvId, is_dirty=true, save_timer=Timer}=State) ->
                         end),
                     {ok, State2#actor_st{is_dirty = false}};
                 _ ->
-                    case ?CALL_SRV(SrvId, actor_db_update, [SrvId, Actor2]) of
+                    case ?CALL_SRV(SrvId, actor_db_update, [SrvId, SaveActor]) of
                         {ok, DbMeta} ->
                             ?ACTOR_DEBUG("save (~p) (~p)", [Reason, DbMeta], State2),
                             State3 = State2#actor_st{is_dirty=false},
