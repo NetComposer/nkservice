@@ -719,8 +719,15 @@ handle_info(nkservice_timer_save, State) ->
 
 handle_info(nkservice_next_status_timer, State) ->
     State2 = State#actor_st{status_timer=undefined},
-    {ok, State3} = handle(actor_srv_next_status_timer, [], State2),
-    noreply(State3);
+    case handle(actor_srv_next_status_timer, [], State2) of
+        {ok, State3} ->
+            noreply(State3);
+        {stop, Reason, State3} ->
+            do_stop(Reason, State3);
+        {delete, Reason, State3} ->
+            {_, State4} = do_delete(State3),
+            do_stop(Reason, State4)
+    end;
 
 handle_info(nkservice_heartbeat, State) ->
     erlang:send_after(?HEARTBEAT_TIME, self(), nkservice_heartbeat),

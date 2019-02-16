@@ -271,7 +271,8 @@
 
 %% @doc Called when next_status_timer is fired
 -callback next_status_timer(actor_st()) ->
-    {ok, actor_st()} | continue().
+    {ok, actor_st()} | {stop, Reason::term(), actor_st()} |
+    {delete, Reason::term(), actor_st()} | continue().
 
 
 %% @doc Called when an event is sent, for each registered process to the session
